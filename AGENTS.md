@@ -32,6 +32,7 @@ Before merging an implementation PR, the agent must:
 4. Fix those problems in the **same PR branch** and push follow-up commits.
 5. Post PR feedback (`gh pr review --comment` or `gh pr comment`) summarizing findings, linked issues, and fixes.
 6. Merge only when checks are green and no unresolved review findings remain.
+7. After merging, verify and close the associated GitHub issue(s) referenced by the PR.
 
 ---
 
@@ -48,6 +49,7 @@ These rules prevent common mistakes in the multi-worktree setup:
 | Run `cargo test` before every commit | All tests must be green |
 | If review finds bugs, open issue(s) and fix them in the same PR branch | Preserves traceability and keeps context in one PR |
 | Post at least one PR review feedback comment before merge | Captures reviewer reasoning and findings in GitHub history |
+| Always verify and close associated issue(s) after merging a PR | Keeps GitHub project state aligned with merged work |
 
 **Branch naming:**
 - Features: `feature/phase<N>-<slug>` (e.g. `feature/phase4-x86-backend`)
