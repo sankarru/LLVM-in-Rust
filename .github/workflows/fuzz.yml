@@ -19,14 +19,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust nightly toolchain
+      - name: Install Rust toolchains
         run: |
           rustup set profile minimal
-          rustup toolchain install nightly
-          rustup default nightly
+          rustup toolchain install stable nightly
+          rustup default stable
 
       - name: Install cargo-fuzz
-        run: cargo +nightly install cargo-fuzz --locked
+        # Build the cargo-fuzz CLI with stable Rust.  Recent nightlies reject the
+        # locked rustix dependency used by cargo-fuzz 0.13.1 during installation,
+        # while the fuzz target itself still runs under `cargo +nightly fuzz`.
+        run: cargo +stable install cargo-fuzz --locked
 
       - name: Install LLVM 19 tools
         run: |
