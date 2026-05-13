@@ -1,5 +1,6 @@
 //! Integration tests: parse representative `.ll` snippets and assert structure.
 
+use llvm_ir::{printer::Printer, InstrKind};
 use llvm_ir_parser::parser::parse;
 
 /// Verify that a minimal function with only `ret void` parses correctly.
@@ -41,6 +42,40 @@ entry:
     // body has 1 instruction (mul), terminator is ret
     assert_eq!(bb.body.len(), 1);
     assert!(bb.terminator.is_some());
+}
+
+/// Parse and print LLVM inline assembly call syntax.
+#[test]
+fn parse_print_inline_asm_nop() {
+    let src = r#"
+define void @f() {
+entry:
+  call void asm sideeffect "nop", ""()
+  ret void
+}
+"#;
+    let (ctx, module) = parse(src).expect("parse failed");
+    let f = &module.functions[0];
+    let bb = &f.blocks[0];
+    let instr = f.instr(bb.body[0]);
+    match &instr.kind {
+        InstrKind::InlineAsm {
+            asm_string,
+            constraints,
+            side_effect,
+            args,
+            ..
+        } => {
+            assert_eq!(asm_string, "nop");
+            assert_eq!(constraints, "");
+            assert!(*side_effect);
+            assert!(args.is_empty());
+        }
+        other => panic!("expected inline asm, got {other:?}"),
+    }
+
+    let printed = Printer::new(&ctx).print_module(&module);
+    assert!(printed.contains("call void asm sideeffect \"nop\", \"\"()"));
 }
 
 /// Parse a function declaration (no body).

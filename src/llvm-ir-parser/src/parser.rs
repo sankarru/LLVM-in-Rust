@@ -1177,6 +1177,48 @@ impl<'src> Parser<'src> {
                 let _fmf = self.parse_fast_math_flags();
                 // Return type.
                 let ret_ty = self.parse_type()?;
+                if matches!(self.lex.peek()?, Token::LocalIdent(s) if s == "asm") {
+                    self.lex.next()?;
+                    let mut side_effect = false;
+                    let mut align_stack = false;
+                    loop {
+                        match self.lex.peek()? {
+                            Token::LocalIdent(s) if s == "sideeffect" => {
+                                self.lex.next()?;
+                                side_effect = true;
+                            }
+                            Token::LocalIdent(s) if s == "alignstack" => {
+                                self.lex.next()?;
+                                align_stack = true;
+                            }
+                            _ => break,
+                        }
+                    }
+                    let asm_string = self.lex.expect_string_lit()?;
+                    self.lex.expect(&Token::Comma)?;
+                    let constraints = self.lex.expect_string_lit()?;
+                    self.lex.expect(&Token::LParen)?;
+                    let mut args = Vec::new();
+                    if !matches!(self.lex.peek()?, Token::RParen) {
+                        let (a, _) = self.parse_typed_value()?;
+                        args.push(a);
+                        while self.lex.eat(&Token::Comma) {
+                            let (a, _) = self.parse_typed_value()?;
+                            args.push(a);
+                        }
+                    }
+                    self.lex.expect(&Token::RParen)?;
+                    return Ok((
+                        InstrKind::InlineAsm {
+                            asm_string,
+                            constraints,
+                            side_effect,
+                            align_stack,
+                            args,
+                        },
+                        ret_ty,
+                    ));
+                }
                 // Callee.
                 let callee = match self.lex.peek()? {
                     Token::GlobalIdent(_) => {

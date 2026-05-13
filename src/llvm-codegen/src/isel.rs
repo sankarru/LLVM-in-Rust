@@ -42,6 +42,8 @@ pub enum MOperand {
     Imm(i64),
     /// Branch target: index into `MachineFunction::blocks`.
     Block(usize),
+    /// Raw target instruction bytes emitted verbatim by the backend.
+    Bytes(Vec<u8>),
 }
 
 // ── machine instruction ────────────────────────────────────────────────────
@@ -107,6 +109,11 @@ impl MInstr {
     /// Public API for `with_block`.
     pub fn with_block(mut self, b: usize) -> Self {
         self.operands.push(MOperand::Block(b));
+        self
+    }
+    /// Public API for `with_bytes`.
+    pub fn with_bytes(mut self, bytes: Vec<u8>) -> Self {
+        self.operands.push(MOperand::Bytes(bytes));
         self
     }
 }

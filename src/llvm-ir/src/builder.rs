@@ -866,7 +866,11 @@ impl<'a> Builder<'a> {
         idx: ValueRef,
     ) -> ValueRef {
         let ty = self.type_of(vec);
-        self.append_instr(Some(name.into()), ty, InstrKind::InsertElement { vec, val, idx })
+        self.append_instr(
+            Some(name.into()),
+            ty,
+            InstrKind::InsertElement { vec, val, idx },
+        )
     }
 
     /// Public API for `build_shufflevector`.
@@ -909,6 +913,41 @@ impl<'a> Builder<'a> {
                 tail: TailCallKind::None,
                 callee_ty,
                 callee,
+                args,
+            },
+        )
+    }
+
+    /// Build an inline assembly call-site.
+    ///
+    /// The current backend support is intentionally conservative: side-effect
+    /// passthrough snippets such as `nop` are supported, while full LLVM
+    /// constraint solving and register allocation across output operands are a
+    /// documented future extension.
+    pub fn build_inline_asm(
+        &mut self,
+        name: impl Into<String>,
+        ret_ty: TypeId,
+        asm_string: impl Into<String>,
+        constraints: impl Into<String>,
+        side_effect: bool,
+        align_stack: bool,
+        args: Vec<ValueRef>,
+    ) -> ValueRef {
+        let n = name.into();
+        let result_name = if ret_ty == self.ctx.void_ty {
+            None
+        } else {
+            Some(n)
+        };
+        self.append_instr(
+            result_name,
+            ret_ty,
+            InstrKind::InlineAsm {
+                asm_string: asm_string.into(),
+                constraints: constraints.into(),
+                side_effect,
+                align_stack,
                 args,
             },
         )

@@ -218,6 +218,19 @@ where
             callee: f(callee),
             args: args.into_iter().map(f).collect(),
         },
+        InstrKind::InlineAsm {
+            asm_string,
+            constraints,
+            side_effect,
+            align_stack,
+            args,
+        } => InstrKind::InlineAsm {
+            asm_string,
+            constraints,
+            side_effect,
+            align_stack,
+            args: args.into_iter().map(f).collect(),
+        },
         InstrKind::Ret { val } => InstrKind::Ret { val: val.map(f) },
         InstrKind::Br { dest } => InstrKind::Br { dest },
         InstrKind::CondBr {

@@ -104,6 +104,8 @@ pub const POP_R: MOpcode = MOpcode(0x61);
 // ── miscellaneous ──────────────────────────────────────────────────────────
 /// Public API for `NOP`.
 pub const NOP: MOpcode = MOpcode(0x70);
+/// Raw inline assembly bytes emitted verbatim after minimal template decoding.
+pub const INLINE_ASM: MOpcode = MOpcode(0x74);
 /// `lea dst, [base + imm]`  — imm stored as `Imm` operand.
 pub const LEA_RI: MOpcode = MOpcode(0x71);
 

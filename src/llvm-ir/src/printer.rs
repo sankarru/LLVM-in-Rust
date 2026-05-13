@@ -425,6 +425,17 @@ impl<'a> Printer<'a> {
             s
         }
 
+        fn escape_ir_string(s: &str) -> String {
+            let mut out = String::new();
+            for b in s.bytes() {
+                match b {
+                    b' '..=b'!' | b'#'..=b'[' | b']'..=b'~' => out.push(b as char),
+                    _ => write!(out, "\\{:02X}", b).unwrap(),
+                }
+            }
+            out
+        }
+
         match &instr.kind {
             InstrKind::Add { flags, lhs, rhs } => {
                 out.push_str("add ");
@@ -782,6 +793,37 @@ impl<'a> Printer<'a> {
                 out.push('(');
                 let call_args = args.clone();
                 for (i, &arg) in call_args.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    self.write_typed_value(out, arg, func);
+                }
+                out.push(')');
+            }
+            InstrKind::InlineAsm {
+                asm_string,
+                constraints,
+                side_effect,
+                align_stack,
+                args,
+            } => {
+                out.push_str("call ");
+                self.write_type(out, instr.ty);
+                out.push_str(" asm");
+                if *side_effect {
+                    out.push_str(" sideeffect");
+                }
+                if *align_stack {
+                    out.push_str(" alignstack");
+                }
+                write!(
+                    out,
+                    " \"{}\", \"{}\"(",
+                    escape_ir_string(asm_string),
+                    escape_ir_string(constraints)
+                )
+                .unwrap();
+                for (i, &arg) in args.iter().enumerate() {
                     if i > 0 {
                         out.push_str(", ");
                     }

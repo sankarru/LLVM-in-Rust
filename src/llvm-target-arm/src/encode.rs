@@ -199,11 +199,15 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             _ => None,
         }
     };
-
     match instr.opcode {
         // ── NOP ────────────────────────────────────────────────────────────
         NOP => {
             ctx.emit4(0xD503201F);
+        }
+        INLINE_ASM => {
+            if let Some(MOperand::Bytes(raw)) = instr.operands.first() {
+                ctx.code.extend_from_slice(raw);
+            }
         }
 
         // ── MOV_RR (orr xd, xzr, xn) — 0xAA0003E0 | (Rm<<16) | Rd ────────

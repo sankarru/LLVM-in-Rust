@@ -31,7 +31,7 @@ jobs:
 
       - name: Run base benchmarks
         working-directory: base
-        run: cargo +stable bench -p llvm-bench --bench pipeline -- --save-baseline base
+        run: cargo +stable bench -p llvm-in-rust-bench --bench pipeline -- --save-baseline base
 
       - name: Run PR benchmarks
         working-directory: head

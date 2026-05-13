@@ -307,6 +307,19 @@ pub(crate) fn subst_kind(kind: InstrKind, subst: &HashMap<InstrId, ValueRef>) ->
             callee: s(callee),
             args: args.into_iter().map(s).collect(),
         },
+        InstrKind::InlineAsm {
+            asm_string,
+            constraints,
+            side_effect,
+            align_stack,
+            args,
+        } => InstrKind::InlineAsm {
+            asm_string,
+            constraints,
+            side_effect,
+            align_stack,
+            args: args.into_iter().map(s).collect(),
+        },
         // --- Terminators ---
         InstrKind::Ret { val } => InstrKind::Ret { val: val.map(s) },
         InstrKind::Br { dest } => InstrKind::Br { dest },

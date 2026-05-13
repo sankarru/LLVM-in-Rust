@@ -646,6 +646,19 @@ fn remap_kind(
             callee: s(callee),
             args: args.into_iter().map(s).collect(),
         },
+        InstrKind::InlineAsm {
+            asm_string,
+            constraints,
+            side_effect,
+            align_stack,
+            args,
+        } => InstrKind::InlineAsm {
+            asm_string,
+            constraints,
+            side_effect,
+            align_stack,
+            args: args.into_iter().map(s).collect(),
+        },
         InstrKind::Ret { val } => InstrKind::Ret { val: val.map(s) },
         InstrKind::Br { dest } => InstrKind::Br { dest: b(dest) },
         InstrKind::CondBr {
@@ -930,7 +943,10 @@ mod tests {
             hot_loop_bonus: 8,
         };
         let changed = pass.run_on_module(&mut ctx, &mut module);
-        assert!(changed, "hot-loop bonus should allow inlining in loop block");
+        assert!(
+            changed,
+            "hot-loop bonus should allow inlining in loop block"
+        );
         let after = module.functions[caller_idx].instructions.len();
         assert!(after > before);
     }

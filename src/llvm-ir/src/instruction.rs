@@ -449,6 +449,19 @@ pub enum InstrKind {
         callee: ValueRef,
         args: Vec<ValueRef>,
     },
+    /// Inline assembly call-site passthrough.
+    ///
+    /// This models LLVM IR `call <ty> asm [sideeffect] [alignstack]
+    /// "<template>", "<constraints>"(<args>)`. Constraint solving and
+    /// output-register assignment are intentionally deferred; backends may only
+    /// support side-effect-only passthrough templates at first.
+    InlineAsm {
+        asm_string: String,
+        constraints: String,
+        side_effect: bool,
+        align_stack: bool,
+        args: Vec<ValueRef>,
+    },
 
     // --- Terminators ---
     /// `Ret` variant.
@@ -538,6 +551,7 @@ impl InstrKind {
             InstrKind::InsertElement { .. } => "insertelement",
             InstrKind::ShuffleVector { .. } => "shufflevector",
             InstrKind::Call { .. } => "call",
+            InstrKind::InlineAsm { .. } => "call asm",
             InstrKind::Ret { .. } => "ret",
             InstrKind::Br { .. } => "br",
             InstrKind::CondBr { .. } => "br",
@@ -614,6 +628,7 @@ impl InstrKind {
                 v.extend_from_slice(args);
                 v
             }
+            InstrKind::InlineAsm { args, .. } => args.clone(),
             InstrKind::Ret { val } => val.iter().copied().collect(),
             InstrKind::Br { .. } | InstrKind::Unreachable => vec![],
             InstrKind::CondBr { cond, .. } => vec![*cond],
@@ -700,7 +715,8 @@ impl InstrKind {
             | InstrKind::ExtractElement { .. }
             | InstrKind::InsertElement { .. }
             | InstrKind::ShuffleVector { .. }
-            | InstrKind::Call { .. } => vec![],
+            | InstrKind::Call { .. }
+            | InstrKind::InlineAsm { .. } => vec![],
         }
     }
 }

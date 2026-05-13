@@ -551,6 +551,8 @@ mod instr_tag {
     pub const SHUFFLEVEC: u32 = 76;
     /// Public API for `CALL`.
     pub const CALL: u32 = 80;
+    /// Public API for `INLINE_ASM`.
+    pub const INLINE_ASM: u32 = 81;
     /// Public API for `RET`.
     pub const RET: u32 = 90;
     /// Public API for `BR`.
@@ -982,6 +984,24 @@ fn decode_instr(
                 tail,
                 callee_ty,
                 callee,
+                args,
+            }
+        }
+        instr_tag::INLINE_ASM => {
+            let asm_string = r.string()?;
+            let constraints = r.string()?;
+            let side_effect = r.u8()? != 0;
+            let align_stack = r.u8()? != 0;
+            let arg_count = r.u32()? as usize;
+            let mut args = Vec::with_capacity(arg_count);
+            for _ in 0..arg_count {
+                args.push(decode_vref(r)?);
+            }
+            InstrKind::InlineAsm {
+                asm_string,
+                constraints,
+                side_effect,
+                align_stack,
                 args,
             }
         }
