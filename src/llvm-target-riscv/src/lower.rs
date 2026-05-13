@@ -315,6 +315,17 @@ fn lower_instr(
             emit_mov_from_preg(mf, mblock, dst, INT_RET);
         }
 
+        InlineAsm { args, .. } => {
+            for &arg in args {
+                let _ = res!(arg);
+            }
+            mf.push(mblock, MInstr::new(NOP));
+            if instr.ty != ctx.void_ty {
+                let dst = new_dst!();
+                mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
+            }
+        }
+
         Store { .. } => {
             mf.push(mblock, MInstr::new(NOP));
         }

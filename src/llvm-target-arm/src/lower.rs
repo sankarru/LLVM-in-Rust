@@ -155,6 +155,18 @@ fn const_to_imm(cd: &ConstantData) -> i64 {
     }
 }
 
+fn inline_asm_bytes_aarch64(template: &str) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for part in template.split(|c| c == ';' || c == '\n') {
+        match part.trim().to_ascii_lowercase().as_str() {
+            "" => {}
+            "nop" => bytes.extend_from_slice(&0xD503201Fu32.to_le_bytes()),
+            _ => bytes.extend_from_slice(&0xD503201Fu32.to_le_bytes()),
+        }
+    }
+    bytes
+}
+
 fn pred_to_cc(pred: IntPredicate) -> i64 {
     match pred {
         IntPredicate::Eq => CC_EQ,
@@ -471,6 +483,22 @@ fn lower_instr(
             emit_mov_from_preg(mf, mblock, dst, INT_RET);
         }
 
+        InlineAsm {
+            asm_string, args, ..
+        } => {
+            for &arg in args {
+                let _ = res!(arg);
+            }
+            mf.push(
+                mblock,
+                MInstr::new(INLINE_ASM).with_bytes(inline_asm_bytes_aarch64(asm_string)),
+            );
+            if instr.ty != ctx.void_ty {
+                let dst = new_dst!();
+                mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
+            }
+        }
+
         // ── memory (placeholder — mem2reg removes most alloca/load/store) ────
         // Store produces no SSA result, so we must not call new_dst!().
         // Alloca / Load / GEP produce a result; emit a zero-materialisation so
@@ -644,6 +672,8 @@ fn emit_mov_from_preg(mf: &mut MachineFunction, mblock: usize, dst: VReg, preg: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::encode::AArch64Emitter;
+    use llvm_codegen::emit::{Emitter, ObjectFormat};
     use llvm_ir::{Builder, Context, Linkage, Module};
 
     fn make_add_fn() -> (Context, Module) {
@@ -846,6 +876,43 @@ mod tests {
              expected > {} machine blocks, got {}",
             ir_block_count,
             mf.blocks.len()
+        );
+    }
+
+    #[test]
+    fn inline_asm_nop_lowers_and_emits_aarch64_nop() {
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "asm_nop",
+            b.ctx.void_ty,
+            vec![],
+            vec![],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        b.build_inline_asm("", b.ctx.void_ty, "nop", "", true, false, vec![]);
+        b.build_ret_void();
+
+        let mut be = AArch64Backend;
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+        assert!(mf
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .any(|i| i.opcode == INLINE_ASM));
+
+        let mut emitter = AArch64Emitter::new(ObjectFormat::Elf);
+        let section = emitter.emit_function(&mf);
+        assert!(
+            section
+                .data
+                .windows(4)
+                .any(|w| w == [0x1f, 0x20, 0x03, 0xd5]),
+            "AArch64 inline asm nop must emit D503201F"
         );
     }
 

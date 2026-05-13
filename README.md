@@ -648,6 +648,13 @@ std::fs::write("/tmp/out.o", &assembled.bytes)?;
 println!("mc bytes: {}", assembled.report.bytes);
 ```
 
+Inline assembly support is intentionally small in v0.1.x: textual IR can parse
+and print LLVM-style inline asm calls such as `call void asm sideeffect "nop", ""()`,
+and x86-64/AArch64 lowering recognizes `nop` templates for direct machine-byte
+emission. Constraint solving, output operands, and register allocation across
+asm operands are not implemented yet; unsupported templates conservatively emit
+NOP bytes instead of attempting to assemble arbitrary text.
+
 macOS (Mach-O):
 
 ```bash

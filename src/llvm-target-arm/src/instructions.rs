@@ -88,6 +88,8 @@ pub const SXTH: MOpcode = MOpcode(0x62);
 
 /// `nop`
 pub const NOP: MOpcode = MOpcode(0x70);
+/// Raw inline assembly bytes emitted verbatim after minimal template decoding.
+pub const INLINE_ASM: MOpcode = MOpcode(0x71);
 
 // ── condition codes (used as Imm operands with B_COND / CSET) ────────────
 //

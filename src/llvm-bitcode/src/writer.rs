@@ -447,6 +447,8 @@ mod instr_tag {
     pub const SHUFFLEVEC: u32 = 76;
     /// Public API for `CALL`.
     pub const CALL: u32 = 80;
+    /// Public API for `INLINE_ASM`.
+    pub const INLINE_ASM: u32 = 81;
     /// Public API for `RET`.
     pub const RET: u32 = 90;
     /// Public API for `BR`.
@@ -829,6 +831,23 @@ fn encode_instr(w: &mut Writer, instr: &Instruction) {
             w.u8(tail_tag);
             w.u32(callee_ty.0);
             encode_vref(w, callee);
+            w.u32(args.len() as u32);
+            for arg in args {
+                encode_vref(w, arg);
+            }
+        }
+        InlineAsm {
+            asm_string,
+            constraints,
+            side_effect,
+            align_stack,
+            args,
+        } => {
+            w.u32(instr_tag::INLINE_ASM);
+            w.string(asm_string);
+            w.string(constraints);
+            w.u8(if *side_effect { 1 } else { 0 });
+            w.u8(if *align_stack { 1 } else { 0 });
             w.u32(args.len() as u32);
             for arg in args {
                 encode_vref(w, arg);
