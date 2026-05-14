@@ -50,8 +50,6 @@ pub fn build_pipeline(level: OptLevel) -> PassManager {
             pm.add_function_pass(ConstantFold);
             pm.add_function_pass(ConstProp);
             pm.add_function_pass(DeadCodeElim);
-            pm.add_function_pass(JumpThreading);
-            pm.add_function_pass(TailCallOpt);
         }
         OptLevel::O2 => {
             pm.add_function_pass(Sroa);
