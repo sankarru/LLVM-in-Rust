@@ -17,6 +17,8 @@ pub mod inline_pass;
 pub mod ipcp;
 /// Public API for `loop_unroll`.
 pub mod loop_unroll;
+/// Public API for `jump_threading`.
+pub mod jump_threading;
 /// Public API for `mem2reg`.
 pub mod mem2reg;
 /// Public API for `pass`.
@@ -25,6 +27,8 @@ pub mod pass;
 pub mod pipeline;
 /// Public API for `sroa`.
 pub mod sroa;
+/// Public API for `tailcall`.
+pub mod tailcall;
 mod value_rewrite;
 
 /// Public API for `re-export`.
@@ -46,6 +50,8 @@ pub use ipcp::Ipcp;
 /// Public API for `re-export`.
 pub use loop_unroll::LoopUnroll;
 /// Public API for `re-export`.
+pub use jump_threading::JumpThreading;
+/// Public API for `re-export`.
 pub use mem2reg::Mem2Reg;
 /// Public API for `re-export`.
 pub use pass::{FunctionPass, ModulePass, PassManager};
@@ -53,3 +59,5 @@ pub use pass::{FunctionPass, ModulePass, PassManager};
 pub use pipeline::{build_pipeline, OptLevel};
 /// Public API for `re-export`.
 pub use sroa::Sroa;
+/// Public API for `re-export`.
+pub use tailcall::TailCallOpt;

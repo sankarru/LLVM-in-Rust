@@ -5,7 +5,7 @@
 
 use crate::{
     pass::PassManager, ConstProp, ConstantFold, DeadArgElim, DeadCodeElim, Gvn, Inliner, Ipcp,
-    LoopUnroll, Mem2Reg, Sroa,
+    JumpThreading, LoopUnroll, Mem2Reg, Sroa, TailCallOpt,
 };
 
 /// Optimization level preset.
@@ -50,6 +50,8 @@ pub fn build_pipeline(level: OptLevel) -> PassManager {
             pm.add_function_pass(ConstantFold);
             pm.add_function_pass(ConstProp);
             pm.add_function_pass(DeadCodeElim);
+            pm.add_function_pass(JumpThreading);
+            pm.add_function_pass(TailCallOpt);
         }
         OptLevel::O2 => {
             pm.add_function_pass(Sroa);
@@ -60,11 +62,14 @@ pub fn build_pipeline(level: OptLevel) -> PassManager {
             pm.add_function_pass(ConstantFold);
             pm.add_function_pass(ConstProp);
             pm.add_function_pass(DeadCodeElim);
+            pm.add_function_pass(JumpThreading);
+            pm.add_function_pass(TailCallOpt);
             // Clean up after inlining.
             pm.add_function_pass(Gvn);
             pm.add_function_pass(ConstantFold);
             pm.add_function_pass(ConstProp);
             pm.add_function_pass(DeadCodeElim);
+            pm.add_function_pass(JumpThreading);
         }
         OptLevel::O3 => {
             pm.add_function_pass(Sroa);
@@ -84,6 +89,8 @@ pub fn build_pipeline(level: OptLevel) -> PassManager {
             pm.add_function_pass(ConstantFold);
             pm.add_function_pass(ConstProp);
             pm.add_function_pass(DeadCodeElim);
+            pm.add_function_pass(JumpThreading);
+            pm.add_function_pass(TailCallOpt);
             // Extra cleanup rounds as a placeholder for future aggressive O3.
             pm.add_function_pass(Gvn);
             pm.add_function_pass(ConstantFold);
