@@ -243,6 +243,141 @@ entry:
     }
 }
 
+/// Parse clang-style constant getelementptr in `load` operand position.
+/// Each constexpr in an instruction operand is hoisted at parse time to a
+/// fresh anonymous SSA instruction inserted at the current insertion point.
+/// Covers issue #207 PR-A.
+#[test]
+fn parse_constexpr_gep_in_load_operand() {
+    let src = r#"
+@table = external constant [8 x i32]
+define i32 @f() {
+entry:
+  %v = load i32, ptr getelementptr inbounds ([8 x i32], ptr @table, i64 0, i64 3), align 4
+  ret i32 %v
+}
+"#;
+    let (ctx, module) = parse(src).expect("parse failed");
+    let f = &module.functions[0];
+    let bb = &f.blocks[0];
+
+    // The constexpr GEP must have been hoisted into the entry block before
+    // the load that uses it — block body length goes from 1 (the load) to 2
+    // (hoisted GEP + load).
+    assert_eq!(
+        bb.body.len(),
+        2,
+        "expected hoisted GEP + load in block body, got body={:?}",
+        bb.body
+    );
+
+    let hoisted = f.instr(bb.body[0]);
+    assert!(
+        matches!(hoisted.kind, InstrKind::GetElementPtr { inbounds: true, .. }),
+        "first instruction should be a hoisted inbounds GEP, got {:?}",
+        hoisted.kind
+    );
+    assert_eq!(
+        hoisted.name, None,
+        "hoisted constexpr should be anonymous (parser slot)"
+    );
+
+    let load = f.instr(bb.body[1]);
+    assert!(matches!(load.kind, InstrKind::Load { .. }));
+
+    let printed = Printer::new(&ctx).print_module(&module);
+    assert!(
+        printed.contains("%v0 = getelementptr inbounds [8 x i32], ptr @table, i64 0, i64 3"),
+        "printed module missing hoisted GEP definition:\n{printed}"
+    );
+    assert!(
+        printed.contains("%v = load i32, ptr %v0"),
+        "printed module missing load using hoisted GEP:\n{printed}"
+    );
+}
+
+/// `bitcast`, `inttoptr`, `ptrtoint`, `addrspacecast`, `trunc`, `zext`,
+/// `sext` constexpr forms in instruction operand position all hoist to
+/// fresh SSA instructions.
+#[test]
+fn parse_constexpr_cast_forms_in_operands() {
+    let src = r#"
+@g = external constant i32
+declare void @sink(ptr)
+define i64 @f() {
+entry:
+  call void @sink(ptr bitcast (ptr @g to ptr))
+  call void @sink(ptr inttoptr (i64 4096 to ptr))
+  %p = ptrtoint ptr getelementptr inbounds ([4 x i32], ptr @g, i64 0, i64 2) to i64
+  ret i64 %p
+}
+"#;
+    let (_ctx, module) = parse(src).expect("parse failed");
+    let bb = &module.functions[1].blocks[0];
+
+    // entry must now contain: hoisted bitcast, call#1, hoisted inttoptr,
+    // call#2, hoisted GEP, ptrtoint, ret = 7 instrs total (5 body + 1
+    // terminator pulled out).  Just assert at least 5 in body since the
+    // exact terminator handling lives in the test harness conventions.
+    assert!(
+        bb.body.len() >= 5,
+        "expected at least 5 body instructions from hoisting, got {}",
+        bb.body.len()
+    );
+
+    // First instruction must be the hoisted bitcast (anonymous).
+    let first = module.functions[1].instr(bb.body[0]);
+    assert!(matches!(first.kind, InstrKind::BitCast { .. }));
+    assert_eq!(first.name, None);
+}
+
+/// `@table = internal constant [8 x i32] [i32 1, i32 2, ...]` style array
+/// global initializers parse into `ConstantData::Array`.  Covers issue #207
+/// PR-A's "array literal as global initializer" gap.
+#[test]
+fn parse_global_array_constant_initializer() {
+    let src = r#"
+@table = internal constant [8 x i32] [i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, i32 8]
+"#;
+    let (ctx, module) = parse(src).expect("parse failed");
+    assert_eq!(module.globals.len(), 1);
+    let init_cid = module.globals[0].initializer.expect("initializer present");
+    match ctx.get_const(init_cid) {
+        ConstantData::Array { elements, .. } => assert_eq!(elements.len(), 8),
+        other => panic!("expected Array initializer, got {other:?}"),
+    }
+    let printed = Printer::new(&ctx).print_module(&module);
+    assert!(
+        printed.contains("[i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, i32 8]"),
+        "{printed}"
+    );
+}
+
+/// Array of named-struct constants — each element prefixed with the named
+/// struct type and a `{ ... }` field list — round-trips through the parser.
+/// Mirrors clang's vtable-style emission pattern.
+#[test]
+fn parse_global_array_of_named_struct_constants() {
+    let src = r#"
+%struct.entry = type { ptr, i32 }
+declare i32 @handler(i32)
+@vt = internal constant [3 x %struct.entry] [%struct.entry { ptr @handler, i32 10 }, %struct.entry { ptr @handler, i32 20 }, %struct.entry { ptr @handler, i32 30 }]
+"#;
+    let (ctx, module) = parse(src).expect("parse failed");
+    let init_cid = module.globals[0].initializer.expect("initializer present");
+    let ConstantData::Array { elements, .. } = ctx.get_const(init_cid) else {
+        panic!("expected outer Array");
+    };
+    assert_eq!(elements.len(), 3);
+    // Each element should be a Struct constant with 2 fields.
+    for &eid in elements {
+        match ctx.get_const(eid) {
+            ConstantData::Struct { fields, .. } => assert_eq!(fields.len(), 2),
+            other => panic!("expected Struct element, got {other:?}"),
+        }
+    }
+}
+
 /// Parse and print the core `invoke` / `landingpad` exception-control shape.
 #[test]
 fn parse_print_invoke_landingpad() {

@@ -71,6 +71,10 @@ struct Parser<'src> {
     pending_blocks: HashMap<String, BlockId>,
     /// Current function being parsed (None at module level).
     current_func: Option<usize>, // index into module.functions
+    /// Current block being filled (set inside `parse_instruction`; used to
+    /// hoist parse-time constexprs to fresh SSA instructions inserted
+    /// before the using instruction).
+    current_block: Option<BlockId>,
     /// Local value table: name → ValueRef, for the current function.
     locals: HashMap<String, ValueRef>,
     /// Unnamed slots: slot number → ValueRef.
@@ -85,6 +89,7 @@ impl<'src> Parser<'src> {
             module: Module::new(""),
             pending_blocks: HashMap::new(),
             current_func: None,
+            current_block: None,
             locals: HashMap::new(),
             unnamed: HashMap::new(),
         }
@@ -601,6 +606,10 @@ impl<'src> Parser<'src> {
     // -----------------------------------------------------------------------
 
     fn parse_instruction(&mut self, bid: BlockId) -> Result<(), ParseError> {
+        // Record current insertion point so that constexpr operands inside
+        // this instruction can hoist themselves to fresh SSA instructions
+        // (appended before the using instruction).
+        self.current_block = Some(bid);
         let fid = self
             .current_func
             .ok_or_else(|| self.err("instruction outside function"))?;
@@ -1576,11 +1585,213 @@ impl<'src> Parser<'src> {
                 let i1 = self.ctx.i1_ty;
                 Ok(ValueRef::Constant(self.ctx.const_int(i1, 0)))
             }
+            // ----- Aggregate constant literals (issue #207) -----
+            //
+            // Clang produces global initializers such as
+            //     @t = constant [8 x i32] [i32 1, i32 2, ..., i32 8]
+            //     @v = constant [2 x %S] [%S { ptr @h, i32 10 }, %S { ... }]
+            // and the inner aggregate literals can appear nested.  We parse
+            // them into `ConstantData::Array` / `ConstantData::Struct`
+            // records directly; the surrounding type comes from the parser
+            // context (`ty` argument).
+            Token::LBracket => self.parse_array_constant(ty),
+            Token::LBrace => self.parse_struct_constant(ty, /*packed=*/ false),
+            Token::LAngle => self.parse_packed_struct_or_vector_constant(ty),
+            // ----- LLVM constant expressions (issue #207) -----
+            //
+            // Clang emits forms such as
+            //     load i32, ptr getelementptr inbounds (i32, ptr @t, i64 3)
+            // where the inner `getelementptr (...)` is a ConstantExpr rather
+            // than a value reference.  Our IR does not yet have a first-class
+            // ConstantExpr representation, so we materialise each such
+            // constexpr as a fresh anonymous SSA instruction inserted before
+            // the using instruction and use that instruction's result in
+            // place of the would-be constant.
+            //
+            // Hoisting only works inside a function body — global initializer
+            // constexprs (PR-B follow-up) need a real `ConstantData::Expr`
+            // variant; until then they error out cleanly.
+            Token::Kw(Keyword::Getelementptr) => self.parse_constexpr_gep_as_instr(),
+            Token::Kw(Keyword::Bitcast) => {
+                self.parse_constexpr_cast_as_instr(Keyword::Bitcast, |val, to| {
+                    InstrKind::BitCast { val, to }
+                })
+            }
+            Token::Kw(Keyword::Inttoptr) => {
+                self.parse_constexpr_cast_as_instr(Keyword::Inttoptr, |val, to| {
+                    InstrKind::IntToPtr { val, to }
+                })
+            }
+            Token::Kw(Keyword::Ptrtoint) => {
+                self.parse_constexpr_cast_as_instr(Keyword::Ptrtoint, |val, to| {
+                    InstrKind::PtrToInt { val, to }
+                })
+            }
+            Token::Kw(Keyword::Addrspacecast) => {
+                self.parse_constexpr_cast_as_instr(Keyword::Addrspacecast, |val, to| {
+                    InstrKind::AddrSpaceCast { val, to }
+                })
+            }
+            Token::Kw(Keyword::Trunc) => {
+                self.parse_constexpr_cast_as_instr(Keyword::Trunc, |val, to| {
+                    InstrKind::Trunc { val, to }
+                })
+            }
+            Token::Kw(Keyword::Zext) => {
+                self.parse_constexpr_cast_as_instr(Keyword::Zext, |val, to| {
+                    InstrKind::ZExt { val, to }
+                })
+            }
+            Token::Kw(Keyword::Sext) => {
+                self.parse_constexpr_cast_as_instr(Keyword::Sext, |val, to| {
+                    InstrKind::SExt { val, to }
+                })
+            }
             _ => {
                 let t = self.lex.next()?;
                 Err(self.err(format!("expected value, got {:?}", t)))
             }
         }
+    }
+
+    /// Parse `[ <ty> <v>, <ty> <v>, ... ]` as a constant array.
+    fn parse_array_constant(&mut self, ty: TypeId) -> Result<ValueRef, ParseError> {
+        self.lex.expect(&Token::LBracket)?;
+        let mut elements = Vec::new();
+        if !matches!(self.lex.peek()?, Token::RBracket) {
+            let (val, _) = self.parse_typed_value()?;
+            elements.push(self.value_ref_to_const_id(val)?);
+            while self.lex.eat(&Token::Comma) {
+                let (val, _) = self.parse_typed_value()?;
+                elements.push(self.value_ref_to_const_id(val)?);
+            }
+        }
+        self.lex.expect(&Token::RBracket)?;
+        let c = self.ctx.push_const(ConstantData::Array { ty, elements });
+        Ok(ValueRef::Constant(c))
+    }
+
+    /// Parse `{ <ty> <v>, <ty> <v>, ... }` as an anonymous (or named) struct
+    /// constant.  The result `TypeId` is the surrounding context's type.
+    fn parse_struct_constant(
+        &mut self,
+        ty: TypeId,
+        _packed: bool,
+    ) -> Result<ValueRef, ParseError> {
+        self.lex.expect(&Token::LBrace)?;
+        let mut fields = Vec::new();
+        if !matches!(self.lex.peek()?, Token::RBrace) {
+            let (val, _) = self.parse_typed_value()?;
+            fields.push(self.value_ref_to_const_id(val)?);
+            while self.lex.eat(&Token::Comma) {
+                let (val, _) = self.parse_typed_value()?;
+                fields.push(self.value_ref_to_const_id(val)?);
+            }
+        }
+        self.lex.expect(&Token::RBrace)?;
+        let c = self.ctx.push_const(ConstantData::Struct { ty, fields });
+        Ok(ValueRef::Constant(c))
+    }
+
+    /// Disambiguate `<{ ... }>` (packed struct) from `< <ty> <v>, ... >`
+    /// (vector constant).
+    fn parse_packed_struct_or_vector_constant(
+        &mut self,
+        ty: TypeId,
+    ) -> Result<ValueRef, ParseError> {
+        self.lex.expect(&Token::LAngle)?;
+        if matches!(self.lex.peek()?, Token::LBrace) {
+            // <{ ... }> packed struct literal.
+            let result = self.parse_struct_constant(ty, /*packed=*/ true)?;
+            self.lex.expect(&Token::RAngle)?;
+            return Ok(result);
+        }
+        // Vector literal: <ty v, ty v, ...>
+        let mut elements = Vec::new();
+        if !matches!(self.lex.peek()?, Token::RAngle) {
+            let (val, _) = self.parse_typed_value()?;
+            elements.push(self.value_ref_to_const_id(val)?);
+            while self.lex.eat(&Token::Comma) {
+                let (val, _) = self.parse_typed_value()?;
+                elements.push(self.value_ref_to_const_id(val)?);
+            }
+        }
+        self.lex.expect(&Token::RAngle)?;
+        let c = self.ctx.push_const(ConstantData::Vector { ty, elements });
+        Ok(ValueRef::Constant(c))
+    }
+
+    /// Convert a `ValueRef` to a `ConstId` for use inside an aggregate
+    /// literal.  Non-constant references inside a constant aggregate are a
+    /// parse error.
+    fn value_ref_to_const_id(&self, vref: ValueRef) -> Result<ConstId, ParseError> {
+        match vref {
+            ValueRef::Constant(c) => Ok(c),
+            _ => Err(self.err("expected constant inside aggregate literal")),
+        }
+    }
+
+    /// Hoist a constant `getelementptr (...)` expression to a fresh SSA
+    /// instruction inserted at the current insertion point.
+    fn parse_constexpr_gep_as_instr(&mut self) -> Result<ValueRef, ParseError> {
+        let bid = self
+            .current_block
+            .ok_or_else(|| self.err("constant getelementptr outside function body not yet supported"))?;
+        let fid = self
+            .current_func
+            .ok_or_else(|| self.err("constant getelementptr outside function body not yet supported"))?;
+        self.lex.expect_kw(&Keyword::Getelementptr)?;
+        let inbounds = self.lex.eat_kw(Keyword::Inbounds);
+        self.lex.expect(&Token::LParen)?;
+        let base_ty = self.parse_type()?;
+        self.lex.expect(&Token::Comma)?;
+        let ptr_ty2 = self.parse_type()?;
+        let ptr = self.parse_value(ptr_ty2)?;
+        let mut indices = Vec::new();
+        while self.lex.eat(&Token::Comma) {
+            let (idx, _) = self.parse_typed_value()?;
+            indices.push(idx);
+        }
+        self.lex.expect(&Token::RParen)?;
+        let result_ty = self.ctx.ptr_ty;
+        let kind = InstrKind::GetElementPtr {
+            inbounds,
+            base_ty,
+            ptr,
+            indices,
+        };
+        let iid = self.module.functions[fid].alloc_instr(Instruction::new(None, result_ty, kind));
+        self.module.functions[fid].block_mut(bid).append_instr(iid);
+        Ok(ValueRef::Instruction(iid))
+    }
+
+    /// Hoist a constant cast expression — `bitcast / inttoptr / ptrtoint /
+    /// addrspacecast / trunc / zext / sext (<src-ty> <src-val> to <dst-ty>)`
+    /// — to a fresh SSA instruction inserted at the current insertion point.
+    fn parse_constexpr_cast_as_instr<F>(
+        &mut self,
+        kw: Keyword,
+        make_kind: F,
+    ) -> Result<ValueRef, ParseError>
+    where
+        F: FnOnce(ValueRef, TypeId) -> InstrKind,
+    {
+        let bid = self
+            .current_block
+            .ok_or_else(|| self.err("constant cast outside function body not yet supported"))?;
+        let fid = self
+            .current_func
+            .ok_or_else(|| self.err("constant cast outside function body not yet supported"))?;
+        self.lex.expect_kw(&kw)?;
+        self.lex.expect(&Token::LParen)?;
+        let (val, _src_ty) = self.parse_typed_value()?;
+        self.lex.expect_kw(&Keyword::To)?;
+        let dst_ty = self.parse_type()?;
+        self.lex.expect(&Token::RParen)?;
+        let kind = make_kind(val, dst_ty);
+        let iid = self.module.functions[fid].alloc_instr(Instruction::new(None, dst_ty, kind));
+        self.module.functions[fid].block_mut(bid).append_instr(iid);
+        Ok(ValueRef::Instruction(iid))
     }
 
     fn parse_constant(&mut self, ty: TypeId) -> Result<ConstId, ParseError> {
