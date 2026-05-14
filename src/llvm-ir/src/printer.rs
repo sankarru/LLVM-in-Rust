@@ -387,11 +387,17 @@ impl<'a> Printer<'a> {
         let instr = func.instr(id);
         out.push_str("  ");
 
-        // Result name if non-void.
+        // Result name if non-void.  Named instructions print as `%name = `;
+        // anonymous instructions that produce a value print using the same
+        // `%v{id}` slot name `write_value` uses when referencing them — this
+        // is what makes parser-time constexpr hoisting (issue #207)
+        // round-trip cleanly through print → parse → print.
         if let Some(ref name) = instr.name {
             if !name.is_empty() {
                 write!(out, "%{} = ", name).unwrap();
             }
+        } else if !instr.is_terminator() && instr.ty != self.ctx.void_ty {
+            write!(out, "%v{} = ", id.0).unwrap();
         }
 
         // Emit fast-math flags helper.
