@@ -257,6 +257,56 @@ impl<'a> Printer<'a> {
             ConstantData::GlobalRef { name, .. } => {
                 write!(out, "@{}", name).unwrap();
             }
+            ConstantData::Expr { ty, op, operands } => {
+                self.write_const_expr(out, *op, *ty, operands);
+            }
+        }
+    }
+
+    /// Print an LLVM constant expression in its parenthesised form, e.g.
+    /// `getelementptr inbounds (T, ptr <base>, i64 N, ...)` or
+    /// `bitcast (T <c> to U)`.  Issue #207 PR-B.
+    fn write_const_expr(
+        &self,
+        out: &mut String,
+        op: crate::value::ConstExprOp,
+        result_ty: TypeId,
+        operands: &[ConstId],
+    ) {
+        use crate::value::ConstExprOp;
+        match op {
+            ConstExprOp::GetElementPtr { inbounds, base_ty } => {
+                out.push_str("getelementptr");
+                if inbounds {
+                    out.push_str(" inbounds");
+                }
+                out.push_str(" (");
+                self.write_type(out, base_ty);
+                if let Some(&base) = operands.first() {
+                    out.push_str(", ");
+                    self.write_const_with_type(out, base);
+                }
+                for &idx in operands.iter().skip(1) {
+                    out.push_str(", ");
+                    self.write_const_with_type(out, idx);
+                }
+                out.push(')');
+            }
+            op if op.is_cast() => {
+                out.push_str(op.as_str());
+                out.push_str(" (");
+                if let Some(&src) = operands.first() {
+                    self.write_const_with_type(out, src);
+                }
+                out.push_str(" to ");
+                self.write_type(out, result_ty);
+                out.push(')');
+            }
+            _ => {
+                // Unreachable for the variant set we currently support.
+                out.push_str(op.as_str());
+                out.push_str(" (...)");
+            }
         }
     }
 

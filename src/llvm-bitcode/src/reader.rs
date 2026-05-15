@@ -253,6 +253,20 @@ mod const_tag {
     pub const VECTOR: u8 = 9;
     /// Public API for `GLOBAL_REF`.
     pub const GLOBAL_REF: u8 = 10;
+    /// Public API for `EXPR`.
+    pub const EXPR: u8 = 11;
+}
+
+mod constexpr_op_tag {
+    pub const GEP: u8 = 0;
+    pub const GEP_INBOUNDS: u8 = 1;
+    pub const BITCAST: u8 = 2;
+    pub const INTTOPTR: u8 = 3;
+    pub const PTRTOINT: u8 = 4;
+    pub const ADDRSPACECAST: u8 = 5;
+    pub const TRUNC: u8 = 6;
+    pub const ZEXT: u8 = 7;
+    pub const SEXT: u8 = 8;
 }
 
 fn decode_const(
@@ -339,6 +353,41 @@ fn decode_const(
                 id: GlobalId(id_raw),
                 name,
             })
+        }
+        const_tag::EXPR => {
+            use llvm_ir::ConstExprOp;
+            let ty = map_type_id(type_id_map, r.u32()? as usize)?;
+            let op_tag = r.u8()?;
+            let op = match op_tag {
+                constexpr_op_tag::GEP => {
+                    let base_ty = map_type_id(type_id_map, r.u32()? as usize)?;
+                    ConstExprOp::GetElementPtr {
+                        inbounds: false,
+                        base_ty,
+                    }
+                }
+                constexpr_op_tag::GEP_INBOUNDS => {
+                    let base_ty = map_type_id(type_id_map, r.u32()? as usize)?;
+                    ConstExprOp::GetElementPtr {
+                        inbounds: true,
+                        base_ty,
+                    }
+                }
+                constexpr_op_tag::BITCAST => ConstExprOp::BitCast,
+                constexpr_op_tag::INTTOPTR => ConstExprOp::IntToPtr,
+                constexpr_op_tag::PTRTOINT => ConstExprOp::PtrToInt,
+                constexpr_op_tag::ADDRSPACECAST => ConstExprOp::AddrSpaceCast,
+                constexpr_op_tag::TRUNC => ConstExprOp::Trunc,
+                constexpr_op_tag::ZEXT => ConstExprOp::ZExt,
+                constexpr_op_tag::SEXT => ConstExprOp::SExt,
+                other => return Err(BitcodeError::UnsupportedRecord(other as u32)),
+            };
+            let n = r.u32()? as usize;
+            let mut operands = Vec::with_capacity(n);
+            for _ in 0..n {
+                operands.push(map_const_id(const_id_map, r.u32()? as usize)?);
+            }
+            Ok(ConstantData::Expr { ty, op, operands })
         }
         other => Err(BitcodeError::UnsupportedRecord(other as u32)),
     }

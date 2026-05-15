@@ -32,6 +32,77 @@ pub enum ConstantData {
         id: GlobalId,
         name: String,
     },
+    /// LLVM constant expression — e.g. `getelementptr (T, ptr @gv, i64 3)`
+    /// inside a global initializer that can't be hoisted to an SSA
+    /// instruction.  Issue #207 PR-B.
+    Expr {
+        /// Result type of the expression.
+        ty: TypeId,
+        /// Public API for `op`.
+        op: ConstExprOp,
+        /// Constant operands.  For `GetElementPtr`, operands[0] is the base
+        /// pointer; operands[1..] are the indices.  For unary casts,
+        /// operands[0] is the source value.
+        operands: Vec<ConstId>,
+    },
+}
+
+/// Operation tag for [`ConstantData::Expr`].  Only the constexpr forms
+/// emitted by clang at `-O0` are represented; richer ops (`add`, `select`,
+/// `icmp`, etc.) are a follow-up if compatibility surveys turn them up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstExprOp {
+    /// `getelementptr [inbounds] (T, ptr <base>, indices...)`
+    GetElementPtr {
+        /// Whether the constexpr GEP carries the `inbounds` flag.
+        inbounds: bool,
+        /// Aggregate / source-element type for index arithmetic.
+        base_ty: TypeId,
+    },
+    /// `bitcast (T C to U)`
+    BitCast,
+    /// `inttoptr (iN C to ptr)`
+    IntToPtr,
+    /// `ptrtoint (ptr C to iN)`
+    PtrToInt,
+    /// `addrspacecast (T C to U)`
+    AddrSpaceCast,
+    /// `trunc (T C to U)`
+    Trunc,
+    /// `zext (T C to U)`
+    ZExt,
+    /// `sext (T C to U)`
+    SExt,
+}
+
+impl ConstExprOp {
+    /// Textual opcode spelling (no parentheses / operands).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConstExprOp::GetElementPtr { .. } => "getelementptr",
+            ConstExprOp::BitCast => "bitcast",
+            ConstExprOp::IntToPtr => "inttoptr",
+            ConstExprOp::PtrToInt => "ptrtoint",
+            ConstExprOp::AddrSpaceCast => "addrspacecast",
+            ConstExprOp::Trunc => "trunc",
+            ConstExprOp::ZExt => "zext",
+            ConstExprOp::SExt => "sext",
+        }
+    }
+
+    /// `true` for cast-shaped ops (single operand, written `<op> (T C to U)`).
+    pub fn is_cast(self) -> bool {
+        matches!(
+            self,
+            ConstExprOp::BitCast
+                | ConstExprOp::IntToPtr
+                | ConstExprOp::PtrToInt
+                | ConstExprOp::AddrSpaceCast
+                | ConstExprOp::Trunc
+                | ConstExprOp::ZExt
+                | ConstExprOp::SExt
+        )
+    }
 }
 
 /// A function argument (SSA value produced by function entry).

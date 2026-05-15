@@ -199,6 +199,29 @@ mod const_tag {
     pub const VECTOR: u8 = 9;
     /// Public API for `GLOBAL_REF`.
     pub const GLOBAL_REF: u8 = 10;
+    /// Public API for `EXPR`.
+    pub const EXPR: u8 = 11;
+}
+
+mod constexpr_op_tag {
+    /// `getelementptr` (without `inbounds`).
+    pub const GEP: u8 = 0;
+    /// `getelementptr inbounds`.
+    pub const GEP_INBOUNDS: u8 = 1;
+    /// Public API for `BITCAST`.
+    pub const BITCAST: u8 = 2;
+    /// Public API for `INTTOPTR`.
+    pub const INTTOPTR: u8 = 3;
+    /// Public API for `PTRTOINT`.
+    pub const PTRTOINT: u8 = 4;
+    /// Public API for `ADDRSPACECAST`.
+    pub const ADDRSPACECAST: u8 = 5;
+    /// Public API for `TRUNC`.
+    pub const TRUNC: u8 = 6;
+    /// Public API for `ZEXT`.
+    pub const ZEXT: u8 = 7;
+    /// Public API for `SEXT`.
+    pub const SEXT: u8 = 8;
 }
 
 fn encode_const(w: &mut Writer, cd: &ConstantData) {
@@ -266,6 +289,32 @@ fn encode_const(w: &mut Writer, cd: &ConstantData) {
             w.u32(ty.0);
             w.u32(id.0);
             w.string(name);
+        }
+        ConstantData::Expr { ty, op, operands } => {
+            w.u8(const_tag::EXPR);
+            w.u32(ty.0);
+            use llvm_ir::ConstExprOp;
+            match op {
+                ConstExprOp::GetElementPtr { inbounds, base_ty } => {
+                    if *inbounds {
+                        w.u8(constexpr_op_tag::GEP_INBOUNDS);
+                    } else {
+                        w.u8(constexpr_op_tag::GEP);
+                    }
+                    w.u32(base_ty.0);
+                }
+                ConstExprOp::BitCast => w.u8(constexpr_op_tag::BITCAST),
+                ConstExprOp::IntToPtr => w.u8(constexpr_op_tag::INTTOPTR),
+                ConstExprOp::PtrToInt => w.u8(constexpr_op_tag::PTRTOINT),
+                ConstExprOp::AddrSpaceCast => w.u8(constexpr_op_tag::ADDRSPACECAST),
+                ConstExprOp::Trunc => w.u8(constexpr_op_tag::TRUNC),
+                ConstExprOp::ZExt => w.u8(constexpr_op_tag::ZEXT),
+                ConstExprOp::SExt => w.u8(constexpr_op_tag::SEXT),
+            }
+            w.u32(operands.len() as u32);
+            for &c in operands {
+                w.u32(c.0);
+            }
         }
     }
 }
