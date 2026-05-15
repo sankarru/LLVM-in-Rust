@@ -1,7 +1,8 @@
 //! Integration tests: parse representative `.ll` snippets and assert structure.
 
 use llvm_ir::{
-    printer::Printer, ConstantData, InstrKind, LandingPadClause, MemOrdering, RmwOp, VpIntrinsic,
+    printer::Printer, ConstExprOp, ConstantData, InstrKind, LandingPadClause, MemOrdering, RmwOp,
+    VpIntrinsic,
 };
 use llvm_ir_parser::parser::parse;
 
@@ -376,6 +377,81 @@ declare i32 @handler(i32)
             other => panic!("expected Struct element, got {other:?}"),
         }
     }
+}
+
+/// Constexprs that appear inside a global initializer cannot be hoisted
+/// (there is no block to insert into).  They must round-trip through
+/// `ConstantData::Expr` and print as the LLVM parenthesised form.  Issue
+/// #207 PR-B.
+#[test]
+fn parse_constexpr_gep_in_global_initializer() {
+    let src = r#"
+@base = external constant [4 x i32]
+@p3 = constant ptr getelementptr inbounds ([4 x i32], ptr @base, i64 0, i64 3)
+"#;
+    let (ctx, module) = parse(src).expect("parse failed");
+    let init = module.globals[1]
+        .initializer
+        .expect("@p3 must have an initializer");
+    match ctx.get_const(init) {
+        ConstantData::Expr { op, operands, .. } => {
+            assert!(matches!(
+                op,
+                ConstExprOp::GetElementPtr {
+                    inbounds: true,
+                    ..
+                }
+            ));
+            assert_eq!(operands.len(), 3, "base + 2 indices");
+        }
+        other => panic!("expected ConstantData::Expr GEP, got {other:?}"),
+    }
+    let printed = Printer::new(&ctx).print_module(&module);
+    assert!(
+        printed
+            .contains("@p3 = constant ptr getelementptr inbounds ([4 x i32], ptr @base, i64 0, i64 3)"),
+        "constexpr GEP did not print in canonical form:\n{printed}"
+    );
+
+    // Re-parse the printed output to assert print → parse idempotence.
+    let (_ctx2, module2) = parse(&printed).expect("re-parse of printed IR failed");
+    let printed2 = Printer::new(&_ctx2).print_module(&module2);
+    assert_eq!(printed, printed2);
+}
+
+/// Constexpr `bitcast` and `inttoptr` in global initializer position.  Also
+/// covers the cast tag path.  Issue #207 PR-B.
+#[test]
+fn parse_constexpr_casts_in_global_initializer() {
+    let src = r#"
+@h = external constant i64
+@bc = constant ptr bitcast (ptr @h to ptr)
+@itp = constant ptr inttoptr (i64 4096 to ptr)
+"#;
+    let (ctx, module) = parse(src).expect("parse failed");
+    let bc_init = module.globals[1].initializer.unwrap();
+    assert!(matches!(
+        ctx.get_const(bc_init),
+        ConstantData::Expr {
+            op: ConstExprOp::BitCast,
+            ..
+        }
+    ));
+    let itp_init = module.globals[2].initializer.unwrap();
+    assert!(matches!(
+        ctx.get_const(itp_init),
+        ConstantData::Expr {
+            op: ConstExprOp::IntToPtr,
+            ..
+        }
+    ));
+
+    let printed = Printer::new(&ctx).print_module(&module);
+    assert!(printed.contains("@bc = constant ptr bitcast (ptr @h to ptr)"), "{printed}");
+    assert!(
+        printed.contains("@itp = constant ptr inttoptr (i64 4096 to ptr)"),
+        "{printed}"
+    );
 }
 
 /// Parse and print the core `invoke` / `landingpad` exception-control shape.

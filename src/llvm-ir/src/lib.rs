@@ -41,4 +41,4 @@ pub use printer::Printer;
 /// Public API for `re-export`.
 pub use types::{FloatKind, FunctionType, StructType, TypeData};
 /// Public API for `re-export`.
-pub use value::{Argument, ConstantData, GlobalVariable, Linkage};
+pub use value::{Argument, ConstExprOp, ConstantData, GlobalVariable, Linkage};

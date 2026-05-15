@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use std::fmt;
 
 use llvm_ir::{
-    ArgId, Argument, BasicBlock, BlockId, ConstId, ConstantData, Context, FastMathFlags, FloatKind,
-    FloatPredicate, Function, GlobalId, GlobalVariable, InstrKind, Instruction, IntArithFlags,
-    IntPredicate, LandingPadClause, Linkage, MemOrdering, Module, RmwOp, TailCallKind, TypeData,
-    TypeId, ValueRef,
+    ArgId, Argument, BasicBlock, BlockId, ConstExprOp, ConstId, ConstantData, Context,
+    FastMathFlags, FloatKind, FloatPredicate, Function, GlobalId, GlobalVariable, InstrKind,
+    Instruction, IntArithFlags, IntPredicate, LandingPadClause, Linkage, MemOrdering, Module,
+    RmwOp, TailCallKind, TypeData, TypeId, ValueRef,
 };
 
 use crate::lexer::{Keyword, LexError, Lexer, Token};
@@ -1731,15 +1731,12 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// Hoist a constant `getelementptr (...)` expression to a fresh SSA
-    /// instruction inserted at the current insertion point.
+    /// Parse a constant `getelementptr (T, ptr <base>, indices...)`
+    /// expression.  Inside a function body it is hoisted to a fresh SSA
+    /// instruction (PR-A).  Outside a function body — i.e. inside a global
+    /// variable initializer — it is stored as `ConstantData::Expr` so that
+    /// later codegen / bitcode can lower or relocate it (PR-B, issue #207).
     fn parse_constexpr_gep_as_instr(&mut self) -> Result<ValueRef, ParseError> {
-        let bid = self
-            .current_block
-            .ok_or_else(|| self.err("constant getelementptr outside function body not yet supported"))?;
-        let fid = self
-            .current_func
-            .ok_or_else(|| self.err("constant getelementptr outside function body not yet supported"))?;
         self.lex.expect_kw(&Keyword::Getelementptr)?;
         let inbounds = self.lex.eat_kw(Keyword::Inbounds);
         self.lex.expect(&Token::LParen)?;
@@ -1754,20 +1751,38 @@ impl<'src> Parser<'src> {
         }
         self.lex.expect(&Token::RParen)?;
         let result_ty = self.ctx.ptr_ty;
-        let kind = InstrKind::GetElementPtr {
-            inbounds,
-            base_ty,
-            ptr,
-            indices,
-        };
-        let iid = self.module.functions[fid].alloc_instr(Instruction::new(None, result_ty, kind));
-        self.module.functions[fid].block_mut(bid).append_instr(iid);
-        Ok(ValueRef::Instruction(iid))
+
+        if let (Some(fid), Some(bid)) = (self.current_func, self.current_block) {
+            let kind = InstrKind::GetElementPtr {
+                inbounds,
+                base_ty,
+                ptr,
+                indices,
+            };
+            let iid =
+                self.module.functions[fid].alloc_instr(Instruction::new(None, result_ty, kind));
+            self.module.functions[fid].block_mut(bid).append_instr(iid);
+            Ok(ValueRef::Instruction(iid))
+        } else {
+            // Global initializer position — store as ConstantData::Expr.
+            let mut operands = Vec::with_capacity(1 + indices.len());
+            operands.push(self.value_ref_to_const_id(ptr)?);
+            for idx in indices {
+                operands.push(self.value_ref_to_const_id(idx)?);
+            }
+            let cid = self.ctx.push_const(ConstantData::Expr {
+                ty: result_ty,
+                op: ConstExprOp::GetElementPtr { inbounds, base_ty },
+                operands,
+            });
+            Ok(ValueRef::Constant(cid))
+        }
     }
 
-    /// Hoist a constant cast expression — `bitcast / inttoptr / ptrtoint /
-    /// addrspacecast / trunc / zext / sext (<src-ty> <src-val> to <dst-ty>)`
-    /// — to a fresh SSA instruction inserted at the current insertion point.
+    /// Parse a constant cast expression — `bitcast / inttoptr / ptrtoint /
+    /// addrspacecast / trunc / zext / sext (<src-ty> <src-val> to <dst-ty>)`.
+    /// Inside a function body it is hoisted to a fresh SSA instruction;
+    /// inside a global initializer it is stored as `ConstantData::Expr`.
     fn parse_constexpr_cast_as_instr<F>(
         &mut self,
         kw: Keyword,
@@ -1776,22 +1791,42 @@ impl<'src> Parser<'src> {
     where
         F: FnOnce(ValueRef, TypeId) -> InstrKind,
     {
-        let bid = self
-            .current_block
-            .ok_or_else(|| self.err("constant cast outside function body not yet supported"))?;
-        let fid = self
-            .current_func
-            .ok_or_else(|| self.err("constant cast outside function body not yet supported"))?;
         self.lex.expect_kw(&kw)?;
         self.lex.expect(&Token::LParen)?;
         let (val, _src_ty) = self.parse_typed_value()?;
         self.lex.expect_kw(&Keyword::To)?;
         let dst_ty = self.parse_type()?;
         self.lex.expect(&Token::RParen)?;
-        let kind = make_kind(val, dst_ty);
-        let iid = self.module.functions[fid].alloc_instr(Instruction::new(None, dst_ty, kind));
-        self.module.functions[fid].block_mut(bid).append_instr(iid);
-        Ok(ValueRef::Instruction(iid))
+
+        if let (Some(fid), Some(bid)) = (self.current_func, self.current_block) {
+            let kind = make_kind(val, dst_ty);
+            let iid =
+                self.module.functions[fid].alloc_instr(Instruction::new(None, dst_ty, kind));
+            self.module.functions[fid].block_mut(bid).append_instr(iid);
+            Ok(ValueRef::Instruction(iid))
+        } else {
+            let op = match kw {
+                Keyword::Bitcast => ConstExprOp::BitCast,
+                Keyword::Inttoptr => ConstExprOp::IntToPtr,
+                Keyword::Ptrtoint => ConstExprOp::PtrToInt,
+                Keyword::Addrspacecast => ConstExprOp::AddrSpaceCast,
+                Keyword::Trunc => ConstExprOp::Trunc,
+                Keyword::Zext => ConstExprOp::ZExt,
+                Keyword::Sext => ConstExprOp::SExt,
+                other => {
+                    return Err(
+                        self.err(format!("unsupported constexpr cast keyword: {:?}", other))
+                    )
+                }
+            };
+            let operand_const = self.value_ref_to_const_id(val)?;
+            let cid = self.ctx.push_const(ConstantData::Expr {
+                ty: dst_ty,
+                op,
+                operands: vec![operand_const],
+            });
+            Ok(ValueRef::Constant(cid))
+        }
     }
 
     fn parse_constant(&mut self, ty: TypeId) -> Result<ConstId, ParseError> {
