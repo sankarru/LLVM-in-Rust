@@ -136,7 +136,7 @@ impl Emitter for X86Emitter {
         }
 
         let section_name = match self.format {
-            ObjectFormat::Elf => ".text",
+            ObjectFormat::Elf | ObjectFormat::Coff => ".text",
             ObjectFormat::MachO => "__text",
         };
 
@@ -149,6 +149,10 @@ impl Emitter for X86Emitter {
 
     fn object_format(&self) -> ObjectFormat {
         self.format
+    }
+
+    fn arch(&self) -> llvm_codegen::emit::Arch {
+        llvm_codegen::emit::Arch::X86_64
     }
 }
 

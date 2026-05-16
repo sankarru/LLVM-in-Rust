@@ -126,7 +126,7 @@ impl Emitter for AArch64Emitter {
         }
 
         let section_name = match self.format {
-            ObjectFormat::Elf => ".text",
+            ObjectFormat::Elf | ObjectFormat::Coff => ".text",
             ObjectFormat::MachO => "__text",
         };
 
@@ -139,6 +139,10 @@ impl Emitter for AArch64Emitter {
 
     fn object_format(&self) -> ObjectFormat {
         self.format
+    }
+
+    fn arch(&self) -> llvm_codegen::emit::Arch {
+        llvm_codegen::emit::Arch::AArch64
     }
 }
 
@@ -334,7 +338,7 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             }
         }
 
-        // ── CSET (cset xd, cond) — 0x9A9F17E0 | (inv_cond<<12) | Rd ───────
+        // ── CSET (cset xd, cond) — 0x9A9F07E0 | (inv_cond<<12) | Rd ───────
         // The CSET instruction is encoded as CSINC Rd, XZR, XZR, invert(cond).
         // invert(cond) = cond ^ 1 (flip the lowest bit to get the inverse condition).
         CSET => {
@@ -345,9 +349,10 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
                 // Invert condition for CSET encoding (CSINC with inverted cond).
                 let inv_cond = hw_cond ^ 1;
                 // CSINC Rd, XZR, XZR, inv_cond.
-                // Base constant: sf=1, op=0, S=0, bits[28:21]=11010110, Rm=XZR(31),
-                // cond=0000, o2=0, o1=1, Rn=XZR(31), Rd=0 → 0x9ADF07E0.
-                ctx.emit4(0x9ADF07E0 | ((inv_cond as u32) << 12) | rd);
+                // Base constant: sf=1, bits[30:21]=0011010100, Rm=XZR(31),
+                // cond=0000, o2=0, o1=1, Rn=XZR(31), Rd=0 → 0x9A9F07E0.
+                // bit 22 must be 0 per ARMv8 CSINC encoding spec.
+                ctx.emit4(0x9A9F07E0 | ((inv_cond as u32) << 12) | rd);
             } else {
                 ctx.emit4(0xD503201F);
             }
@@ -903,9 +908,9 @@ mod tests {
     #[test]
     fn cset_eq_encodes_correctly() {
         // CSET X0, EQ  →  CSINC X0, XZR, XZR, NE  (inv_cond = EQ^1 = NE = 1)
-        // Base: 0x9ADF07E0; cond field at bits[15:12]; rd at bits[4:0].
+        // Base: 0x9A9F07E0; cond field at bits[15:12]; rd at bits[4:0].
         // inv_cond = 1 (NE), Rd = X0 = 0
-        // → 0x9ADF07E0 | (1 << 12) | 0 = 0x9ADF17E0
+        // → 0x9A9F07E0 | (1 << 12) | 0 = 0x9A9F17E0
         use crate::instructions::CSET;
         let mi = MInstr {
             opcode: CSET,
@@ -918,26 +923,20 @@ mod tests {
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
-        // CSINC X0, XZR, XZR, NE: bits[31:21]=10011010110, Rm=31, cond=0001, o2o1=01, Rn=31, Rd=0
-        // = 0x9ADF07E0 | (1 << 12) = 0x9ADF17E0
+        // CSINC X0, XZR, XZR, NE: sf=1, bits[30:21]=0011010100, Rm=31, cond=0001, o2o1=01, Rn=31, Rd=0
+        // = 0x9A9F07E0 | (1 << 12) = 0x9A9F17E0
         assert_eq!(
-            word, 0x9ADF17E0,
-            "CSET X0, EQ must encode as CSINC X0, XZR, XZR, NE = 0x9ADF17E0"
-        );
-        // Verify the old wrong constant is NOT present (sanity check against regression).
-        assert_ne!(
-            word & 0xFFFF0000,
-            0x9A9F0000,
-            "old wrong base 0x9A9F07E0 must not be used"
+            word, 0x9A9F17E0,
+            "CSET X0, EQ must encode as CSINC X0, XZR, XZR, NE = 0x9A9F17E0"
         );
     }
 
     #[test]
     fn cset_lt_encodes_correctly() {
-        // CSET X1, LT  →  CSINC X1, XZR, XZR, GE  (inv_cond = LT^1 = GE = 10^1 = 11 = 11)
+        // CSET X1, LT  →  CSINC X1, XZR, XZR, GE  (inv_cond = LT^1 = GE)
         // cc_to_hw(CC_LT) = 11 (LT), inv_cond = 11^1 = 10 (GE)
         // Rd = X1 = reg_enc(X1) = 1
-        // → 0x9ADF07E0 | (10 << 12) | 1 = 0x9ADFA7E1
+        // → 0x9A9F07E0 | (10 << 12) | 1 = 0x9A9FA7E1
         use crate::instructions::CSET;
         let mi = MInstr {
             opcode: CSET,
@@ -951,10 +950,10 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // hw_cond(LT) = 11, inv = 10, Rd = 1
-        // = 0x9ADF07E0 | (10 << 12) | 1 = 0x9ADFA7E1
+        // = 0x9A9F07E0 | (10 << 12) | 1 = 0x9A9FA7E1
         assert_eq!(
-            word, 0x9ADFA7E1,
-            "CSET X1, LT must encode as CSINC X1, XZR, XZR, GE = 0x9ADFA7E1"
+            word, 0x9A9FA7E1,
+            "CSET X1, LT must encode as CSINC X1, XZR, XZR, GE = 0x9A9FA7E1"
         );
     }
 

@@ -19,6 +19,8 @@ pub enum Arch {
 pub enum ObjectFormat {
     Elf,
     MachO,
+    /// Windows COFF (.obj) — x86-64 only for now.
+    Coff,
 }
 
 /// Kind of relocation record.
@@ -77,6 +79,7 @@ impl ObjectFile {
         match self.format {
             ObjectFormat::Elf => serialize_elf(self),
             ObjectFormat::MachO => serialize_macho(self),
+            ObjectFormat::Coff => serialize_coff(self),
         }
     }
 }
@@ -149,10 +152,9 @@ pub fn emit_module_object(funcs: &[MachineFunction], emitter: &mut dyn Emitter) 
         text_data.extend_from_slice(&sec.data);
     }
 
-    let sec_name = if emitter.object_format() == ObjectFormat::MachO {
-        "__text".to_string()
-    } else {
-        ".text".to_string()
+    let sec_name = match emitter.object_format() {
+        ObjectFormat::MachO => "__text".to_string(),
+        _ => ".text".to_string(),
     };
     ObjectFile {
         format: emitter.object_format(),
@@ -553,6 +555,142 @@ fn serialize_macho(obj: &ObjectFile) -> Vec<u8> {
     buf
 }
 
+// ── COFF x86-64 serialization ─────────────────────────────────────────────
+//
+// Minimal COFF relocatable (.obj) layout for x86-64 (IMAGE_FILE_MACHINE_AMD64):
+//   IMAGE_FILE_HEADER        20 bytes
+//   IMAGE_SECTION_HEADER × N 40 bytes each
+//   Section raw data
+//   IMAGE_RELOCATION × R     10 bytes each (immediately follows section data)
+//   Symbol table (IMAGE_SYMBOL, 18 bytes each)
+//   String table (u32 length + null-terminated strings)
+//
+// Relocation notes:
+//   IMAGE_REL_AMD64_REL32 (4): 32-bit PC-relative; addend is embedded inline in
+//     the 4 bytes at the relocation offset inside section data (not in the record).
+//   IMAGE_REL_AMD64_ADDR64 (1): 64-bit absolute.
+
+fn serialize_coff(obj: &ObjectFile) -> Vec<u8> {
+    let text_data = obj.sections.first().map_or(&[][..], |s| s.data.as_slice());
+    let text_relocs = obj.sections.first().map_or(&[][..], |s| s.relocs.as_slice());
+    let text_size = text_data.len() as u32;
+
+    // If there are > 65535 relocations we would need extended reloc headers;
+    // that is far beyond any real function, so a debug assert suffices here.
+    debug_assert!(
+        text_relocs.len() <= 0xFFFF,
+        "too many relocations for a single COFF section"
+    );
+    let n_relocs = text_relocs.len() as u16;
+
+    // Build symbol name info.  Names ≤ 8 bytes fit inline; longer names go in
+    // the string table.  The string table always begins with a 4-byte length
+    // field (counting itself), so an empty table is [4,0,0,0].
+    let mut strtab: Vec<u8> = vec![0u8; 4]; // placeholder for length field
+    enum NameStorage {
+        Short([u8; 8]),
+        Long(u32), // offset within string table (from its very start)
+    }
+    let name_storage: Vec<NameStorage> = obj
+        .symbols
+        .iter()
+        .map(|sym| {
+            let bytes = sym.name.as_bytes();
+            if bytes.len() <= 8 {
+                let mut arr = [0u8; 8];
+                arr[..bytes.len()].copy_from_slice(bytes);
+                NameStorage::Short(arr)
+            } else {
+                let off = strtab.len() as u32;
+                strtab.extend_from_slice(bytes);
+                strtab.push(0); // null terminator
+                NameStorage::Long(off)
+            }
+        })
+        .collect();
+    // Write the final string table length (includes the 4-byte length field).
+    let strtab_len = strtab.len() as u32;
+    strtab[0..4].copy_from_slice(&strtab_len.to_le_bytes());
+
+    let n_sections: u16 = 1; // .text only
+    let n_syms = obj.symbols.len() as u32;
+
+    const COFF_HDR_SZ: u32 = 20;
+    const SECT_HDR_SZ: u32 = 40;
+    const RELOC_SZ: u32 = 10;
+    const SYM_SZ: u32 = 18;
+
+    let sect_hdrs_end = COFF_HDR_SZ + n_sections as u32 * SECT_HDR_SZ;
+    let text_data_off = sect_hdrs_end; // no padding — linker handles alignment
+    let text_reloc_off = text_data_off + text_size;
+    let symtab_off = text_reloc_off + n_relocs as u32 * RELOC_SZ;
+
+    let mut buf = Vec::<u8>::new();
+
+    // IMAGE_FILE_HEADER (20 bytes)
+    w16(&mut buf, 0x8664); // Machine: IMAGE_FILE_MACHINE_AMD64
+    w16(&mut buf, n_sections);
+    w32(&mut buf, 0); // TimeDateStamp: 0 for reproducible builds
+    w32(&mut buf, symtab_off); // PointerToSymbolTable
+    w32(&mut buf, n_syms); // NumberOfSymbols
+    w16(&mut buf, 0); // SizeOfOptionalHeader: 0 for .obj
+    w16(&mut buf, 0); // Characteristics: 0 for .obj
+
+    // IMAGE_SECTION_HEADER for .text (40 bytes)
+    buf.extend_from_slice(b".text\0\0\0"); // Name[8]
+    w32(&mut buf, 0); // VirtualSize: 0 for relocatable .obj
+    w32(&mut buf, 0); // VirtualAddress: 0 for relocatable .obj
+    w32(&mut buf, text_size); // SizeOfRawData
+    // PointerToRawData: must be 0 if section is empty
+    w32(&mut buf, if text_size > 0 { text_data_off } else { 0 });
+    // PointerToRelocations: 0 if no relocations
+    w32(&mut buf, if n_relocs > 0 { text_reloc_off } else { 0 });
+    w32(&mut buf, 0); // PointerToLinenumbers: unused
+    w16(&mut buf, n_relocs); // NumberOfRelocations
+    w16(&mut buf, 0); // NumberOfLinenumbers: unused
+    // Characteristics: CODE | EXECUTE | READ | ALIGN_16BYTES
+    w32(&mut buf, 0x60500020u32);
+
+    // Section raw data
+    buf.extend_from_slice(text_data);
+
+    // IMAGE_RELOCATION entries (10 bytes each)
+    // For IMAGE_REL_AMD64_REL32 the inline addend must already be patched into
+    // the section data bytes at reloc.offset; we only emit the record here.
+    for reloc in text_relocs {
+        w32(&mut buf, reloc.offset as u32); // VirtualAddress (section-relative)
+        w32(&mut buf, reloc.symbol as u32); // SymbolTableIndex
+        let r_type: u16 = match reloc.kind {
+            RelocKind::Pc32 => 4,  // IMAGE_REL_AMD64_REL32
+            RelocKind::Abs64 => 1, // IMAGE_REL_AMD64_ADDR64
+        };
+        w16(&mut buf, r_type);
+    }
+
+    // Symbol table (IMAGE_SYMBOL, 18 bytes each)
+    for (i, sym) in obj.symbols.iter().enumerate() {
+        match &name_storage[i] {
+            NameStorage::Short(arr) => buf.extend_from_slice(arr),
+            NameStorage::Long(off) => {
+                // N.Name.Zeroes == 0 signals a long name; Offset is strtab-relative.
+                w32(&mut buf, 0);
+                w32(&mut buf, *off);
+            }
+        }
+        w32(&mut buf, sym.offset as u32); // Value (section-relative offset)
+        // SectionNumber: 1-based; our single section is index 0 → SectionNumber 1.
+        w16(&mut buf, (sym.section + 1) as u16);
+        w16(&mut buf, 0x20); // Type: DT_FUNCTION (bits 4–7 = 2, bits 0–3 = 0)
+        buf.push(2); // StorageClass: IMAGE_SYM_CLASS_EXTERNAL
+        buf.push(0); // NumberOfAuxSymbols
+    }
+
+    // String table
+    buf.extend_from_slice(&strtab);
+
+    buf
+}
+
 // ── byte-writing helpers ───────────────────────────────────────────────────
 
 #[inline]
@@ -586,6 +724,7 @@ mod tests {
         let section_name = match fmt {
             ObjectFormat::Elf => ".text",
             ObjectFormat::MachO => "__text",
+            ObjectFormat::Coff => ".text",
         };
         ObjectFile {
             format: fmt,
@@ -654,6 +793,108 @@ mod tests {
             "Mach-O strtab[0] must be null (\\0), was 0x{:02x}",
             strtab_first
         );
+    }
+
+    #[test]
+    fn coff_machine_amd64() {
+        let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
+        // Bytes [0..2] = Machine field of IMAGE_FILE_HEADER.
+        let machine = u16::from_le_bytes([bytes[0], bytes[1]]);
+        assert_eq!(machine, 0x8664, "Machine must be IMAGE_FILE_MACHINE_AMD64 (0x8664)");
+    }
+
+    #[test]
+    fn coff_one_section() {
+        let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
+        let n_sections = u16::from_le_bytes([bytes[2], bytes[3]]);
+        assert_eq!(n_sections, 1, "must have exactly one section");
+    }
+
+    #[test]
+    fn coff_section_name_is_text() {
+        let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
+        // Section header starts at byte 20 (after IMAGE_FILE_HEADER).
+        assert_eq!(&bytes[20..25], b".text", "section name must be .text");
+    }
+
+    #[test]
+    fn coff_optional_header_size_zero() {
+        // SizeOfOptionalHeader (bytes 16–17) must be 0 for a .obj file.
+        let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
+        let optional_hdr_sz = u16::from_le_bytes([bytes[16], bytes[17]]);
+        assert_eq!(optional_hdr_sz, 0, "SizeOfOptionalHeader must be 0 for .obj");
+    }
+
+    #[test]
+    fn coff_symbol_table_pointer_consistent() {
+        // PointerToSymbolTable (bytes 8–11) must point past section data.
+        let code = vec![0xC3]; // 1-byte RET
+        let bytes = make_obj(ObjectFormat::Coff, code).to_bytes();
+        let ptr_symtab = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        // Header=20, 1 section hdr=40, 1 byte code → data ends at 61.
+        // No relocations → symtab starts at 61.
+        assert_eq!(ptr_symtab, 61, "PointerToSymbolTable must point to byte 61");
+    }
+
+    #[test]
+    fn coff_code_bytes_present() {
+        let code = vec![0xC3, 0x90]; // RET, NOP
+        let bytes = make_obj(ObjectFormat::Coff, code).to_bytes();
+        // Section data starts at byte 60 (20 hdr + 40 sect_hdr).
+        assert_eq!(bytes[60], 0xC3, "first code byte must be 0xC3 (RET)");
+        assert_eq!(bytes[61], 0x90, "second code byte must be 0x90 (NOP)");
+    }
+
+    #[test]
+    fn coff_string_table_min_length_4() {
+        // Even with no long symbol names the string table must have a 4-byte
+        // length prefix (value = 4 since there are no strings).
+        let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
+        // Symbol "f" is 1 byte → fits inline → strtab = [4,0,0,0].
+        // strtab starts after the symbol table.
+        // n_syms=1, sym_table_size=18, symtab_off=61 → strtab_off=79.
+        let strtab_len = u32::from_le_bytes([bytes[79], bytes[80], bytes[81], bytes[82]]);
+        assert_eq!(strtab_len, 4, "empty string table must have length 4");
+    }
+
+    #[test]
+    fn coff_long_symbol_name_in_strtab() {
+        // A symbol with a name > 8 bytes must go to the string table.
+        let fmt = ObjectFormat::Coff;
+        let section_name = ".text";
+        let long_name = "my_very_long_function_name_exceeding_eight_chars";
+        let obj = ObjectFile {
+            format: fmt,
+            arch: Arch::X86_64,
+            sections: vec![Section {
+                name: section_name.into(),
+                data: vec![0xC3],
+                relocs: vec![],
+            }],
+            symbols: vec![Symbol {
+                name: long_name.into(),
+                section: 0,
+                offset: 0,
+                size: 1,
+                global: true,
+            }],
+        };
+        let bytes = obj.to_bytes();
+        // Symbol table starts at byte 61 (20 + 40 + 1 code byte).
+        // The first 4 bytes of the symbol's N field should be [0,0,0,0]
+        // (Zeroes=0 indicating long name) and the next 4 bytes the strtab offset.
+        let zeroes = u32::from_le_bytes([bytes[61], bytes[62], bytes[63], bytes[64]]);
+        assert_eq!(zeroes, 0, "N.Name.Zeroes must be 0 for long symbol names");
+        // The strtab offset points into the string table (past the 4-byte length).
+        let strtab_off = u32::from_le_bytes([bytes[65], bytes[66], bytes[67], bytes[68]]);
+        // Our strtab starts at 79 (61 + 18 sym_bytes); strtab itself starts with [length_u32=..., name_bytes...].
+        // The symbol's offset within strtab: 4 (past length field).
+        assert_eq!(strtab_off, 4, "long name must start at strtab offset 4");
+        // Verify the name is actually there.
+        let strtab_start = 79usize; // symtab_off + n_syms * 18 = 61 + 18 = 79
+        let name_start = strtab_start + strtab_off as usize;
+        let name_end = name_start + long_name.len();
+        assert_eq!(&bytes[name_start..name_end], long_name.as_bytes());
     }
 
     #[test]
