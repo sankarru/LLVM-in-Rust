@@ -521,6 +521,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "llvm-in-rust-rustc-backend"
+version = "0.1.0"
+dependencies = [
+ "llvm-in-rust-codegen",
+ "llvm-in-rust-ir",
+ "llvm-in-rust-ir-parser",
+ "llvm-in-rust-target-x86",
+ "llvm-in-rust-transforms",
+]
+
+[[package]]
 name = "llvm-in-rust-target-arm"
 version = "0.1.0"
 dependencies = [

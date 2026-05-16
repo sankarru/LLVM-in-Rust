@@ -7,9 +7,9 @@ use std::fmt;
 
 use llvm_ir::{
     ArgId, Argument, BasicBlock, BlockId, ConstExprOp, ConstId, ConstantData, Context,
-    FastMathFlags, FloatKind, FloatPredicate, Function, GlobalId, GlobalVariable, InstrKind,
-    Instruction, IntArithFlags, IntPredicate, LandingPadClause, Linkage, MemOrdering, Module,
-    RmwOp, TailCallKind, TypeData, TypeId, ValueRef,
+    FastMathFlags, FloatKind, FloatPredicate, Function, GlobalId, GlobalVariable, InstrId,
+    InstrKind, Instruction, IntArithFlags, IntPredicate, LandingPadClause, Linkage, MemOrdering,
+    Module, RmwOp, TailCallKind, TypeData, TypeId, ValueRef,
 };
 
 use crate::lexer::{Keyword, LexError, Lexer, Token};
@@ -79,6 +79,13 @@ struct Parser<'src> {
     locals: HashMap<String, ValueRef>,
     /// Unnamed slots: slot number → ValueRef.
     unnamed: HashMap<u64, ValueRef>,
+    /// Pending phi patches for forward-referenced locals in phi incoming values.
+    /// Each entry is (phi InstrId, index into incoming vec, local name).
+    pending_phi_patches: Vec<(InstrId, usize, String)>,
+    /// Temporary staging area: phi forward-ref patches for the *current* phi
+    /// instruction being parsed (populated by parse_instr_kind, consumed by
+    /// parse_instruction which has the InstrId).
+    staged_phi_patches: Vec<(usize, String)>,
 }
 
 impl<'src> Parser<'src> {
@@ -92,6 +99,8 @@ impl<'src> Parser<'src> {
             current_block: None,
             locals: HashMap::new(),
             unnamed: HashMap::new(),
+            pending_phi_patches: Vec::new(),
+            staged_phi_patches: Vec::new(),
         }
     }
 
@@ -197,6 +206,37 @@ impl<'src> Parser<'src> {
         let name = self.lex.expect_global_ident()?;
         self.lex.expect(&Token::Equal)?;
         let linkage = self.parse_optional_linkage();
+
+        // Skip optional qualifiers that appear before global/constant:
+        //   dso_local, dso_preemptable, unnamed_addr, local_unnamed_addr, externally_initialized
+        // Also skip `addrspace(N)` and `thread_local(model)` / `thread_local`.
+        loop {
+            match self.lex.peek()? {
+                Token::LocalIdent(s)
+                    if matches!(
+                        s.as_str(),
+                        "unnamed_addr"
+                            | "local_unnamed_addr"
+                            | "dso_local"
+                            | "dso_preemptable"
+                            | "externally_initialized"
+                            | "thread_local"
+                            | "addrspace"
+                    ) =>
+                {
+                    let s = s.clone();
+                    self.lex.next()?;
+                    // `addrspace(N)` and `thread_local(model)` carry a parenthesised payload.
+                    if (s == "addrspace" || s == "thread_local")
+                        && matches!(self.lex.peek()?, Token::LParen)
+                    {
+                        self.skip_balanced_parens()?;
+                    }
+                }
+                _ => break,
+            }
+        }
+
         match self.lex.peek()? {
             Token::Kw(Keyword::Global) | Token::Kw(Keyword::Constant) => {
                 let is_const = matches!(self.lex.peek()?, Token::Kw(Keyword::Constant));
@@ -208,6 +248,8 @@ impl<'src> Parser<'src> {
                 } else {
                     None
                 };
+                // Skip trailing global attributes: `, align N`, `, section "..."`, `#N`, etc.
+                self.skip_global_trailing_attrs()?;
                 let gv = GlobalVariable {
                     name,
                     ty,
@@ -219,6 +261,64 @@ impl<'src> Parser<'src> {
             }
             _ => {
                 return Err(self.err(format!("expected 'global' or 'constant' for @{}", name)));
+            }
+        }
+        Ok(())
+    }
+
+    /// Skip trailing attributes on a global variable definition:
+    /// `, align N`, `, section "..."`, `#N`, `!<name> !<id>`, etc.
+    fn skip_global_trailing_attrs(&mut self) -> Result<(), ParseError> {
+        loop {
+            match self.lex.peek()? {
+                // Comma precedes trailing attrs like `, align 4` or `, section "..."`.
+                Token::Comma => {
+                    // Peek at what follows the comma.
+                    self.lex.next()?; // consume comma
+                    match self.lex.peek()? {
+                        Token::Kw(Keyword::Align) => {
+                            self.lex.next()?; // consume `align`
+                            self.lex.next()?; // consume alignment number
+                        }
+                        Token::LocalIdent(s) if s == "section" => {
+                            self.lex.next()?; // consume `section`
+                            self.lex.next()?; // consume string literal
+                        }
+                        Token::LocalIdent(s) if s == "comdat" => {
+                            self.lex.next()?; // consume `comdat`
+                            // Optional `($name)`.
+                            if matches!(self.lex.peek()?, Token::LParen) {
+                                self.skip_balanced_parens()?;
+                            }
+                        }
+                        Token::Bang => {
+                            // Metadata attachment: !, name, !id
+                            self.lex.next()?; // consume `!`
+                            self.lex.next()?; // consume name
+                            self.lex.expect(&Token::Bang)?;
+                            self.lex.next()?; // consume id
+                        }
+                        // Anything else after the comma is not a trailing attr we
+                        // recognise — put the comma back and stop.
+                        _ => {
+                            self.lex.unget(Token::Comma);
+                            break;
+                        }
+                    }
+                }
+                // Attribute group reference `#N`.
+                Token::Hash => {
+                    self.lex.next()?;
+                    self.lex.next()?;
+                }
+                // Metadata attachment: `!name !id` without leading comma.
+                Token::Bang => {
+                    self.lex.next()?; // `!`
+                    self.lex.next()?; // name
+                    self.lex.expect(&Token::Bang)?;
+                    self.lex.next()?; // id
+                }
+                _ => break,
             }
         }
         Ok(())
@@ -481,6 +581,8 @@ impl<'src> Parser<'src> {
         self.locals.clear();
         self.unnamed.clear();
         self.pending_blocks.clear();
+        self.pending_phi_patches.clear();
+        self.staged_phi_patches.clear();
 
         // Populate arg name table.
         for (i, arg) in args.iter().enumerate() {
@@ -515,6 +617,9 @@ impl<'src> Parser<'src> {
             }
         }
 
+        // Resolve any phi incoming values that were forward-referenced.
+        self.resolve_phi_patches()?;
+
         Ok(())
     }
 
@@ -536,19 +641,41 @@ impl<'src> Parser<'src> {
 
     fn parse_block(&mut self) -> Result<(), ParseError> {
         // Block label: `name:` or bare (for entry).
+        // IMPORTANT: We must only treat a LocalIdent/IntLit as a block label when
+        // it is immediately followed by `:`. Otherwise it is the start of an
+        // instruction (e.g. `%2 = shl ...`) and must NOT be consumed here.
+        //
+        // Strategy: consume the ident/intlit, then consume the next token.
+        // If the next token is `:`, we have a label. Otherwise push both tokens
+        // back via unget (the second first, then the first).
         let bb_name = match self.lex.peek()? {
             Token::LocalIdent(_) => {
+                // Consume the ident.
                 let n = self.lex.expect_local_ident()?;
-                // Optionally followed by `:`.
-                self.lex.eat(&Token::Colon);
-                n
+                // Now the peeked slot is empty; consume the following token.
+                let next = self.lex.next()?;
+                if matches!(next, Token::Colon) {
+                    // Confirmed label.
+                    n
+                } else {
+                    // Not a label — push both tokens back (second first, then first).
+                    self.lex.unget(next);
+                    self.lex.unget(Token::LocalIdent(n));
+                    "entry".to_string()
+                }
             }
             Token::IntLit(n) => {
-                let n = *n as u64;
-                let s = n.to_string();
+                let n = *n as i64;
+                let s = (n as u64).to_string();
                 self.lex.next()?;
-                self.lex.eat(&Token::Colon);
-                s
+                let next = self.lex.next()?;
+                if matches!(next, Token::Colon) {
+                    s
+                } else {
+                    self.lex.unget(next);
+                    self.lex.unget(Token::IntLit(n));
+                    "entry".to_string()
+                }
             }
             _ => "entry".to_string(),
         };
@@ -649,6 +776,15 @@ impl<'src> Parser<'src> {
         let instr_name = result_name.clone();
         let instr = Instruction::new(instr_name, ty, kind);
         let iid = self.module.functions[fid].alloc_instr(instr);
+
+        // If parse_instr_kind staged any phi forward-ref patches, bind them to iid now.
+        if !self.staged_phi_patches.is_empty() {
+            let staged = std::mem::take(&mut self.staged_phi_patches);
+            for (incoming_idx, local_name) in staged {
+                self.pending_phi_patches.push((iid, incoming_idx, local_name));
+            }
+        }
+
         for (key, value) in metadata_attachments {
             self.module.functions[fid].add_instr_metadata(iid, key.clone(), value.clone());
             if key == "dbg" {
@@ -968,6 +1104,10 @@ impl<'src> Parser<'src> {
             }
             Token::Kw(Keyword::Zext) => {
                 self.lex.next()?;
+                // Skip optional `nneg` flag introduced in LLVM 15.
+                if matches!(self.lex.peek()?, Token::LocalIdent(s) if s == "nneg") {
+                    self.lex.next()?;
+                }
                 let (val, _) = self.parse_typed_value()?;
                 self.lex.expect_kw(&Keyword::To)?;
                 let to = self.parse_type()?;
@@ -975,6 +1115,10 @@ impl<'src> Parser<'src> {
             }
             Token::Kw(Keyword::Sext) => {
                 self.lex.next()?;
+                // Skip optional `nneg` flag if present (future-proofing).
+                if matches!(self.lex.peek()?, Token::LocalIdent(s) if s == "nneg") {
+                    self.lex.next()?;
+                }
                 let (val, _) = self.parse_typed_value()?;
                 self.lex.expect_kw(&Keyword::To)?;
                 let to = self.parse_type()?;
@@ -1077,10 +1221,26 @@ impl<'src> Parser<'src> {
                 self.lex.next()?;
                 let ty = self.parse_type()?;
                 let mut incoming = Vec::new();
+                // Clear any stale staged patches from a prior phi in this function.
+                self.staged_phi_patches.clear();
                 loop {
                     // [ value, %label ]
                     self.lex.expect(&Token::LBracket)?;
-                    let val = self.parse_value(ty)?;
+                    // For local idents, try to resolve; if undefined, record a patch.
+                    let val = if matches!(self.lex.peek()?, Token::LocalIdent(_)) {
+                        let local_name = self.lex.expect_local_ident()?;
+                        match self.resolve_local(&local_name) {
+                            Ok(v) => v,
+                            Err(_) => {
+                                // Forward reference — stage for patching after function body.
+                                let incoming_idx = incoming.len();
+                                self.staged_phi_patches.push((incoming_idx, local_name));
+                                ValueRef::Constant(self.ctx.const_undef(ty))
+                            }
+                        }
+                    } else {
+                        self.parse_value(ty)?
+                    };
                     self.lex.expect(&Token::Comma)?;
                     let block_name = self.lex.expect_local_ident()?;
                     let bid = self.get_or_create_block(&block_name)?;
@@ -1927,6 +2087,25 @@ impl<'src> Parser<'src> {
         Ok(bid)
     }
 
+    /// Resolve phi forward references after the entire function body has been parsed.
+    fn resolve_phi_patches(&mut self) -> Result<(), ParseError> {
+        let patches = std::mem::take(&mut self.pending_phi_patches);
+        let fid = match self.current_func {
+            Some(f) => f,
+            None => return Ok(()), // no function, nothing to patch
+        };
+        for (instr_id, incoming_idx, name) in patches {
+            let vref = self.resolve_local(&name)?;
+            let instr = self.module.functions[fid].instr_mut(instr_id);
+            if let InstrKind::Phi { ref mut incoming, .. } = instr.kind {
+                if let Some(entry) = incoming.get_mut(incoming_idx) {
+                    entry.0 = vref;
+                }
+            }
+        }
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Flag helpers
     // -----------------------------------------------------------------------
@@ -2355,6 +2534,7 @@ impl<'src> Parser<'src> {
                 | "preserve_mostcc"
                 | "presplitcoroutine"
                 | "protected"
+                | "range"
                 | "readnone"
                 | "readonly"
                 | "returns_twice"
