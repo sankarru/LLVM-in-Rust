@@ -583,6 +583,10 @@ fn serialize_coff(obj: &ObjectFile) -> Vec<u8> {
     );
     let n_relocs = text_relocs.len() as u16;
 
+    // Build the CodeView .debug$S section data up front so we know its size.
+    let debug_s_data = build_codeview_debug_s(obj);
+    let debug_s_size = debug_s_data.len() as u32;
+
     // Build symbol name info.  Names ≤ 8 bytes fit inline; longer names go in
     // the string table.  The string table always begins with a 4-byte length
     // field (counting itself), so an empty table is [4,0,0,0].
@@ -612,18 +616,19 @@ fn serialize_coff(obj: &ObjectFile) -> Vec<u8> {
     let strtab_len = strtab.len() as u32;
     strtab[0..4].copy_from_slice(&strtab_len.to_le_bytes());
 
-    let n_sections: u16 = 1; // .text only
+    // Two sections: .text + .debug$S
+    let n_sections: u16 = 2;
     let n_syms = obj.symbols.len() as u32;
 
     const COFF_HDR_SZ: u32 = 20;
     const SECT_HDR_SZ: u32 = 40;
     const RELOC_SZ: u32 = 10;
-    const SYM_SZ: u32 = 18;
 
     let sect_hdrs_end = COFF_HDR_SZ + n_sections as u32 * SECT_HDR_SZ;
     let text_data_off = sect_hdrs_end; // no padding — linker handles alignment
     let text_reloc_off = text_data_off + text_size;
-    let symtab_off = text_reloc_off + n_relocs as u32 * RELOC_SZ;
+    let debug_s_off = text_reloc_off + n_relocs as u32 * RELOC_SZ;
+    let symtab_off = debug_s_off + debug_s_size;
 
     let mut buf = Vec::<u8>::new();
 
@@ -651,10 +656,24 @@ fn serialize_coff(obj: &ObjectFile) -> Vec<u8> {
     // Characteristics: CODE | EXECUTE | READ | ALIGN_16BYTES
     w32(&mut buf, 0x60500020u32);
 
-    // Section raw data
+    // IMAGE_SECTION_HEADER for .debug$S (40 bytes)
+    // Name[8] = ".debug$S" — exactly 8 bytes, no null terminator needed.
+    buf.extend_from_slice(b".debug$S");
+    w32(&mut buf, 0); // VirtualSize: 0 for relocatable .obj
+    w32(&mut buf, 0); // VirtualAddress: 0 for relocatable .obj
+    w32(&mut buf, debug_s_size); // SizeOfRawData
+    w32(&mut buf, if debug_s_size > 0 { debug_s_off } else { 0 }); // PointerToRawData
+    w32(&mut buf, 0); // PointerToRelocations: none for debug section
+    w32(&mut buf, 0); // PointerToLinenumbers: unused
+    w16(&mut buf, 0); // NumberOfRelocations
+    w16(&mut buf, 0); // NumberOfLinenumbers: unused
+    // Characteristics: INITIALIZED_DATA | DISCARDABLE | READ | ALIGN_1BYTES
+    w32(&mut buf, 0x42100040u32);
+
+    // .text section raw data
     buf.extend_from_slice(text_data);
 
-    // IMAGE_RELOCATION entries (10 bytes each)
+    // IMAGE_RELOCATION entries for .text (10 bytes each)
     // For IMAGE_REL_AMD64_REL32 the inline addend must already be patched into
     // the section data bytes at reloc.offset; we only emit the record here.
     for reloc in text_relocs {
@@ -667,6 +686,9 @@ fn serialize_coff(obj: &ObjectFile) -> Vec<u8> {
         w16(&mut buf, r_type);
     }
 
+    // .debug$S section raw data
+    buf.extend_from_slice(&debug_s_data);
+
     // Symbol table (IMAGE_SYMBOL, 18 bytes each)
     for (i, sym) in obj.symbols.iter().enumerate() {
         match &name_storage[i] {
@@ -678,7 +700,7 @@ fn serialize_coff(obj: &ObjectFile) -> Vec<u8> {
             }
         }
         w32(&mut buf, sym.offset as u32); // Value (section-relative offset)
-        // SectionNumber: 1-based; our single section is index 0 → SectionNumber 1.
+        // SectionNumber: 1-based; .text is section 0 in our vec → SectionNumber 1.
         w16(&mut buf, (sym.section + 1) as u16);
         w16(&mut buf, 0x20); // Type: DT_FUNCTION (bits 4–7 = 2, bits 0–3 = 0)
         buf.push(2); // StorageClass: IMAGE_SYM_CLASS_EXTERNAL
@@ -689,6 +711,97 @@ fn serialize_coff(obj: &ObjectFile) -> Vec<u8> {
     buf.extend_from_slice(&strtab);
 
     buf
+}
+
+// ── CodeView C13 .debug$S section ─────────────────────────────────────────
+//
+// Minimal layout emitted for debugger support (#220):
+//   CV_SIGNATURE_C13 (u32 = 4)
+//   DEBUG_S_SYMBOLS subsection (type=0xF1, length, data)
+//     For each global function symbol:
+//       S_GPROC32 (0x1110) — function begin record
+//       S_END     (0x0006) — closes the proc scope
+//
+// The `.off` field in S_GPROC32 is the section-relative offset of the
+// function within .text (compile-time known); no relocations are needed.
+// The `seg` field is always 1 (.text is the first COFF section).
+fn build_codeview_debug_s(obj: &ObjectFile) -> Vec<u8> {
+    const CV_SIGNATURE_C13: u32 = 4;
+    const DEBUG_S_SYMBOLS: u32 = 0xF1;
+    const S_GPROC32: u16 = 0x1110;
+    const S_END: u16 = 0x0006;
+
+    let mut sym_records: Vec<u8> = Vec::new();
+
+    for sym in &obj.symbols {
+        if !sym.global {
+            continue;
+        }
+        let name_bytes = sym.name.as_bytes();
+
+        // S_GPROC32 record layout (all LE):
+        //   reclen  u16  — bytes after this field: rectyp + payload
+        //   rectyp  u16  = S_GPROC32
+        //   pParent u32  = 0
+        //   pEnd    u32  = 0  (back-pointer filled by linker)
+        //   pNext   u32  = 0
+        //   len     u32  — function size in bytes
+        //   dbgStart u32 = 0  (first byte of prolog-free code)
+        //   dbgEnd  u32  = len (last byte before epilog)
+        //   typind  u32  = 0  (T_VOID — no type info)
+        //   off     u32  — section-relative offset of function
+        //   seg     u16  = 1  (.text is section 1)
+        //   flags   u8   = 0
+        //   name    [u8] — null-terminated function name
+        //
+        // payload size (after rectyp): 4*7 + 4 + 2 + 1 + name_len + 1
+        //   = 28 + 4 + 2 + 1 + name_len + 1 = 36 + name_len
+        // reclen = 2 (rectyp) + 36 + name_len = 38 + name_len
+        let reclen = (38 + name_bytes.len()) as u16;
+
+        let record_start = sym_records.len();
+        w16(&mut sym_records, reclen);
+        w16(&mut sym_records, S_GPROC32);
+        w32(&mut sym_records, 0); // pParent
+        w32(&mut sym_records, 0); // pEnd
+        w32(&mut sym_records, 0); // pNext
+        w32(&mut sym_records, sym.size as u32); // len
+        w32(&mut sym_records, 0); // dbgStart
+        w32(&mut sym_records, sym.size as u32); // dbgEnd
+        w32(&mut sym_records, 0); // typind
+        w32(&mut sym_records, sym.offset as u32); // off
+        w16(&mut sym_records, 1); // seg (.text)
+        sym_records.push(0); // flags
+        sym_records.extend_from_slice(name_bytes);
+        sym_records.push(0); // null terminator
+
+        // CV symbol records must be 4-byte aligned; pad with 0x00 bytes.
+        let total = sym_records.len() - record_start;
+        let pad = (4 - (total % 4)) % 4;
+        for _ in 0..pad {
+            sym_records.push(0);
+        }
+
+        // S_END closes the proc scope: reclen=2, rectyp=S_END, total=4 bytes (aligned).
+        w16(&mut sym_records, 2);
+        w16(&mut sym_records, S_END);
+    }
+
+    // The subsection payload must also be 4-byte aligned.
+    while sym_records.len() % 4 != 0 {
+        sym_records.push(0);
+    }
+
+    let mut data: Vec<u8> = Vec::new();
+    w32(&mut data, CV_SIGNATURE_C13);
+
+    if !sym_records.is_empty() {
+        w32(&mut data, DEBUG_S_SYMBOLS);
+        w32(&mut data, sym_records.len() as u32);
+        data.extend_from_slice(&sym_records);
+    }
+
+    data
 }
 
 // ── byte-writing helpers ───────────────────────────────────────────────────
@@ -804,10 +917,11 @@ mod tests {
     }
 
     #[test]
-    fn coff_one_section() {
+    fn coff_two_sections() {
+        // COFF output has .text + .debug$S; n_sections must be 2.
         let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
         let n_sections = u16::from_le_bytes([bytes[2], bytes[3]]);
-        assert_eq!(n_sections, 1, "must have exactly one section");
+        assert_eq!(n_sections, 2, "must have .text and .debug$S sections");
     }
 
     #[test]
@@ -827,22 +941,23 @@ mod tests {
 
     #[test]
     fn coff_symbol_table_pointer_consistent() {
-        // PointerToSymbolTable (bytes 8–11) must point past section data.
-        let code = vec![0xC3]; // 1-byte RET
+        // PointerToSymbolTable (bytes 8–11) must point past all section data.
+        let code = vec![0xC3]; // 1-byte RET, symbol "f" (size=1)
         let bytes = make_obj(ObjectFormat::Coff, code).to_bytes();
         let ptr_symtab = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
-        // Header=20, 1 section hdr=40, 1 byte code → data ends at 61.
-        // No relocations → symtab starts at 61.
-        assert_eq!(ptr_symtab, 61, "PointerToSymbolTable must point to byte 61");
+        // Layout: hdr=20, 2 sect_hdrs=80, .text=1 byte, .debug$S=60 bytes.
+        // .debug$S for "f": sig(4)+subsect_hdr(8)+GPROC32(44)+S_END(4) = 60 bytes.
+        // Symtab offset = 20 + 80 + 1 + 60 = 161.
+        assert_eq!(ptr_symtab, 161, "PointerToSymbolTable must point to byte 161");
     }
 
     #[test]
     fn coff_code_bytes_present() {
         let code = vec![0xC3, 0x90]; // RET, NOP
         let bytes = make_obj(ObjectFormat::Coff, code).to_bytes();
-        // Section data starts at byte 60 (20 hdr + 40 sect_hdr).
-        assert_eq!(bytes[60], 0xC3, "first code byte must be 0xC3 (RET)");
-        assert_eq!(bytes[61], 0x90, "second code byte must be 0x90 (NOP)");
+        // Section data starts at byte 100 (20 hdr + 2×40 sect_hdrs).
+        assert_eq!(bytes[100], 0xC3, "first code byte must be 0xC3 (RET)");
+        assert_eq!(bytes[101], 0x90, "second code byte must be 0x90 (NOP)");
     }
 
     #[test]
@@ -851,9 +966,8 @@ mod tests {
         // length prefix (value = 4 since there are no strings).
         let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
         // Symbol "f" is 1 byte → fits inline → strtab = [4,0,0,0].
-        // strtab starts after the symbol table.
-        // n_syms=1, sym_table_size=18, symtab_off=61 → strtab_off=79.
-        let strtab_len = u32::from_le_bytes([bytes[79], bytes[80], bytes[81], bytes[82]]);
+        // symtab_off=161, n_syms=1, sym_sz=18 → strtab_off=179.
+        let strtab_len = u32::from_le_bytes([bytes[179], bytes[180], bytes[181], bytes[182]]);
         assert_eq!(strtab_len, 4, "empty string table must have length 4");
     }
 
@@ -880,21 +994,58 @@ mod tests {
             }],
         };
         let bytes = obj.to_bytes();
-        // Symbol table starts at byte 61 (20 + 40 + 1 code byte).
-        // The first 4 bytes of the symbol's N field should be [0,0,0,0]
-        // (Zeroes=0 indicating long name) and the next 4 bytes the strtab offset.
-        let zeroes = u32::from_le_bytes([bytes[61], bytes[62], bytes[63], bytes[64]]);
+        // Layout: hdr=20, 2 sect_hdrs=80, .text=1 byte, .debug$S=104 bytes.
+        // .debug$S for 48-char name: sig(4)+subsect_hdr(8)+GPROC32(88, already 4-aligned)+S_END(4) = 104.
+        // Symtab offset = 20 + 80 + 1 + 104 = 205.
+        let zeroes = u32::from_le_bytes([bytes[205], bytes[206], bytes[207], bytes[208]]);
         assert_eq!(zeroes, 0, "N.Name.Zeroes must be 0 for long symbol names");
         // The strtab offset points into the string table (past the 4-byte length).
-        let strtab_off = u32::from_le_bytes([bytes[65], bytes[66], bytes[67], bytes[68]]);
-        // Our strtab starts at 79 (61 + 18 sym_bytes); strtab itself starts with [length_u32=..., name_bytes...].
+        let strtab_off = u32::from_le_bytes([bytes[209], bytes[210], bytes[211], bytes[212]]);
         // The symbol's offset within strtab: 4 (past length field).
         assert_eq!(strtab_off, 4, "long name must start at strtab offset 4");
         // Verify the name is actually there.
-        let strtab_start = 79usize; // symtab_off + n_syms * 18 = 61 + 18 = 79
+        let strtab_start = 223usize; // symtab_off(205) + n_syms(1) * 18 = 223
         let name_start = strtab_start + strtab_off as usize;
         let name_end = name_start + long_name.len();
         assert_eq!(&bytes[name_start..name_end], long_name.as_bytes());
+    }
+
+    #[test]
+    fn coff_debug_s_section_header_present() {
+        // The second section header (bytes 60–99) must name ".debug$S".
+        let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
+        // Section headers start at byte 20; each is 40 bytes.
+        // Second header: bytes [60..68) = Name[8].
+        assert_eq!(&bytes[60..68], b".debug$S", "second section must be .debug$S");
+    }
+
+    #[test]
+    fn coff_debug_s_characteristics() {
+        // .debug$S must be INITIALIZED_DATA | DISCARDABLE | READ | ALIGN_1BYTES (0x42100040).
+        let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
+        // Characteristics is the last 4 bytes of the section header (offset 36 in header).
+        let chars = u32::from_le_bytes([bytes[96], bytes[97], bytes[98], bytes[99]]);
+        assert_eq!(chars, 0x42100040, ".debug$S characteristics");
+    }
+
+    #[test]
+    fn coff_debug_s_codeview_signature() {
+        // .debug$S must begin with CV_SIGNATURE_C13 = 4 (u32 LE).
+        let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
+        // .debug$S data offset: 20 (hdr) + 80 (2 sect_hdrs) + 1 (code) = 101.
+        let sig = u32::from_le_bytes([bytes[101], bytes[102], bytes[103], bytes[104]]);
+        assert_eq!(sig, 4, "CV_SIGNATURE_C13 must be 4");
+    }
+
+    #[test]
+    fn coff_debug_s_contains_gproc32() {
+        // After the signature and subsection header, the first symbol record
+        // must have rectyp = S_GPROC32 (0x1110).
+        let bytes = make_obj(ObjectFormat::Coff, vec![0xC3]).to_bytes();
+        // .debug$S at 101: sig(4) + subsect_type(4) + subsect_len(4) = 12 bytes of header.
+        // First record: reclen(2) + rectyp(2) at offset 101+12 = 113.
+        let rectyp = u16::from_le_bytes([bytes[115], bytes[116]]);
+        assert_eq!(rectyp, 0x1110, "first CV record must be S_GPROC32 (0x1110)");
     }
 
     #[test]
