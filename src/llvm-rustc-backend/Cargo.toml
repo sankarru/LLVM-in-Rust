@@ -1,0 +1,26 @@
+[package]
+name = "llvm-in-rust-rustc-backend"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+description = "Proof-of-concept rustc codegen backend stub for LLVM-in-Rust."
+repository = "https://github.com/yudongusa/LLVM-in-Rust"
+homepage = "https://github.com/yudongusa/LLVM-in-Rust"
+keywords = ["llvm", "compiler", "codegen", "rustc", "backend"]
+categories = ["compilers", "development-tools"]
+
+[lib]
+name = "llvm_rustc_backend"
+
+[features]
+# Enable the actual rustc_private integration (requires nightly + rustc-dev component).
+# Without this flag the crate provides shim tests and gap-analysis only.
+rustc-backend = []
+
+[dependencies]
+llvm-ir = { package = "llvm-in-rust-ir", version = "0.1.0", path = "../llvm-ir" }
+llvm-ir-parser = { package = "llvm-in-rust-ir-parser", version = "0.1.0", path = "../llvm-ir-parser" }
+llvm-transforms = { package = "llvm-in-rust-transforms", version = "0.1.0", path = "../llvm-transforms" }
+llvm-codegen = { package = "llvm-in-rust-codegen", version = "0.1.0", path = "../llvm-codegen" }
+llvm-target-x86 = { package = "llvm-in-rust-target-x86", version = "0.1.0", path = "../llvm-target-x86" }
