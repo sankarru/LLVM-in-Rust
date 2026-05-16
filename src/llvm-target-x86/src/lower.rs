@@ -11,8 +11,8 @@ use crate::{
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MOperand, MachineFunction, PReg, VReg};
 use llvm_ir::{
-    ArgId, BlockId, ConstantData, Context, FloatKind, Function, InstrId, InstrKind, IntPredicate,
-    Module, TypeData, ValueRef, VpIntrinsic,
+    ArgId, BlockId, ConstantData, Context, FloatKind, Function, InstrId, InstrKind,
+    InstrprofIntrinsic, IntPredicate, Module, TypeData, ValueRef, VpIntrinsic,
 };
 use std::collections::HashMap;
 
@@ -381,6 +381,16 @@ fn vp_intrinsic_from_callee(ctx: &Context, callee: ValueRef) -> Option<VpIntrins
     VpIntrinsic::from_name(name)
 }
 
+fn instrprof_from_callee(ctx: &Context, callee: ValueRef) -> Option<InstrprofIntrinsic> {
+    let ValueRef::Constant(cid) = callee else {
+        return None;
+    };
+    let ConstantData::GlobalRef { name, .. } = ctx.get_const(cid) else {
+        return None;
+    };
+    InstrprofIntrinsic::from_name(name)
+}
+
 // ── instruction lowering ──────────────────────────────────────────────────
 
 fn lower_instr(
@@ -682,6 +692,17 @@ fn lower_instr(
 
         // ── calls ──────────────────────────────────────────────────────────
         Call { callee, args, .. } => {
+            if let Some(ip) = instrprof_from_callee(ctx, *callee) {
+                eprintln!(
+                    "warning: PGO intrinsic {} elided — counter emission not implemented",
+                    ip.as_str()
+                );
+                for &arg in args {
+                    let _ = res!(arg);
+                }
+                mf.push(mblock, MInstr::new(NOP));
+                return;
+            }
             if let Some(vp) = vp_intrinsic_from_callee(ctx, *callee) {
                 match vp {
                     VpIntrinsic::Add if args.len() >= 2 => {

@@ -7,8 +7,8 @@ use crate::{
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MachineFunction, PReg, VReg};
 use llvm_ir::{
-    ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, IntPredicate, Module,
-    ValueRef,
+    ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, InstrprofIntrinsic,
+    IntPredicate, Module, ValueRef,
 };
 use std::collections::HashMap;
 
@@ -199,6 +199,16 @@ fn lower_icmp_to_bool(
     }
 }
 
+fn instrprof_from_callee(ctx: &Context, callee: ValueRef) -> Option<InstrprofIntrinsic> {
+    let ValueRef::Constant(cid) = callee else {
+        return None;
+    };
+    let ConstantData::GlobalRef { name, .. } = ctx.get_const(cid) else {
+        return None;
+    };
+    InstrprofIntrinsic::from_name(name)
+}
+
 fn lower_instr(
     ctx: &Context,
     _module: &Module,
@@ -298,6 +308,17 @@ fn lower_instr(
         }
 
         Call { callee, args, .. } => {
+            if let Some(ip) = instrprof_from_callee(ctx, *callee) {
+                eprintln!(
+                    "warning: PGO intrinsic {} elided — counter emission not implemented",
+                    ip.as_str()
+                );
+                for &arg in args {
+                    let _ = res!(arg);
+                }
+                mf.push(mblock, MInstr::new(NOP));
+                return;
+            }
             let arg_locs = classify_rv64_int_args(args.len());
             for (i, &arg_vref) in args.iter().enumerate() {
                 let src = res!(arg_vref);

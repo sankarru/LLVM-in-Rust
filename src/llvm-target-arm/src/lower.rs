@@ -11,8 +11,8 @@ use crate::{
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MachineFunction, PReg, VReg};
 use llvm_ir::{
-    ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, IntPredicate, Module,
-    TypeData, ValueRef,
+    ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, InstrprofIntrinsic,
+    IntPredicate, Module, TypeData, ValueRef,
 };
 use std::collections::HashMap;
 
@@ -153,6 +153,16 @@ fn const_to_imm(cd: &ConstantData) -> i64 {
         ConstantData::Float { bits, .. } => *bits as i64,
         _ => 0,
     }
+}
+
+fn instrprof_from_callee(ctx: &Context, callee: ValueRef) -> Option<InstrprofIntrinsic> {
+    let ValueRef::Constant(cid) = callee else {
+        return None;
+    };
+    let ConstantData::GlobalRef { name, .. } = ctx.get_const(cid) else {
+        return None;
+    };
+    InstrprofIntrinsic::from_name(name)
 }
 
 fn inline_asm_bytes_aarch64(template: &str) -> Vec<u8> {
@@ -460,6 +470,17 @@ fn lower_instr(
 
         // ── calls ──────────────────────────────────────────────────────────
         Call { callee, args, .. } => {
+            if let Some(ip) = instrprof_from_callee(ctx, *callee) {
+                eprintln!(
+                    "warning: PGO intrinsic {} elided — counter emission not implemented",
+                    ip.as_str()
+                );
+                for &arg in args {
+                    let _ = res!(arg);
+                }
+                mf.push(mblock, MInstr::new(NOP));
+                return;
+            }
             let arg_locs = classify_aapcs64_args(args.len());
             for (i, &arg_vref) in args.iter().enumerate() {
                 let src = res!(arg_vref);
