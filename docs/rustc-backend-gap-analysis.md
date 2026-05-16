@@ -34,25 +34,22 @@ regression guards once the nightly wiring is added.
 ### Dependency gating
 
 All trait items above live in the `rustc_codegen_ssa` and `rustc_middle` crates,
-which are **not published to crates.io** and can only be used via `rustc_private`.
-This requires:
-
-```toml
-[package]
-# Cargo.toml
-build = "build.rs"
-
-[build-dependencies]
-rustc_private = { optional = true }
-```
-
-And in the crate root:
+which are **not published to crates.io** and can only be accessed via
+`rustc_private`.  There is no Cargo dependency entry — the crates are provided by
+the `rustc-dev` toolchain component.  Add to the crate root:
 
 ```rust
+// lib.rs (nightly only, requires rustc-dev component)
 #![feature(rustc_private)]
 extern crate rustc_codegen_ssa;
 extern crate rustc_middle;
+extern crate rustc_target;
 ```
+
+No `Cargo.toml` changes are needed for the `extern crate` lines above; the
+`rustc-dev` component makes these crates available on the sysroot.  The
+`--features rustc-backend` flag in this workspace is purely a compile-time guard
+that keeps the nightly-only code out of stable builds.
 
 ---
 
@@ -170,6 +167,7 @@ rustc emits DWARF debug info via `rustc_codegen_ssa::mir::debuginfo`.  Our
 | Unwinding / EH frames | 2–3 weeks |
 | Debug info | 1–2 weeks |
 | CGU parallelism | 2–3 days |
+| `cdylib`/`staticlib` linker support | 3–5 days |
 | End-to-end `hello_world` | 1–2 weeks (integration) |
 
 Total to compile a simple `fn main()` end-to-end through `cargo build`: **~6–8 weeks**.

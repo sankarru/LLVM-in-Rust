@@ -28,8 +28,13 @@ pub fn compile_to_elf(ir: &str, opt: OptLevel) -> Result<Vec<u8>, String> {
     emit_module_to_bytes(&ctx, &module, ObjectFormat::Elf)
 }
 
-/// Merge all non-declaration functions from `module` into a single [`ObjectFile`]
-/// and serialise it.
+/// Merge all non-declaration functions from `module` into a single x86-64
+/// [`ObjectFile`] and serialise it.
+///
+/// **Target**: always x86-64 (uses [`X86Backend`] and [`X86Emitter`] internally).
+/// The `fmt` parameter controls only the object *container* format (ELF / Mach-O /
+/// COFF), not the instruction set.  When relocs span multiple per-function objects,
+/// symbol indices are remapped so the merged file is self-consistent.
 pub fn emit_module_to_bytes(
     ctx: &Context,
     module: &Module,
@@ -166,15 +171,15 @@ mod tests {
     fn shim_multi_func_cgu_emits_both_symbols() {
         let bytes =
             compile_to_elf(MULTI_FUNC, OptLevel::O0).expect("multi-func must compile");
-        // ELF symbol names appear as null-terminated strings in the strtab.
-        assert!(
-            bytes.windows(6).any(|w| w == b"square"),
-            "symbol 'square' must appear in object"
-        );
-        assert!(
-            bytes.windows(4).any(|w| w == b"main"),
-            "symbol 'main' must appear in object"
-        );
+        // ELF strtab stores null-terminated symbol names; match the null bytes on
+        // both sides to avoid false positives from section headers or other data.
+        let has = |name: &[u8]| {
+            bytes.windows(name.len() + 2).any(|w| {
+                w[0] == 0 && &w[1..name.len() + 1] == name && w[name.len() + 1] == 0
+            })
+        };
+        assert!(has(b"square"), "symbol 'square' must appear in strtab");
+        assert!(has(b"main"), "symbol 'main' must appear in strtab");
     }
 
     #[test]
@@ -205,14 +210,44 @@ mod tests {
         assert!(result.is_err(), "declarations-only module must return an error");
     }
 
-    // CGU idempotency: running the pipeline twice must not panic.
+    // CGU idempotency: running the pipeline twice must not change function count.
     #[test]
     fn shim_pipeline_is_idempotent_at_o1() {
         let (mut ctx, mut module) = parse(SIMPLE_ADD).expect("parse");
         let mut pm = build_pipeline(OptLevel::O1);
         pm.run_until_fixed_point(&mut ctx, &mut module, 8);
+        let func_count_after_first = module.num_functions();
         let mut pm2 = build_pipeline(OptLevel::O1);
         pm2.run_until_fixed_point(&mut ctx, &mut module, 8);
+        assert_eq!(
+            module.num_functions(),
+            func_count_after_first,
+            "function count must be stable after second pass"
+        );
+    }
+
+    // Format coverage: verify the container format branching in emit_module_to_bytes.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn shim_macho_magic_bytes() {
+        let (mut ctx, mut module) = parse(RETURN_CONST).expect("parse");
+        let mut pm = build_pipeline(OptLevel::O0);
+        pm.run_until_fixed_point(&mut ctx, &mut module, 8);
+        let bytes = emit_module_to_bytes(&ctx, &module, ObjectFormat::MachO)
+            .expect("Mach-O emit must succeed");
+        // Mach-O magic: 0xCFFAEDFE (little-endian 64-bit)
+        assert_eq!(&bytes[..4], b"\xcf\xfa\xed\xfe", "Mach-O magic must be present");
+    }
+
+    #[test]
+    fn shim_coff_magic_bytes() {
+        let (mut ctx, mut module) = parse(RETURN_CONST).expect("parse");
+        let mut pm = build_pipeline(OptLevel::O0);
+        pm.run_until_fixed_point(&mut ctx, &mut module, 8);
+        let bytes = emit_module_to_bytes(&ctx, &module, ObjectFormat::Coff)
+            .expect("COFF emit must succeed");
+        // COFF x86-64 machine type: 0x8664 (little-endian)
+        assert_eq!(&bytes[..2], b"\x64\x86", "COFF x86-64 magic must be present");
     }
 
     #[test]
