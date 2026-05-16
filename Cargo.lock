@@ -457,6 +457,7 @@ dependencies = [
  "llvm-in-rust-codegen",
  "llvm-in-rust-ir",
  "llvm-in-rust-ir-parser",
+ "llvm-in-rust-jit",
  "llvm-in-rust-target-arm",
  "llvm-in-rust-target-riscv",
  "llvm-in-rust-target-x86",
@@ -518,6 +519,18 @@ dependencies = [
  "llvm-in-rust-transforms",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "llvm-in-rust-jit"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "llvm-in-rust-codegen",
+ "llvm-in-rust-ir",
+ "llvm-in-rust-ir-parser",
+ "llvm-in-rust-target-x86",
+ "llvm-in-rust-transforms",
 ]
 
 [[package]]

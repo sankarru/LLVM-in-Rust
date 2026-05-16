@@ -1,0 +1,24 @@
+[package]
+name = "llvm-in-rust-jit"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+description = "mmap-based JIT ExecutionEngine for LLVM-in-Rust."
+repository = "https://github.com/yudongusa/LLVM-in-Rust"
+homepage = "https://github.com/yudongusa/LLVM-in-Rust"
+keywords = ["llvm", "compiler", "ir", "jit", "rust"]
+categories = ["compilers", "development-tools"]
+
+[lib]
+name = "llvm_jit"
+
+[dependencies]
+llvm-ir = { package = "llvm-in-rust-ir", version = "0.1.0", path = "../llvm-ir" }
+llvm-codegen = { package = "llvm-in-rust-codegen", version = "0.1.0", path = "../llvm-codegen" }
+llvm-target-x86 = { package = "llvm-in-rust-target-x86", version = "0.1.0", path = "../llvm-target-x86" }
+llvm-transforms = { package = "llvm-in-rust-transforms", version = "0.1.0", path = "../llvm-transforms" }
+libc = "0.2"
+
+[dev-dependencies]
+llvm-ir-parser = { package = "llvm-in-rust-ir-parser", version = "0.1.0", path = "../llvm-ir-parser" }

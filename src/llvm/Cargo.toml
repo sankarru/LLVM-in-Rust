@@ -22,3 +22,4 @@ llvm-target-x86 = { package = "llvm-in-rust-target-x86", version = "0.1.0", path
 llvm-target-arm = { package = "llvm-in-rust-target-arm", version = "0.1.0", path = "../llvm-target-arm" }
 llvm-target-riscv = { package = "llvm-in-rust-target-riscv", version = "0.1.0", path = "../llvm-target-riscv" }
 llvm-bitcode = { package = "llvm-in-rust-bitcode", version = "0.1.0", path = "../llvm-bitcode" }
+llvm-jit = { package = "llvm-in-rust-jit", version = "0.1.0", path = "../llvm-jit", optional = true }
