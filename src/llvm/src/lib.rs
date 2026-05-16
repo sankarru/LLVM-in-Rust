@@ -20,3 +20,6 @@ pub use llvm_transforms as transforms;
 
 /// Public API for `lto`.
 pub mod lto;
+
+/// Public API for `compile`.
+pub mod compile;

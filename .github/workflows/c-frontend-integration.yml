@@ -1,0 +1,35 @@
+name: C Frontend Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  c_frontend:
+    name: C frontend (clang → IR → our codegen → execute)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Rust stable toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable
+          rustup default stable
+
+      - name: Install clang
+        run: sudo apt-get install -y --no-install-recommends clang
+
+      - name: Build llvm-compile
+        run: cargo +stable build --bin llvm-compile
+
+      - name: Run compile_pipeline integration tests
+        run: cargo +stable test -p llvm-in-rust --test compile_pipeline
+
+      - name: Run C frontend integration script
+        run: bash scripts/frontend_integration.sh
