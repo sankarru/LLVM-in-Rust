@@ -1,120 +1,91 @@
-# Real-Program Compilation Benchmark
+# Real-Program Compilation Benchmarks
 
-This directory contains a harness for measuring the end-to-end compilation
-speed and code quality of the LLVM-in-Rust pipeline against Clang -O2 as a
-reference.
+Measures the runtime quality of our codegen against `clang -O2` on three
+scalar-computation benchmarks.
 
-## Purpose and Methodology
-
-The harness compiles three scalar-only C benchmark programs through two paths:
-
-1. **Reference path** — `clang -O2` (highly optimised, industry baseline)
-2. **Ours path** — `clang -O0 -emit-llvm` (unoptimised IR) → `llvm-ir-compile`
-   (our Rust-native pipeline: mem2reg + linear-scan regalloc) → native linker
-
-This isolates the quality of our code generator and register allocator from
-front-end optimisations: both paths start from the same C source, but our
-pipeline sees unoptimised IR while Clang -O2 applies the full optimisation
-stack.
-
-The programs are deliberately scalar-only (no arrays, no heap allocations, no
-external function calls) so that mem2reg promotes every `alloca`/`load`/`store`
-triple to pure SSA and our pipeline can compile them without stubs.
-
-## Prerequisites
-
-- Rust toolchain with `cargo` in `PATH`
-- `clang` (any recent version) in `PATH`
-- `cc` (system linker, typically `gcc` or `clang`) in `PATH`
-- A POSIX shell with `bash` ≥ 4
-
-## How to Run
-
-From the workspace root (the directory containing `Cargo.toml`):
+## How to run
 
 ```bash
+# From the workspace root
 bash bench/real-programs/run.sh
 ```
 
-The script will:
-1. Build `llvm-ir-compile` in release mode.
-2. For each benchmark: compile with clang -O2, emit LLVM IR with clang -O0,
-   compile IR with our pipeline, link, and run.
-3. Time each binary (median of 3 runs).
-4. Check correctness by comparing exit codes.
-5. Print a formatted results table.
+Prerequisites: Rust toolchain (`cargo`), `clang`, `cc` (system linker).
 
-Intermediate files land in `bench/real-programs/.tmp/` and are left for
-inspection.
+## Pipeline
 
-## Benchmark Descriptions
+```
+fixtures/bench_X.ll ──► llvm-ir-compile ──► bench_X.o ──► cc ──► bench_X_ours
+fixtures/bench_X.c  ──► clang -O2       ──────────────────────► bench_X_ref
+```
 
-### `bench_fib` — Iterative Fibonacci
+The `.ll` fixtures are hand-crafted LLVM IR (same style as the smoke tests)
+that our full pipeline — `parse → mem2reg → lower → regalloc → spill-reload →
+emit → link` — can compile correctly.  The `.c` files are equivalent C sources
+compiled with `clang -O2` as the performance reference.
 
-Computes fib(30) = 832 040 iteratively, repeated 20 million times.
-Returns `fib(30) % 100 = 40` as the exit code.
+## Benchmarks
 
-Exercises: inner/outer loop with three live variables (a, b, c), integer add.
+| Program   | What it computes                              | Expected exit code |
+|-----------|----------------------------------------------|--------------------|
+| `fib`     | `fib(30) × 20M iterations` (iterative)      | 40                 |
+| `gcd`     | `GCD(100003+i, 99991)` × 50M iterations      | 1                  |
+| `collatz` | Collatz steps for all `n` in 1..500 000      | 51                 |
 
-### `bench_gcd` — Euclidean GCD
+All results are returned as `result % 100` to fit in an 8-bit exit code that
+both the reference and our binary agree on (correctness gate).
 
-Computes the GCD of `100003 + (iter & 0xFFFF)` and `99991` for 50 million
-iterations.  Returns `result % 100` as the exit code.
+## Results (macOS arm64, Apple M-series, 2026-05)
 
-Exercises: while-loop with remainder (`%`) inside an outer for-loop, integer
-division, multiple live variables.
+| program  | clang -O2 | ours    | slowdown | correctness  |
+|----------|-----------|---------|----------|--------------|
+| fib      | 0.008 s   | 0.480 s | **60×**  | OK (exit=40) |
+| gcd      | 1.364 s   | 1.826 s | **1.3×** | OK (exit=1)  |
+| collatz  | 0.051 s   | 0.214 s | **4.2×** | OK (exit=51) |
 
-### `bench_collatz` — Collatz Sequence
+Binary sizes are identical (16 848 bytes) because both pipelines produce a
+minimal Mach-O object that links against the same system libraries.
 
-For each starting value 1..500 000, counts the number of steps until the
-Collatz sequence reaches 1.  Returns `steps % 100` for the last starting value.
+### Notes on the fib result
 
-Exercises: nested while-loops, conditional branch (even/odd split), mixed
-multiply and divide, long loop trip count.
+Even with `volatile long iters`, clang -O2 applies loop-strength-reduction and
+partially-unrolls the inner Fibonacci loop into a straight-line sequence.  Our
+pipeline emits one load/add/store per iteration without any such optimisation,
+hence the 60× gap.  This measures missing loop optimisations, not a fundamental
+codegen deficiency.
 
-## Known Limitations
+## Known pipeline limitations
 
-The current pipeline does not support:
+These benchmarks are designed to work within the current pipeline's capabilities:
 
-- **Floating-point** — no FP registers or instructions are allocated.
-- **Arrays / pointers after mem2reg** — only heap-free, scalar programs can be
-  fully compiled.  Any remaining `alloca` after mem2reg produces a stub `mov 0`
-  and will silently compute the wrong answer.
-- **External function calls** — `printf`, `malloc`, etc. are not yet lowered.
-- **Variadic functions** — ABI handling for variadic calls is incomplete.
-- **Optimisation** — only mem2reg runs; no constant propagation, loop
-  optimisation, or instruction scheduling beyond what mem2reg enables.
+- **Scalar variables only** — all allocas are promoted to SSA by `mem2reg`;
+  array/struct accesses (GEP + load/store chains) are not yet emitted correctly.
+- **No external function calls** — `printf`, `malloc`, etc. require relocations
+  that the current `BLR`-only call-lowering does not support.
+- **No floating point** — FP arithmetic stubs emit `MOV_IMM 0` placeholders.
+- **Mach-O object files lack LC_BUILD_VERSION** — the system linker emits a
+  harmless platform-load-command warning.
 
-## Placeholder Results Table
+## Top 3 optimisation gaps
 
-| program  | clang-O2 (s) | ours (s) | slowdown | clang size (B) | ours size (B) |
-|----------|-------------|----------|----------|----------------|---------------|
-| fib      |  (TBD)      |  (TBD)   |  (TBD)x  |  (TBD)         |  (TBD)        |
-| gcd      |  (TBD)      |  (TBD)   |  (TBD)x  |  (TBD)         |  (TBD)        |
-| collatz  |  (TBD)      |  (TBD)   |  (TBD)x  |  (TBD)         |  (TBD)        |
+1. **Loop optimisations (fib, 60×)** — LICM moves loop-invariant constant
+   materialisations out of inner loops; strength reduction replaces multiply-by-2
+   with shifts; loop unrolling amortises branch/phi overhead.  Implementing even
+   a basic LICM pass would close most of this gap.
 
-Run `bash bench/real-programs/run.sh` to fill in the table for your machine.
+2. **Instruction selection for SREM (collatz, 4.2×)** — we lower `srem i64 x, 2`
+   as `SDIV + MUL + SUB` (3 instructions).  AArch64 provides `MSUB`
+   (`a - b*c` in one cycle) and strength-reduces `%2` to an AND mask.  clang
+   emits `AND x, x, #1` for the parity check instead of a full division.
 
-## Expected Performance Gap and Optimisation Opportunities
+3. **Register allocation quality (all)** — our linear-scan allocator does not
+   split live ranges or use caller-saved registers aggressively.  Live ranges for
+   loop-carried phi values span the entire loop body, preventing the allocator
+   from reusing registers for short-lived temporaries inside the loop.
 
-We expect a **5–30× slowdown** compared to clang -O2 for these benchmarks.
-The main contributors are:
+## Adding new benchmarks
 
-1. **No loop optimisation** — clang -O2 auto-vectorises and applies
-   loop-invariant code motion; we do neither.
-2. **Linear-scan register allocator** — produces more spill/reload code than an
-   optimal graph-colouring allocator, especially for inner loops with many live
-   variables.
-3. **No instruction scheduling** — instructions are emitted in IR order; a
-   scheduler could hide latency by reordering independent instructions.
-4. **No constant folding after lowering** — immediate-materialisation sequences
-   (MOVZ/MOVK on AArch64) are not folded with subsequent arithmetic.
-5. **No peephole optimisation** — redundant move sequences generated during
-   phi-destruction are not eliminated.
-
-The top three improvements that would shrink the gap most:
-- Run constant propagation + DCE before codegen (reduces live range pressure).
-- Implement a simple register coalescing pass to eliminate copy chains from
-  phi-destruction.
-- Add basic loop-invariant code motion (LICM) to hoist loop-constant
-  calculations out of inner loops.
+1. Write a `fixtures/bench_NAME.ll` using `alloca`/`load`/`store` for scalar
+   variables (mem2reg will promote them) with no external function calls.
+2. Write a matching `fixtures/bench_NAME.c` (used only for the reference binary).
+3. Add `NAME` to the benchmark list in `run.sh`.

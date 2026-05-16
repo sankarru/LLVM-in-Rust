@@ -1,11 +1,10 @@
-/* Euclidean GCD repeated 50M times.
- * Returns result % 100 as exit code.
- * Scalar-only: all variables are promoted to SSA by mem2reg. */
+/* Euclidean GCD(100003 + iter, 99991) for 50M iterations.
+ * Returns last GCD result % 100 as exit code (matches bench_gcd.ll). */
 int main(void) {
     long result = 0;
     long iter;
     for (iter = 0; iter < 50000000L; iter++) {
-        long a = 100003L + (iter & 0xFFFFL);
+        long a = 100003L + iter;
         long b = 99991L;
         while (b != 0) { long t = b; b = a % b; a = t; }
         result = a;

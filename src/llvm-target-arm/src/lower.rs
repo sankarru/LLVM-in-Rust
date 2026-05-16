@@ -108,7 +108,10 @@ fn resolve(
             let vreg = mf.fresh_vreg();
             vmap.insert(vr, vreg);
             let imm = const_to_imm(ctx.get_const(cid));
-            mf.push(mblock, MInstr::new(MOV_IMM).with_dst(vreg).with_imm(imm));
+            // MOV_IMM is a 16-bit MOVZ and can only represent 0..=0xFFFF.
+            // Use MOV_WIDE for any value that doesn't fit.
+            let opcode = if imm >= 0 && imm <= 0xFFFF { MOV_IMM } else { MOV_WIDE };
+            mf.push(mblock, MInstr::new(opcode).with_dst(vreg).with_imm(imm));
             vreg
         }
         _ => {
@@ -579,21 +582,41 @@ fn emit_phi_copies(
     let dest_bb = &func.blocks[dest.0 as usize];
     let src_bid = BlockId(ir_src_block as u32);
 
+    // Parallel copy semantics: all sources must be read before any destination
+    // is written.  Naively sequencing MOVs can produce wrong results when a
+    // phi source is later assigned the same physical register as another phi
+    // destination (e.g. fibonacci: a←b, b←next, where next gets a's register).
+    //
+    // Fix: phase 1 reads every source into a fresh temporary; phase 2 copies
+    // the temporaries to the phi VRegs.  This guarantees all reads happen
+    // before any write, regardless of what physical registers regalloc picks.
+    let mut pending: Vec<(VReg, VReg)> = Vec::new(); // (temp, phi_dst)
+
     for &iid in &dest_bb.body {
         if let InstrKind::Phi { incoming, .. } = &func.instr(iid).kind {
-            // Find the incoming value from `src_bid`.
             if let Some((incoming_val, _)) = incoming.iter().find(|(_, bid)| *bid == src_bid) {
                 let phi_vreg = match vmap.get(&ValueRef::Instruction(iid)) {
                     Some(&v) => v,
                     None => continue,
                 };
                 let src_vreg = resolve(ctx, mf, emit_to_mblock, vmap, *incoming_val);
+                // Phase 1: read source into a fresh temp.
+                let temp = mf.fresh_vreg();
                 mf.push(
                     emit_to_mblock,
-                    MInstr::new(MOV_RR).with_dst(phi_vreg).with_vreg(src_vreg),
+                    MInstr::new(MOV_RR).with_dst(temp).with_vreg(src_vreg),
                 );
+                pending.push((temp, phi_vreg));
             }
         }
+    }
+
+    // Phase 2: write temps to phi destinations.
+    for (temp, phi_vreg) in pending {
+        mf.push(
+            emit_to_mblock,
+            MInstr::new(MOV_RR).with_dst(phi_vreg).with_vreg(temp),
+        );
     }
 }
 
