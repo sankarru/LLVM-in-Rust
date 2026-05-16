@@ -39,9 +39,6 @@ jobs:
           cargo +stable test \
             -p llvm-in-rust-codegen \
             --test linker_compat \
-            coff_link_with_lld_link_and_run_exit_code \
-            coff_object_main_symbol_visible \
-            tool_presence_report_is_accessible \
             -- --nocapture
 
   coff_inspect:
