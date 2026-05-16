@@ -207,14 +207,31 @@ impl<'src> Parser<'src> {
         self.lex.expect(&Token::Equal)?;
         let linkage = self.parse_optional_linkage();
 
-        // Skip optional addr-space qualifiers that appear before global/constant.
-        // e.g. `@x = unnamed_addr global i32 0` or `@x = local_unnamed_addr constant i32 0`.
+        // Skip optional qualifiers that appear before global/constant:
+        //   dso_local, dso_preemptable, unnamed_addr, local_unnamed_addr, externally_initialized
+        // Also skip `addrspace(N)` and `thread_local(model)` / `thread_local`.
         loop {
             match self.lex.peek()? {
                 Token::LocalIdent(s)
-                    if s == "unnamed_addr" || s == "local_unnamed_addr" =>
+                    if matches!(
+                        s.as_str(),
+                        "unnamed_addr"
+                            | "local_unnamed_addr"
+                            | "dso_local"
+                            | "dso_preemptable"
+                            | "externally_initialized"
+                            | "thread_local"
+                            | "addrspace"
+                    ) =>
                 {
+                    let s = s.clone();
                     self.lex.next()?;
+                    // `addrspace(N)` and `thread_local(model)` carry a parenthesised payload.
+                    if (s == "addrspace" || s == "thread_local")
+                        && matches!(self.lex.peek()?, Token::LParen)
+                    {
+                        self.skip_balanced_parens()?;
+                    }
                 }
                 _ => break,
             }
