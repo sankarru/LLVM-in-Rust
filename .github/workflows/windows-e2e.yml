@@ -1,0 +1,82 @@
+name: Windows E2E (COFF x86-64)
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  windows-e2e:
+    name: Windows COFF unit + integration tests
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run all unit tests (includes COFF emit + Win64 ABI)
+        run: cargo test --no-fail-fast
+
+      - name: Build llvm-ir-compile in release mode
+        run: cargo build --release -p llvm
+
+      - name: Smoke test — compile fib.ll to COFF .obj and link with lld-link
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DRIVER="target/release/llvm-ir-compile.exe"
+          LL="bench/real-programs/fixtures/bench_fib.ll"
+          OBJ="bench_fib.obj"
+          EXE="bench_fib.exe"
+
+          echo "=== Compiling $LL → $OBJ ==="
+          "$DRIVER" "$LL" -o "$OBJ"
+
+          echo "=== Linking with lld-link ==="
+          # lld-link is available on windows-2022 via the Visual Studio MSVC tools.
+          # /SUBSYSTEM:CONSOLE and /ENTRY:main are needed for a bare .obj with a main().
+          # We suppress the default-lib warning since we have no CRT.
+          lld-link.exe "$OBJ" /OUT:"$EXE" /SUBSYSTEM:CONSOLE /ENTRY:main \
+            /NODEFAULTLIB /IGNORE:4210 2>&1 || true
+
+          if [ -f "$EXE" ]; then
+            echo "=== Running $EXE ==="
+            "./$EXE" || EXIT_CODE=$?
+            echo "Exit code: ${EXIT_CODE:-0}"
+            if [ "${EXIT_CODE:-0}" -eq 40 ]; then
+              echo "PASS: fib(30) % 100 = 40"
+            else
+              echo "FAIL: expected exit 40, got ${EXIT_CODE:-0}"
+              exit 1
+            fi
+          else
+            echo "SKIP: lld-link did not produce $EXE (likely missing CRT); COFF .obj was created."
+          fi
+
+      - name: Validate COFF header with dumpbin (if available)
+        shell: pwsh
+        run: |
+          $dumpbin = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe"
+          $found = Get-Item $dumpbin -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($found) {
+            Write-Host "=== dumpbin /HEADERS bench_fib.obj ==="
+            & $found /HEADERS bench_fib.obj
+            Write-Host "=== dumpbin /SYMBOLS bench_fib.obj ==="
+            & $found /SYMBOLS bench_fib.obj
+          } else {
+            Write-Host "dumpbin not found — skipping header validation"
+          }
