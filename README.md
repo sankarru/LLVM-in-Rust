@@ -739,6 +739,12 @@ Bug reports and feature requests go to the [issue tracker](https://github.com/yu
 
 ---
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for how to report a vulnerability.
+
+---
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
