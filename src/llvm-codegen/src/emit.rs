@@ -1,10 +1,18 @@
 //! Object-file emission.
 //!
-//! Produces a minimal ELF-64 (Linux/x86-64) or Mach-O 64-bit (macOS/x86-64)
-//! relocatable object file containing a single `.text` section.
-//! The actual byte encoding is supplied by the target via the [`Emitter`] trait.
+//! Produces a minimal ELF-64 or Mach-O 64-bit relocatable object file
+//! containing a single `.text` section.  Supports both x86-64 and AArch64
+//! targets; the target architecture is supplied by the [`Emitter`] via
+//! [`Emitter::arch`].
 
 // ── object-file model ──────────────────────────────────────────────────────
+
+/// Target instruction-set architecture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arch {
+    X86_64,
+    AArch64,
+}
 
 /// Supported object-file formats.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +66,7 @@ pub struct Symbol {
 #[derive(Clone, Debug)]
 pub struct ObjectFile {
     pub format: ObjectFormat,
+    pub arch: Arch,
     pub sections: Vec<Section>,
     pub symbols: Vec<Symbol>,
 }
@@ -83,6 +92,9 @@ pub trait Emitter {
 
     /// The object format this emitter targets.
     fn object_format(&self) -> ObjectFormat;
+
+    /// The target instruction-set architecture.
+    fn arch(&self) -> Arch;
 }
 
 /// Build a complete [`ObjectFile`] from a [`MachineFunction`] using `emitter`.
@@ -98,8 +110,59 @@ pub fn emit_object(mf: &MachineFunction, emitter: &mut dyn Emitter) -> ObjectFil
     };
     ObjectFile {
         format: emitter.object_format(),
+        arch: emitter.arch(),
         sections: vec![section],
         symbols: vec![sym],
+    }
+}
+
+/// Build one [`ObjectFile`] from multiple [`MachineFunction`]s.
+///
+/// Text sections are concatenated; symbol offsets are adjusted so each
+/// function's symbol points to the right place inside the combined text blob.
+/// Relocations within each function have their `offset` field rebased to the
+/// start of the combined section.  The `symbol` field is left as-is (index 0)
+/// because our benchmark programs have no inter-function calls, so reloc
+/// symbol fixups are not needed in practice.
+pub fn emit_module_object(funcs: &[MachineFunction], emitter: &mut dyn Emitter) -> ObjectFile {
+    let mut text_data: Vec<u8> = Vec::new();
+    let mut symbols: Vec<Symbol> = Vec::new();
+    let mut all_relocs: Vec<Reloc> = Vec::new();
+
+    for mf in funcs {
+        let base = text_data.len() as u64;
+        let sec = emitter.emit_function(mf);
+        let fn_size = sec.data.len() as u64;
+        for mut r in sec.relocs {
+            r.offset += base;
+            // symbol index points into the combined symbols list
+            r.symbol += symbols.len();
+            all_relocs.push(r);
+        }
+        symbols.push(Symbol {
+            name: mf.name.clone(),
+            section: 0,
+            offset: base,
+            size: fn_size,
+            global: true,
+        });
+        text_data.extend_from_slice(&sec.data);
+    }
+
+    let sec_name = if emitter.object_format() == ObjectFormat::MachO {
+        "__text".to_string()
+    } else {
+        ".text".to_string()
+    };
+    ObjectFile {
+        format: emitter.object_format(),
+        arch: emitter.arch(),
+        sections: vec![Section {
+            name: sec_name,
+            data: text_data,
+            relocs: all_relocs,
+        }],
+        symbols,
     }
 }
 
@@ -173,8 +236,12 @@ fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
     buf.push(1); // EI_VERSION
     buf.push(0); // EI_OSABI: System V
     buf.extend_from_slice(&[0u8; 8]); // padding
+    let e_machine: u16 = match obj.arch {
+        Arch::X86_64 => 62,  // EM_X86_64
+        Arch::AArch64 => 183, // EM_AARCH64
+    };
     w16(&mut buf, 1); // e_type: ET_REL
-    w16(&mut buf, 62); // e_machine: EM_X86_64
+    w16(&mut buf, e_machine);
     w32(&mut buf, 1); // e_version
     w64(&mut buf, 0); // e_entry
     w64(&mut buf, 0); // e_phoff
@@ -307,9 +374,11 @@ fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
     if has_relocs {
         for reloc in text_relocs {
             let sym_idx = (reloc.symbol + 1) as u64;
-            let r_type: u64 = match reloc.kind {
-                RelocKind::Pc32 => 2,  // R_X86_64_PC32
-                RelocKind::Abs64 => 1, // R_X86_64_64
+            let r_type: u64 = match (obj.arch, reloc.kind) {
+                (Arch::X86_64, RelocKind::Pc32) => 2,   // R_X86_64_PC32
+                (Arch::X86_64, RelocKind::Abs64) => 1,  // R_X86_64_64
+                (Arch::AArch64, RelocKind::Pc32) => 261, // R_AARCH64_PREL32
+                (Arch::AArch64, RelocKind::Abs64) => 257, // R_AARCH64_ABS64
             };
             let r_info = (sym_idx << 32) | r_type;
             w64(&mut buf, reloc.offset);
@@ -384,14 +453,20 @@ fn serialize_macho(obj: &ObjectFile) -> Vec<u8> {
 
     let mut buf = Vec::<u8>::new();
 
-    // mach_header_64
+    let (cpu_type, cpu_subtype): (u32, u32) = match obj.arch {
+        Arch::X86_64  => (0x01000007, 0x00000003), // CPU_TYPE_X86_64 / ALL
+        Arch::AArch64 => (0x0100000C, 0x00000000), // CPU_TYPE_ARM64  / ALL
+    };
+
+    // mach_header_64 (8 × u32 = 32 bytes; 64-bit has a reserved field after flags)
     w32(&mut buf, 0xfeedfacf); // MH_MAGIC_64
-    w32(&mut buf, 0x01000007); // CPU_TYPE_X86_64
-    w32(&mut buf, 0x00000003); // CPU_SUBTYPE_X86_64_ALL
+    w32(&mut buf, cpu_type);
+    w32(&mut buf, cpu_subtype);
     w32(&mut buf, 1); // MH_OBJECT
     w32(&mut buf, 3); // ncmds
     w32(&mut buf, cmds_size); // sizeofcmds
     w32(&mut buf, 0); // flags
+    w32(&mut buf, 0); // reserved (mach_header_64 only)
 
     // LC_SEGMENT_64
     w32(&mut buf, 0x19); // LC_SEGMENT_64
@@ -449,9 +524,11 @@ fn serialize_macho(obj: &ObjectFile) -> Vec<u8> {
     // relocation entries (relocation_info, 8 bytes each)
     for reloc in text_relocs {
         let sym_idx = reloc.symbol as u32;
-        let (r_type, r_length, r_pcrel): (u32, u32, u32) = match reloc.kind {
-            RelocKind::Pc32 => (2, 2, 1),  // X86_64_RELOC_BRANCH, 4 bytes, PC-rel
-            RelocKind::Abs64 => (0, 3, 0), // X86_64_RELOC_UNSIGNED, 8 bytes, abs
+        let (r_type, r_length, r_pcrel): (u32, u32, u32) = match (obj.arch, reloc.kind) {
+            (Arch::X86_64, RelocKind::Pc32)   => (2, 2, 1), // X86_64_RELOC_BRANCH
+            (Arch::X86_64, RelocKind::Abs64)  => (0, 3, 0), // X86_64_RELOC_UNSIGNED
+            (Arch::AArch64, RelocKind::Pc32)  => (2, 2, 1), // ARM64_RELOC_BRANCH26
+            (Arch::AArch64, RelocKind::Abs64) => (0, 3, 0), // ARM64_RELOC_UNSIGNED
         };
         let r_extern: u32 = 1;
         let r_info =
@@ -512,6 +589,7 @@ mod tests {
         };
         ObjectFile {
             format: fmt,
+            arch: Arch::X86_64,
             sections: vec![Section {
                 name: section_name.into(),
                 data: code,
@@ -594,6 +672,9 @@ mod tests {
             }
             fn object_format(&self) -> ObjectFormat {
                 ObjectFormat::Elf
+            }
+            fn arch(&self) -> Arch {
+                Arch::X86_64
             }
         }
 

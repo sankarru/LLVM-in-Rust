@@ -13,3 +13,7 @@ llvm-codegen = { path = "../llvm-codegen" }
 llvm-target-x86 = { path = "../llvm-target-x86" }
 llvm-target-arm = { path = "../llvm-target-arm" }
 llvm-bitcode = { path = "../llvm-bitcode" }
+
+[[bin]]
+name = "llvm-ir-compile"
+path = "src/main.rs"
