@@ -21,4 +21,5 @@ llvm-codegen = { package = "llvm-in-rust-codegen", version = "0.1.0", path = "..
 llvm-target-x86 = { package = "llvm-in-rust-target-x86", version = "0.1.0", path = "../llvm-target-x86" }
 llvm-target-arm = { package = "llvm-in-rust-target-arm", version = "0.1.0", path = "../llvm-target-arm" }
 llvm-target-riscv = { package = "llvm-in-rust-target-riscv", version = "0.1.0", path = "../llvm-target-riscv" }
+llvm-target-wasm = { package = "llvm-in-rust-target-wasm", version = "0.1.0", path = "../llvm-target-wasm" }
 llvm-bitcode = { package = "llvm-in-rust-bitcode", version = "0.1.0", path = "../llvm-bitcode" }
