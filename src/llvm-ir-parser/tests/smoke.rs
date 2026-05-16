@@ -602,6 +602,7 @@ exit:
 
 // ── diagnostic: dump machine IR and disassembly for failing tests ─────────────
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 #[test]
 fn diag_max_select_asm() {
     let src = r#"define i32 @main() {
