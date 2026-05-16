@@ -825,34 +825,67 @@ fn build_eh_frame(text_size: u64, frame_size: u32, used_callee_saved: &[PReg]) -
 }
 
 fn build_coff_unwind_tables(text_size: u64, frame_size: u32, used_callee_saved: &[PReg]) -> (Vec<u8>, Vec<u8>) {
-    // x64 UNWIND_INFO shaped from prologue facts (push rbp + optional stack alloc).
-    // Keep a conservative subset of unwind codes for compatibility.
+    // Build UNWIND_INFO from prologue facts.
+    //
+    // Prologue byte layout assumed by the encoder:
+    //   push rbp            1 byte  → CodeOffset = 1
+    //   mov rbp, rsp        3 bytes → no unwind code (frame setup)
+    //   sub rsp, N (imm8)   4 bytes → CodeOffset = 8  (alloc ≤ 128)
+    //   sub rsp, N (imm32)  7 bytes → CodeOffset = 11 (alloc > 128)
+    //
+    // Per the Win64 ABI, UNWIND_CODE slots must be ordered by CodeOffset
+    // in DESCENDING order (last prologue instruction first).
     let has_frame = frame_size > 0 || !used_callee_saved.is_empty();
-    let mut codes: Vec<(u8, u8, u16)> = Vec::new();
 
-    if has_frame {
-        // UWOP_PUSH_NONVOL for RBP at prologue offset 1.
-        codes.push((1, 0, 5)); // info=RBP
-    }
+    // Round frame allocation up to 16-byte boundary.
+    let alloc_size: u32 = if frame_size == 0 { 0 } else { (frame_size + 15) & !15 };
 
-    let alloc_size = if frame_size == 0 { 0 } else { ((frame_size as u32 + 15) / 16) * 16 };
+    // code_bytes holds raw UNWIND_CODE slots (2 bytes each) in descending offset order.
+    let mut code_bytes: Vec<u8> = Vec::new();
+    let mut slot_count: u8 = 0;
+
+    // Alloc code comes first (highest CodeOffset).
     if alloc_size > 0 && alloc_size <= 128 {
-        // UWOP_ALLOC_SMALL: info = (size/8)-1
-        let info = ((alloc_size / 8) - 1) as u16;
-        codes.push((4, 2, info));
+        // UWOP_ALLOC_SMALL (op=2, info=(alloc/8)-1): 1 slot
+        let info = ((alloc_size / 8) - 1) as u8;
+        code_bytes.push(8); // CodeOffset: byte after `sub rsp, imm8` (4-byte encoding)
+        code_bytes.push((info << 4) | 0x02);
+        slot_count += 1;
+    } else if alloc_size > 128 {
+        // UWOP_ALLOC_LARGE (op=1, info=0): 2 slots
+        // Slot 0: {CodeOffset, UWOP_ALLOC_LARGE | info=0}
+        // Slot 1 (u16): alloc_size / 8
+        code_bytes.push(11); // CodeOffset: byte after `sub rsp, imm32` (7-byte encoding)
+        code_bytes.push(0x01); // UWOP_ALLOC_LARGE = 1, info = 0
+        let sz16 = (alloc_size / 8) as u16;
+        code_bytes.extend_from_slice(&sz16.to_le_bytes());
+        slot_count += 2;
     }
 
-    let count_of_codes = codes.len() as u8;
+    // PUSH_NONVOL for RBP comes second (lower CodeOffset = 1).
+    if has_frame {
+        code_bytes.push(1); // CodeOffset: byte after `push rbp`
+        code_bytes.push((5 << 4) | 0x00); // UWOP_PUSH_NONVOL = 0, info = RBP (5)
+        slot_count += 1;
+    }
+
+    let prolog_size: u8 = if alloc_size > 128 {
+        11
+    } else if alloc_size > 0 {
+        8
+    } else if has_frame {
+        4
+    } else {
+        0
+    };
+
     let mut xdata = Vec::new();
     xdata.push(0x01); // version=1, flags=0
-    xdata.push(if has_frame { 4 } else { 0 }); // conservative prolog size
-    xdata.push(count_of_codes); // unwind code slots (we encode one slot each)
-    xdata.push(if has_frame { 5 } else { 0 }); // frame register=RBP, offset=0
+    xdata.push(prolog_size);
+    xdata.push(slot_count);
+    xdata.push(if has_frame { 5 } else { 0 }); // FrameRegister=RBP(5), FrameOffset=0
 
-    for (code_off, unwind_op, op_info) in &codes {
-        xdata.push(*code_off);
-        xdata.push(((*op_info as u8) << 4) | (*unwind_op & 0x0f));
-    }
+    xdata.extend_from_slice(&code_bytes);
 
     // Align unwind info to 4-byte boundary.
     while xdata.len() % 4 != 0 {
@@ -1108,7 +1141,8 @@ fn serialize_coff(obj: &ObjectFile) -> Vec<u8> {
         write_coff_name_field(&mut buf, &sym.name, symbol_name_offs[i]);
         w32(&mut buf, sym.offset as u32); // Value
         w16(&mut buf, (sym.section + 1) as u16); // SectionNumber (1-based)
-        w16(&mut buf, 0); // Type
+        // Type: IMAGE_SYM_DTYPE_FUNCTION (2) << 4 | IMAGE_SYM_TYPE_NULL (0) = 0x0020
+        w16(&mut buf, if sym.global { 0x0020 } else { 0 });
         buf.push(if sym.global { 2 } else { 3 }); // StorageClass: EXTERNAL or STATIC
         buf.push(0); // NumberOfAuxSymbols
     }
@@ -1141,12 +1175,15 @@ fn write_coff_name_field(buf: &mut Vec<u8>, name: &str, strtab_off: u32) {
 }
 
 fn coff_section_characteristics(name: &str) -> u32 {
-    if name == ".text" {
-        0x60000020 // CNT_CODE | MEM_EXECUTE | MEM_READ
-    } else if name.starts_with(".debug") {
-        0x42000040 // CNT_INITIALIZED_DATA | MEM_READ | MEM_DISCARDABLE
-    } else {
-        0x40000040 // CNT_INITIALIZED_DATA | MEM_READ
+    match name {
+        ".text" => 0x60000020,  // CNT_CODE | MEM_EXECUTE | MEM_READ
+        // .pdata/.xdata require explicit alignment so the SEH unwinder can
+        // locate entries at load time; lld-link rejects missing alignment flags.
+        ".pdata" => 0x40300040, // CNT_INITIALIZED_DATA | MEM_READ | ALIGN_4BYTES
+        ".xdata" => 0x40400040, // CNT_INITIALIZED_DATA | MEM_READ | ALIGN_8BYTES
+        ".rdata" => 0x40000040, // CNT_INITIALIZED_DATA | MEM_READ
+        n if n.starts_with(".debug") => 0x42000040, // CNT_INITIALIZED_DATA | MEM_READ | MEM_DISCARDABLE
+        _ => 0x40000040, // CNT_INITIALIZED_DATA | MEM_READ
     }
 }
 
@@ -1696,5 +1733,110 @@ mod tests {
         assert!(obj.sections.iter().any(|s| s.name == ".debug$S"));
         let bytes = obj.to_bytes();
         assert!(bytes.windows(8).any(|w| w == b".debug$S"));
+    }
+
+    // ── helpers for COFF section-header inspection ─────────────────────────
+
+    /// Find the characteristics field for a named section in a raw COFF file.
+    fn coff_section_chars(bytes: &[u8], target: &[u8]) -> Option<u32> {
+        let n_sections = u16::from_le_bytes([bytes[2], bytes[3]]) as usize;
+        for i in 0..n_sections {
+            let hdr = 20 + i * 40;
+            if bytes[hdr..hdr + target.len()] == *target {
+                let c = &bytes[hdr + 36..hdr + 40];
+                return Some(u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn coff_pdata_characteristics_include_alignment() {
+        // .pdata must carry ALIGN_4BYTES (0x00300000) so the SEH unwinder can
+        // locate RUNTIME_FUNCTION entries without extra alignment fixup.
+        use crate::isel::{MachineBlock, MachineFunction};
+        struct NopCoff;
+        impl Emitter for NopCoff {
+            fn emit_function(&mut self, _mf: &MachineFunction) -> Section {
+                Section { name: ".text".into(), data: vec![0xC3], relocs: vec![], debug_rows: vec![] }
+            }
+            fn object_format(&self) -> ObjectFormat { ObjectFormat::Coff }
+        }
+        let mut mf = MachineFunction::new("pdata_test".into());
+        mf.blocks.push(MachineBlock { label: "entry".into(), instrs: vec![] });
+        mf.frame_size = 8;
+        let bytes = emit_object(&mf, &mut NopCoff).to_bytes();
+        let chars = coff_section_chars(&bytes, b".pdata")
+            .expect(".pdata section not found");
+        assert_eq!(chars, 0x40300040, ".pdata must have ALIGN_4BYTES (0x40300040)");
+    }
+
+    #[test]
+    fn coff_xdata_characteristics_include_alignment() {
+        // .xdata must carry ALIGN_8BYTES (0x00400000) so UNWIND_INFO records
+        // are correctly located by the x64 exception dispatcher.
+        use crate::isel::{MachineBlock, MachineFunction};
+        struct NopCoff;
+        impl Emitter for NopCoff {
+            fn emit_function(&mut self, _mf: &MachineFunction) -> Section {
+                Section { name: ".text".into(), data: vec![0xC3], relocs: vec![], debug_rows: vec![] }
+            }
+            fn object_format(&self) -> ObjectFormat { ObjectFormat::Coff }
+        }
+        let mut mf = MachineFunction::new("xdata_test".into());
+        mf.blocks.push(MachineBlock { label: "entry".into(), instrs: vec![] });
+        mf.frame_size = 8;
+        let bytes = emit_object(&mf, &mut NopCoff).to_bytes();
+        let chars = coff_section_chars(&bytes, b".xdata")
+            .expect(".xdata section not found");
+        assert_eq!(chars, 0x40400040, ".xdata must have ALIGN_8BYTES (0x40400040)");
+    }
+
+    #[test]
+    fn coff_function_symbol_type_is_0x0020() {
+        // COFF symbol Type must be 0x0020 (DT_FUNCTION) for external function
+        // symbols so that debuggers and tools can distinguish code from data.
+        let obj = ObjectFile {
+            format: ObjectFormat::Coff,
+            elf_machine: 0,
+            coff_machine: 0x8664,
+            sections: vec![Section { name: ".text".into(), data: vec![0xC3], relocs: vec![], debug_rows: vec![] }],
+            symbols: vec![Symbol { name: "fn".into(), section: 0, offset: 0, size: 1, global: true }],
+        };
+        let bytes = obj.to_bytes();
+        let symtab_ptr = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+        // IMAGE_SYMBOL layout: Name(8) + Value(4) + SectionNumber(2) + Type(2) + ...
+        // Type field starts at offset 14 within each 18-byte symbol record.
+        let type_field = u16::from_le_bytes([bytes[symtab_ptr + 14], bytes[symtab_ptr + 15]]);
+        assert_eq!(type_field, 0x0020, "external function symbols must have Type = 0x0020");
+    }
+
+    #[test]
+    fn coff_alloc_large_uses_two_unwind_slots() {
+        // A frame_size of 256 requires UWOP_ALLOC_LARGE (2 slots) instead of
+        // UWOP_ALLOC_SMALL (1 slot), since 256 > 128 (the ALLOC_SMALL limit).
+        use crate::isel::{MachineBlock, MachineFunction};
+        struct NopCoff;
+        impl Emitter for NopCoff {
+            fn emit_function(&mut self, _mf: &MachineFunction) -> Section {
+                Section { name: ".text".into(), data: vec![0xC3], relocs: vec![], debug_rows: vec![] }
+            }
+            fn object_format(&self) -> ObjectFormat { ObjectFormat::Coff }
+        }
+        let mut mf = MachineFunction::new("large_frame".into());
+        mf.blocks.push(MachineBlock { label: "entry".into(), instrs: vec![] });
+        mf.frame_size = 256;
+        let obj = emit_object(&mf, &mut NopCoff);
+        let xdata = obj.sections.iter().find(|s| s.name == ".xdata")
+            .expect(".xdata section").data.clone();
+        // CountOfCodes = xdata[2]. ALLOC_LARGE uses 2 slots, PUSH_NONVOL for RBP = 1 → total = 3.
+        assert_eq!(xdata[2], 3, "ALLOC_LARGE(2 slots) + PUSH_NONVOL(1 slot) = 3 total");
+        // Header is 4 bytes; first code slot at offset 4.
+        // First code must be UWOP_ALLOC_LARGE (op=1, info=0) → byte[5] low nibble = 1.
+        assert_eq!(xdata[5] & 0x0f, 1, "first unwind op must be UWOP_ALLOC_LARGE (1)");
+        assert_eq!(xdata[5] >> 4, 0, "UWOP_ALLOC_LARGE info must be 0 for sizes ≤ 512 KiB");
+        // Slots 1 encodes alloc_size/8 = 256/8 = 32.
+        let operand = u16::from_le_bytes([xdata[6], xdata[7]]);
+        assert_eq!(operand, 32, "ALLOC_LARGE operand must be alloc_size/8 = 32");
     }
 }
