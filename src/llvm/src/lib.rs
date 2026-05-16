@@ -23,3 +23,7 @@ pub mod lto;
 
 /// Public API for `compile`.
 pub mod compile;
+
+#[cfg(feature = "llvm-jit")]
+/// Public API for `jit`.
+pub use llvm_jit as jit;
