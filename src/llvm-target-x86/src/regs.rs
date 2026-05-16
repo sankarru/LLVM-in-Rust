@@ -22,11 +22,20 @@ pub const R14: PReg = PReg(14);
 pub const R15: PReg = PReg(15);
 
 /// Caller-saved registers available for allocation (excludes RSP, RBP and
-/// the callee-saved set RBX, R12–R15).
+/// the callee-saved set RBX, R12–R15) — System V AMD64 ABI.
 pub const ALLOCATABLE: &[PReg] = &[RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11];
 
 /// Callee-saved registers (must be preserved across calls per System V AMD64).
 pub const CALLEE_SAVED: &[PReg] = &[RBX, RBP, R12, R13, R14, R15];
+
+/// Caller-saved registers for allocation under the Windows x64 ABI.
+/// RSI and RDI are callee-saved in Win64 (unlike System V), so they are
+/// removed from the allocatable set and added to WIN64_CALLEE_SAVED.
+pub const WIN64_ALLOCATABLE: &[PReg] = &[RAX, RCX, RDX, R8, R9, R10, R11];
+
+/// Callee-saved registers per the Windows x64 ABI (integer registers only;
+/// XMM6–XMM15 are also callee-saved but not yet modelled here).
+pub const WIN64_CALLEE_SAVED: &[PReg] = &[RBX, RBP, RSI, RDI, R12, R13, R14, R15];
 
 /// Return the 64-bit register name in AT&T / Intel syntax.
 pub fn reg_name(r: PReg) -> &'static str {

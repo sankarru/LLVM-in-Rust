@@ -144,7 +144,7 @@ fn compile_module(
     module: &llvm_ir::Module,
     functions: &[&llvm_ir::Function],
 ) -> Vec<u8> {
-    let mut backend = X86Backend;
+    let mut backend = X86Backend::default();
     let mut machine_fns = Vec::new();
 
     for func in functions {

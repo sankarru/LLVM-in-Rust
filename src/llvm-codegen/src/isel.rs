@@ -120,6 +120,15 @@ pub struct MachineFunction {
     pub spill_slots: HashMap<VReg, u32>,
     /// Callee-saved physical registers actually used by this function (populated by apply_allocation).
     pub used_callee_saved: Vec<PReg>,
+    /// Extra bytes at the bottom of the frame reserved for callee home space (Win64: 32 bytes).
+    /// Included in the encoder's `sub rsp, N` calculation but sits below all spill slots.
+    pub shadow_space: u32,
+    /// When true the prologue must emit a `__chkstk` call before `sub rsp, N` to probe
+    /// unmapped stack pages one 4096-byte page at a time (Win64 requirement for frames > 4096).
+    /// The caller must materialise the frame size in RAX before the call.
+    /// NOTE: actual relocation emission for `__chkstk` requires external-symbol support;
+    /// the encoder emits the MOV+CALL byte sequence but leaves the target as 0.
+    pub needs_chkstk: bool,
     /// Counter for frame slot allocation.
     next_slot: u32,
 }
@@ -135,6 +144,8 @@ impl MachineFunction {
             frame_size: 0,
             spill_slots: HashMap::new(),
             used_callee_saved: Vec::new(),
+            shadow_space: 0,
+            needs_chkstk: false,
             next_slot: 0,
         }
     }

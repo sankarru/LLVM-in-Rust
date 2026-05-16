@@ -41,9 +41,10 @@ impl Emitter for X86Emitter {
         // the stack has moved by (1 + n_callee) * 8 bytes from the entry RSP
         // (which is 8 mod 16 because the call already pushed the return address).
         // We need: (1 + n_callee) * 8 + sub_rsp ≡ 0 (mod 16).
+        // Win64: add shadow_space (32 bytes for callee home space) to the raw frame.
         let sub_rsp: usize = if needs_frame {
             let needs_align8 = n_callee % 2 == 1; // odd n_callee → need sub_rsp ≡ 8 (mod 16)
-            let raw = mf.frame_size as usize;
+            let raw = mf.frame_size as usize + mf.shadow_space as usize;
             if needs_align8 {
                 let r = raw % 16;
                 match r.cmp(&8) {
@@ -74,6 +75,20 @@ impl Emitter for X86Emitter {
                     ctx.emit(0x41);
                 }
                 ctx.emit(0x50 | reg_enc(pr));
+            }
+            // Win64: for frames > 4096 bytes, touch each stack page before allocating.
+            // We materialise the frame size in RAX and emit CALL __chkstk.
+            // The CALL target is left as 0 (placeholder); a linker must apply the
+            // IMAGE_REL_AMD64_REL32 relocation to __chkstk.  Full relocation support
+            // for external symbols is a follow-up (tracked in issue #212).
+            if mf.needs_chkstk || (mf.shadow_space > 0 && sub_rsp > 4096) {
+                // mov rax, sub_rsp_amount  (REX.W B8 + imm64)
+                ctx.emit(0x48);
+                ctx.emit(0xB8);
+                ctx.code.extend_from_slice(&(sub_rsp as u64).to_le_bytes());
+                // call __chkstk  (E8 rel32 = placeholder 0)
+                ctx.emit(0xE8);
+                ctx.code.extend_from_slice(&[0xFCu8, 0xFF, 0xFF, 0xFF]);
             }
             // sub rsp, sub_rsp
             if sub_rsp > 0 {

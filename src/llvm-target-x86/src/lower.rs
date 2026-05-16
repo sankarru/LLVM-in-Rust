@@ -5,9 +5,9 @@
 //! Phi-destruction (parallel copy insertion) is also handled here.
 
 use crate::{
-    abi::{classify_sysv_args, ArgLocation, SYSV_INT_RET},
+    abi::{classify_sysv_args, classify_win64_args, ArgLocation, SYSV_INT_RET, WIN64_INT_RET},
     instructions::*,
-    regs::{ALLOCATABLE, CALLEE_SAVED, RCX, RDX},
+    regs::{ALLOCATABLE, CALLEE_SAVED, RCX, RDX, WIN64_ALLOCATABLE, WIN64_CALLEE_SAVED},
 };
 use llvm_codegen::isel::{IselBackend, MInstr, MachineFunction, PReg, VReg};
 use llvm_ir::{
@@ -16,8 +16,41 @@ use llvm_ir::{
 };
 use std::collections::HashMap;
 
+/// Calling convention / ABI selection for the x86_64 backend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Abi {
+    /// System V AMD64 ABI (Linux, macOS, BSDs).
+    SysV,
+    /// Windows x64 ABI (Microsoft).
+    Win64,
+}
+
 /// x86_64 instruction-selection backend.
-pub struct X86Backend;
+pub struct X86Backend {
+    pub abi: Abi,
+}
+
+impl X86Backend {
+    pub fn new(abi: Abi) -> Self {
+        Self { abi }
+    }
+
+    /// Convenience constructor — defaults to System V.
+    pub fn sysv() -> Self {
+        Self::new(Abi::SysV)
+    }
+
+    /// Convenience constructor — Win64.
+    pub fn win64() -> Self {
+        Self::new(Abi::Win64)
+    }
+}
+
+impl Default for X86Backend {
+    fn default() -> Self {
+        Self::sysv()
+    }
+}
 
 impl IselBackend for X86Backend {
     fn lower_function(
@@ -27,8 +60,17 @@ impl IselBackend for X86Backend {
         func: &Function,
     ) -> MachineFunction {
         let mut mf = MachineFunction::new(func.name.clone());
-        mf.allocatable_pregs = ALLOCATABLE.to_vec();
-        mf.callee_saved_pregs = CALLEE_SAVED.to_vec();
+
+        match self.abi {
+            Abi::SysV => {
+                mf.allocatable_pregs = ALLOCATABLE.to_vec();
+                mf.callee_saved_pregs = CALLEE_SAVED.to_vec();
+            }
+            Abi::Win64 => {
+                mf.allocatable_pregs = WIN64_ALLOCATABLE.to_vec();
+                mf.callee_saved_pregs = WIN64_CALLEE_SAVED.to_vec();
+            }
+        }
 
         if func.is_declaration || func.blocks.is_empty() {
             return mf;
@@ -58,33 +100,48 @@ impl IselBackend for X86Backend {
         }
 
         // Lower function arguments: copy from ABI registers into VRegs.
-        let arg_locs = classify_sysv_args(func.args.len());
+        let arg_locs = match self.abi {
+            Abi::SysV => classify_sysv_args(func.args.len()),
+            Abi::Win64 => classify_win64_args(func.args.len()),
+        };
         for (i, _arg) in func.args.iter().enumerate() {
             let vr = mf.fresh_vreg();
             vmap.insert(ValueRef::Argument(ArgId(i as u32)), vr);
             match arg_locs[i] {
                 ArgLocation::Reg(preg) => {
-                    // mov vreg, preg
                     let mut mi = MInstr::new(MOV_RR).with_dst(vr).with_preg(preg);
                     mi.phys_uses = vec![preg];
                     mf.push(0, mi);
                 }
                 ArgLocation::Stack(offset) => {
-                    // Emit a placeholder LEA to mark the stack slot.
                     mf.push(0, MInstr::new(LEA_RI).with_dst(vr).with_imm(offset as i64));
                 }
             }
         }
 
         // Lower each IR block.
+        let abi = self.abi;
+        let mut has_calls = false;
         for (bi, bb) in func.blocks.iter().enumerate() {
             for &iid in &bb.body {
-                lower_instr(ctx, module, func, &mut mf, bi, iid, &mut vmap);
+                if let InstrKind::Call { .. } = &func.instr(iid).kind {
+                    has_calls = true;
+                }
+                lower_instr(ctx, module, func, &mut mf, bi, iid, &mut vmap, abi);
             }
             if let Some(tid) = bb.terminator {
                 lower_terminator(ctx, func, &mut mf, bi, tid, &mut vmap);
             }
         }
+
+        // Win64: caller must allocate 32 bytes of shadow/home space before any call.
+        if self.abi == Abi::Win64 && has_calls {
+            mf.shadow_space = 32;
+        }
+
+        // needs_chkstk is determined after regalloc (frame_size not yet known here).
+        // The encoder checks mf.frame_size + mf.shadow_space > 4096 and sets this.
+        // We expose the flag so tests and introspection tooling can inspect it.
 
         mf
     }
@@ -153,6 +210,7 @@ fn lower_instr(
     mblock: usize,
     iid: InstrId,
     vmap: &mut HashMap<ValueRef, VReg>,
+    abi: Abi,
 ) {
     use InstrKind::*;
     let instr = func.instr(iid);
@@ -412,7 +470,10 @@ fn lower_instr(
 
         // ── calls ──────────────────────────────────────────────────────────
         Call { callee, args, .. } => {
-            let arg_locs = classify_sysv_args(args.len());
+            let (arg_locs, caller_saved, int_ret) = match abi {
+                Abi::SysV => (classify_sysv_args(args.len()), ALLOCATABLE, SYSV_INT_RET),
+                Abi::Win64 => (classify_win64_args(args.len()), WIN64_ALLOCATABLE, WIN64_INT_RET),
+            };
             for (i, &arg_vref) in args.iter().enumerate() {
                 let src = res!(arg_vref);
                 match arg_locs[i] {
@@ -420,7 +481,6 @@ fn lower_instr(
                         emit_mov_to_preg(mf, mblock, preg, src);
                     }
                     ArgLocation::Stack(off) => {
-                        // Stack arguments: use a placeholder store.
                         let _ = off;
                         mf.push(mblock, MInstr::new(PUSH_R).with_vreg(src));
                     }
@@ -428,12 +488,12 @@ fn lower_instr(
             }
             let callee_vr = res!(*callee);
             let mut call_mi = MInstr::new(CALL_R).with_vreg(callee_vr);
-            call_mi.clobbers = ALLOCATABLE.to_vec();
+            call_mi.clobbers = caller_saved.to_vec();
             mf.push(mblock, call_mi);
 
-            // Capture return value from RAX.
+            // Capture return value from the ABI return register (RAX in both ABIs).
             let dst = new_dst!();
-            emit_mov_from_preg(mf, mblock, dst, SYSV_INT_RET);
+            emit_mov_from_preg(mf, mblock, dst, int_ret);
         }
 
         // ── memory (placeholder NOP — mem2reg removes most alloca/load/store) ──
@@ -564,21 +624,41 @@ fn emit_phi_copies(
     let dest_bb = &func.blocks[dest.0 as usize];
     let src_bid = BlockId(ir_src_block as u32);
 
+    // Parallel copy semantics: all sources must be read before any destination
+    // is written.  Naively sequencing MOVs can produce wrong results when a
+    // phi source is later assigned the same physical register as another phi
+    // destination (e.g. fibonacci: a←b, b←next, where next gets a's register).
+    //
+    // Fix: phase 1 reads every source into a fresh temporary; phase 2 copies
+    // the temporaries to the phi VRegs.  This guarantees all reads happen
+    // before any write, regardless of what physical registers regalloc picks.
+    let mut pending: Vec<(VReg, VReg)> = Vec::new(); // (temp, phi_dst)
+
     for &iid in &dest_bb.body {
         if let InstrKind::Phi { incoming, .. } = &func.instr(iid).kind {
-            // Find the incoming value from `src_bid`.
             if let Some((incoming_val, _)) = incoming.iter().find(|(_, bid)| *bid == src_bid) {
                 let phi_vreg = match vmap.get(&ValueRef::Instruction(iid)) {
                     Some(&v) => v,
                     None => continue,
                 };
                 let src_vreg = resolve(ctx, mf, emit_to_mblock, vmap, *incoming_val);
+                // Phase 1: read source into a fresh temp.
+                let temp = mf.fresh_vreg();
                 mf.push(
                     emit_to_mblock,
-                    MInstr::new(MOV_RR).with_dst(phi_vreg).with_vreg(src_vreg),
+                    MInstr::new(MOV_RR).with_dst(temp).with_vreg(src_vreg),
                 );
+                pending.push((temp, phi_vreg));
             }
         }
+    }
+
+    // Phase 2: write temps to phi destinations.
+    for (temp, phi_vreg) in pending {
+        mf.push(
+            emit_to_mblock,
+            MInstr::new(MOV_RR).with_dst(phi_vreg).with_vreg(temp),
+        );
     }
 }
 
@@ -630,7 +710,7 @@ mod tests {
     #[test]
     fn lower_add_produces_machine_blocks() {
         let (ctx, module) = make_add_fn();
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         assert_eq!(mf.name, "add");
         assert!(!mf.blocks.is_empty());
@@ -639,7 +719,7 @@ mod tests {
     #[test]
     fn lower_add_has_ret_instruction() {
         let (ctx, module) = make_add_fn();
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         let has_ret = mf
             .blocks
@@ -651,7 +731,7 @@ mod tests {
     #[test]
     fn lower_add_allocatable_set() {
         let (ctx, module) = make_add_fn();
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         assert!(!mf.allocatable_pregs.is_empty());
     }
@@ -662,7 +742,7 @@ mod tests {
         let mut module = Module::new("test");
         let mut b = Builder::new(&mut ctx, &mut module);
         b.add_declaration("ext", b.ctx.void_ty, vec![], false);
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         assert!(mf.blocks.is_empty(), "declaration should produce no blocks");
     }
@@ -687,7 +767,7 @@ mod tests {
         let cmp = b.build_icmp("cmp", llvm_ir::IntPredicate::Slt, x, y);
         b.build_ret(cmp);
 
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
 
         let has_cmp = mf
@@ -755,7 +835,7 @@ mod tests {
         //         the SHL_RR instruction has phys_uses containing RCX.
         use crate::regs::RCX;
         let (ctx, module) = make_shl_fn();
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
 
         // There must be a SHL_RR in the function.
@@ -787,7 +867,7 @@ mod tests {
     fn udiv_uses_div_r_not_idiv_r() {
         // Issue #31: UDiv must emit DIV_R (unsigned) not IDIV_R (signed).
         let (ctx, module) = make_div_fn(true);
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         let has_div_r = mf
             .blocks
@@ -805,7 +885,7 @@ mod tests {
     fn sdiv_uses_idiv_r() {
         // Regression: SDiv must still emit IDIV_R (signed).
         let (ctx, module) = make_div_fn(false);
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         let has_idiv_r = mf
             .blocks
@@ -860,7 +940,7 @@ mod tests {
         // After fix for issue #34: the ADD_RR instruction must have exactly
         // one operand (the RHS vreg), not two (self-reference + rhs).
         let (ctx, module) = make_add_fn();
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
 
         // Find the ADD_RR instruction.
@@ -902,7 +982,7 @@ mod tests {
     #[test]
     fn sext_i8_uses_movsx_8() {
         let (ctx, module) = make_sext_fn(8);
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         let has_movsx8 = mf
             .blocks
@@ -917,7 +997,7 @@ mod tests {
     #[test]
     fn sext_i16_uses_movsx_16() {
         let (ctx, module) = make_sext_fn(16);
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         let has_movsx16 = mf
             .blocks
@@ -932,7 +1012,7 @@ mod tests {
     #[test]
     fn sext_i32_uses_movsx_32() {
         let (ctx, module) = make_sext_fn(32);
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         let has_movsx32 = mf
             .blocks
@@ -1009,7 +1089,7 @@ mod tests {
         let func = &module.functions[0];
         let ir_block_count = func.blocks.len(); // entry, then_bb, else_bb, merge = 4
 
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, func);
 
         assert!(
@@ -1029,7 +1109,7 @@ mod tests {
         let func = &module.functions[0];
         let ir_block_count = func.blocks.len(); // 4
 
-        let mut be = X86Backend;
+        let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, func);
 
         // entry is machine block 0; find its JCC and JMP targets.
@@ -1064,5 +1144,151 @@ mod tests {
                 target
             );
         }
+    }
+
+    // ── Win64 ABI tests ───────────────────────────────────────────────────────
+
+    fn make_fn_with_4_args() -> (Context, Module) {
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        let i64_ty = b.ctx.i64_ty;
+        b.add_function(
+            "f4",
+            i64_ty,
+            vec![i64_ty; 4],
+            vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let a = b.get_arg(0);
+        b.build_ret(a);
+        (ctx, module)
+    }
+
+    #[test]
+    fn win64_first_arg_in_rcx() {
+        use crate::regs::RCX;
+        let (ctx, module) = make_fn_with_4_args();
+        let func = &module.functions[0];
+        let mut be = X86Backend::win64();
+        let mf = be.lower_function(&ctx, &module, func);
+        // The entry block starts by copying ABI regs into VRegs.
+        // In Win64, arg 0 → RCX.  The first instruction should be MOV_RR with phys_use = RCX.
+        let entry = &mf.blocks[0];
+        let first_mi = &entry.instrs[0];
+        assert_eq!(first_mi.opcode.0, MOV_RR.0, "first instr must be MOV_RR");
+        assert!(
+            first_mi.phys_uses.contains(&RCX),
+            "Win64 arg 0 must come from RCX, got phys_uses={:?}",
+            first_mi.phys_uses
+        );
+    }
+
+    #[test]
+    fn sysv_first_arg_in_rdi() {
+        use crate::regs::RDI;
+        let (ctx, module) = make_fn_with_4_args();
+        let func = &module.functions[0];
+        let mut be = X86Backend::sysv();
+        let mf = be.lower_function(&ctx, &module, func);
+        let entry = &mf.blocks[0];
+        let first_mi = &entry.instrs[0];
+        assert_eq!(first_mi.opcode.0, MOV_RR.0, "first instr must be MOV_RR");
+        assert!(
+            first_mi.phys_uses.contains(&RDI),
+            "SysV arg 0 must come from RDI, got phys_uses={:?}",
+            first_mi.phys_uses
+        );
+    }
+
+    #[test]
+    fn win64_allocatable_excludes_rsi_rdi() {
+        use crate::regs::{RDI, RSI};
+        let (ctx, module) = make_fn_with_4_args();
+        let func = &module.functions[0];
+        let mut be = X86Backend::win64();
+        let mf = be.lower_function(&ctx, &module, func);
+        assert!(
+            !mf.allocatable_pregs.contains(&RSI),
+            "Win64 ALLOCATABLE must not contain RSI (it is callee-saved)"
+        );
+        assert!(
+            !mf.allocatable_pregs.contains(&RDI),
+            "Win64 ALLOCATABLE must not contain RDI (it is callee-saved)"
+        );
+    }
+
+    #[test]
+    fn win64_callee_saved_includes_rsi_rdi() {
+        use crate::regs::{RDI, RSI};
+        let (ctx, module) = make_fn_with_4_args();
+        let func = &module.functions[0];
+        let mut be = X86Backend::win64();
+        let mf = be.lower_function(&ctx, &module, func);
+        assert!(
+            mf.callee_saved_pregs.contains(&RSI),
+            "Win64 callee-saved must include RSI"
+        );
+        assert!(
+            mf.callee_saved_pregs.contains(&RDI),
+            "Win64 callee-saved must include RDI"
+        );
+    }
+
+    fn make_caller_with_call(abi: Abi) -> (Context, Module, usize) {
+        // Build: caller() calls ext() and returns its result.
+        // This ensures has_calls = true so shadow_space is set in Win64 mode.
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        let i64_ty = b.ctx.i64_ty;
+        let ptr_ty = b.ctx.ptr_ty;
+        // Declare external callee (index 0 in module.functions).
+        b.add_function("ext", i64_ty, vec![], vec![], false, Linkage::External);
+        // Build caller function (index 1).
+        let caller_fid = b.add_function(
+            "caller",
+            i64_ty,
+            vec![ptr_ty], // callee function pointer arg
+            vec!["fp".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let fp = b.get_arg(0); // the function pointer
+        let fn_ty = b.ctx.mk_fn_type(i64_ty, vec![], false);
+        let ret_val = b.build_call("rv", i64_ty, fn_ty, fp, vec![]);
+        b.build_ret(ret_val);
+        drop(b);
+        let caller_idx = caller_fid.0 as usize;
+        (ctx, module, caller_idx)
+    }
+
+    #[test]
+    fn win64_shadow_space_set_when_has_calls() {
+        let (ctx, module, caller_idx) = make_caller_with_call(Abi::Win64);
+        let func = &module.functions[caller_idx];
+        let mut be = X86Backend::win64();
+        let mf = be.lower_function(&ctx, &module, func);
+        assert_eq!(
+            mf.shadow_space, 32,
+            "Win64 function with calls must have shadow_space = 32"
+        );
+    }
+
+    #[test]
+    fn sysv_no_shadow_space() {
+        let (ctx, module, caller_idx) = make_caller_with_call(Abi::SysV);
+        let func = &module.functions[caller_idx];
+        let mut be = X86Backend::sysv();
+        let mf = be.lower_function(&ctx, &module, func);
+        assert_eq!(
+            mf.shadow_space, 0,
+            "SysV function must not allocate shadow space"
+        );
     }
 }

@@ -6,12 +6,15 @@
 //! If our pipeline agrees, the smoke test passes.  If tools are absent the
 //! test skips gracefully; with `REQUIRE_LLVM=1` absent tools cause a panic.
 //!
-//! All programs are single-`@main` modules that exercise:
-//!   loops (alloca-based, converted by mem2reg),
-//!   nested loops, conditional dispatch, bitwise/arithmetic operations.
+//! The full pipeline under test is:
+//!   Parser → mem2reg → Printer → [Oracle: Clang]
+//!                              → [Ours: Backend → Emitter → Linker → Execute]
 //!
-//! stdout comparison is left for future work once the x86 backend gains
-//! proper GlobalRef → RIP-relative address materialisation.
+//! Platform dispatch:
+//!   macOS aarch64 → AArch64Backend + AArch64Emitter(MachO) — runs natively
+//!   Linux  x86-64 → X86Backend    + X86Emitter(Elf)        — runs natively
+//!
+//! Any wrong bit in the machine code will produce a wrong exit code and fail.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,11 +27,18 @@ use llvm_codegen::{
 };
 use llvm_ir::{printer::Printer, Context, Module};
 use llvm_ir_parser::parser::parse;
-use llvm_target_x86::{
-    instructions::{MOV_LOAD_MR, MOV_STORE_RM},
-    X86Backend, X86Emitter,
-};
 use llvm_transforms::{pass::PassManager, Mem2Reg};
+
+// x86-64 backend (Linux CI)
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+use llvm_target_x86::{instructions::{MOV_LOAD_MR, MOV_STORE_RM}, X86Backend, X86Emitter};
+
+// AArch64 backend (macOS Apple Silicon)
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+use llvm_target_arm::{
+    instructions::{LDR_FP, STR_FP},
+    AArch64Backend, AArch64Emitter,
+};
 
 // ── tool discovery ────────────────────────────────────────────────────────────
 
@@ -139,23 +149,19 @@ fn run_oracle(clang: &Path, label: &str, ir: &str) -> Option<RunResult> {
 
 // ── our pipeline path ─────────────────────────────────────────────────────────
 
-/// Lower `@main` with our x86 backend, link with `cc`, execute, and return
-/// exit code + stdout.  Returns `None` if linking fails (graceful skip).
+/// Lower `@main` with the native backend for this platform, emit a native
+/// object file, link with `cc`, execute, and return exit code + stdout.
+///
+/// Platform dispatch:
+///   macOS aarch64 → AArch64Backend + AArch64Emitter(MachO)
+///   everything else  → X86Backend + X86Emitter(Elf)
 fn run_ours(ctx: &Context, module: &Module, label: &str) -> Option<RunResult> {
     let main_func = module
         .functions
         .iter()
         .find(|f| f.name == "main" && !f.is_declaration)?;
 
-    let mut backend = X86Backend;
-    let mut mf = backend.lower_function(ctx, module, main_func);
-    let intervals = compute_live_intervals(&mf);
-    let mut result = linear_scan(&intervals, &mf.allocatable_pregs);
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
-    apply_allocation(&mut mf, &result);
-    let mut emitter = X86Emitter::new(ObjectFormat::Elf);
-    let obj = emit_object(&mf, &mut emitter);
-    let obj_bytes = obj.to_bytes();
+    let obj_bytes = compile_ours(ctx, module, main_func);
 
     with_temp_file(&format!("{label}_ours"), "o", |obj_path| {
         std::fs::write(obj_path, &obj_bytes).expect("write .o");
@@ -180,6 +186,40 @@ fn run_ours(ctx: &Context, module: &Module, label: &str) -> Option<RunResult> {
             stdout: String::from_utf8_lossy(&run.stdout).into_owned(),
         })
     })
+}
+
+/// Compile `main_func` to native object bytes using the platform-appropriate
+/// backend and format.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn compile_ours(
+    ctx: &llvm_ir::Context,
+    module: &llvm_ir::Module,
+    main_func: &llvm_ir::Function,
+) -> Vec<u8> {
+    let mut backend = AArch64Backend;
+    let mut mf = backend.lower_function(ctx, module, main_func);
+    let intervals = compute_live_intervals(&mf);
+    let mut result = linear_scan(&intervals, &mf.allocatable_pregs);
+    insert_spill_reloads(&mut mf, &mut result, LDR_FP, STR_FP);
+    apply_allocation(&mut mf, &result);
+    let mut emitter = AArch64Emitter::new(ObjectFormat::MachO);
+    emit_object(&mf, &mut emitter).to_bytes()
+}
+
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+fn compile_ours(
+    ctx: &llvm_ir::Context,
+    module: &llvm_ir::Module,
+    main_func: &llvm_ir::Function,
+) -> Vec<u8> {
+    let mut backend = X86Backend::default();
+    let mut mf = backend.lower_function(ctx, module, main_func);
+    let intervals = compute_live_intervals(&mf);
+    let mut result = linear_scan(&intervals, &mf.allocatable_pregs);
+    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
+    apply_allocation(&mut mf, &result);
+    let mut emitter = X86Emitter::new(ObjectFormat::Elf);
+    emit_object(&mf, &mut emitter).to_bytes()
 }
 
 // ── oracle harness ────────────────────────────────────────────────────────────
@@ -420,6 +460,7 @@ fn smoke_nested_loop() {
 entry:
   %sum = alloca i32
   %i = alloca i32
+  %j = alloca i32
   store i32 0, ptr %sum
   store i32 0, ptr %i
   br label %outer
@@ -428,7 +469,6 @@ outer:
   %ocmp = icmp slt i32 %iv, 3
   br i1 %ocmp, label %outer_body, label %exit
 outer_body:
-  %j = alloca i32
   store i32 0, ptr %j
   br label %inner
 inner:
@@ -558,4 +598,69 @@ exit:
 }
 "#,
     );
+}
+
+// ── diagnostic: dump machine IR and disassembly for failing tests ─────────────
+
+#[test]
+fn diag_max_select_asm() {
+    let src = r#"define i32 @main() {
+entry:
+  %a = add i32 11, 0
+  %b = add i32 42, 0
+  %ab_gt = icmp sgt i32 %b, %a
+  %max_ab = select i1 %ab_gt, i32 %b, i32 %a
+  ret i32 %max_ab
+}
+"#;
+    let (mut ctx, mut module) = parse(src).unwrap();
+    let mut pm = PassManager::new();
+    pm.add_function_pass(Mem2Reg);
+    pm.run(&mut ctx, &mut module);
+
+    let main_func = module
+        .functions
+        .iter()
+        .find(|f| f.name == "main" && !f.is_declaration)
+        .unwrap();
+
+    let mut backend = AArch64Backend;
+    let mut mf = backend.lower_function(&ctx, &module, main_func);
+
+    eprintln!("=== Pre-regalloc machine IR ===");
+    for (bi, block) in mf.blocks.iter().enumerate() {
+        eprintln!("  Block[{}] {}:", bi, block.label);
+        for i in &block.instrs {
+            eprintln!("    {:?}", i);
+        }
+    }
+
+    let intervals = compute_live_intervals(&mf);
+    let mut result = linear_scan(&intervals, &mf.allocatable_pregs);
+    eprintln!("Spilled: {:?}", result.spilled);
+    insert_spill_reloads(&mut mf, &mut result, LDR_FP, STR_FP);
+    apply_allocation(&mut mf, &result);
+
+    eprintln!("=== Post-regalloc machine IR ===");
+    for (bi, block) in mf.blocks.iter().enumerate() {
+        eprintln!("  Block[{}] {}:", bi, block.label);
+        for i in &block.instrs {
+            eprintln!("    {:?}", i);
+        }
+    }
+
+    let obj_bytes = compile_ours(&ctx, &module, main_func);
+    let obj_path = std::env::temp_dir().join("diag_max_select.o");
+    std::fs::write(&obj_path, &obj_bytes).unwrap();
+    eprintln!("Object written to {:?} ({} bytes)", obj_path, obj_bytes.len());
+
+    // Try disassembly
+    if let Some(objdump) = llvm_tool("llvm-objdump") {
+        let out = std::process::Command::new(&objdump)
+            .args(["--disassemble", "--no-show-raw-insn", "--no-leading-addr"])
+            .arg(&obj_path)
+            .output()
+            .unwrap();
+        eprintln!("=== Disassembly ===\n{}", String::from_utf8_lossy(&out.stdout));
+    }
 }
