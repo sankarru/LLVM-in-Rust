@@ -395,6 +395,8 @@ pub struct Lexer<'src> {
     col: usize,
     /// One-token lookahead.
     peeked: Option<Result<Token, LexError>>,
+    /// Additional push-back buffer (used by `unget`; drained before `peeked`).
+    unget_buf: Vec<Token>,
 }
 
 impl<'src> Lexer<'src> {
@@ -406,6 +408,7 @@ impl<'src> Lexer<'src> {
             line: 1,
             col: 1,
             peeked: None,
+            unget_buf: Vec::new(),
         }
     }
 
@@ -463,7 +466,12 @@ impl<'src> Lexer<'src> {
     /// Peek at the next token without consuming it.
     pub fn peek(&mut self) -> Result<&Token, &LexError> {
         if self.peeked.is_none() {
-            self.peeked = Some(self.next_token());
+            // Drain unget_buf first (LIFO — last pushed is next token).
+            if let Some(tok) = self.unget_buf.pop() {
+                self.peeked = Some(Ok(tok));
+            } else {
+                self.peeked = Some(self.next_token());
+            }
         }
         match self.peeked.as_ref().unwrap() {
             Ok(t) => Ok(t),
@@ -477,7 +485,24 @@ impl<'src> Lexer<'src> {
         if let Some(t) = self.peeked.take() {
             return t;
         }
+        if let Some(tok) = self.unget_buf.pop() {
+            return Ok(tok);
+        }
         self.next_token()
+    }
+
+    /// Push a token back so the next call to `next()` or `peek()` returns it.
+    /// Multiple `unget` calls are supported (LIFO order).
+    pub fn unget(&mut self, tok: Token) {
+        // If peeked is occupied, flush it to unget_buf first so ordering is preserved.
+        if let Some(peeked) = self.peeked.take() {
+            if let Ok(p) = peeked {
+                self.unget_buf.push(p);
+            }
+            // If peeked was an error, we discard it — this case should not arise
+            // when unget is called after a successful peek/next.
+        }
+        self.unget_buf.push(tok);
     }
 
     /// Consume if next token matches; otherwise leave it in the peek buffer.
