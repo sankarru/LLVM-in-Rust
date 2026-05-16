@@ -300,6 +300,37 @@ impl VpIntrinsic {
     }
 }
 
+/// Recognized LLVM profile-guided optimization intrinsics.
+///
+/// Phase 1 lowers these to no-ops and emits a compile-time warning.
+/// Phase 2 (future) will emit actual counter-increment code and read profiles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum InstrprofIntrinsic {
+    /// `llvm.instrprof.increment` — increment a PGO counter.
+    Increment,
+    /// `llvm.instrprof.value.profile` — record a value profile sample.
+    ValueProfile,
+}
+
+impl InstrprofIntrinsic {
+    /// Recognize an `llvm.instrprof.*` symbol name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "llvm.instrprof.increment" => Some(Self::Increment),
+            "llvm.instrprof.value.profile" => Some(Self::ValueProfile),
+            _ => None,
+        }
+    }
+
+    /// The canonical LLVM IR name for this intrinsic.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Increment => "llvm.instrprof.increment",
+            Self::ValueProfile => "llvm.instrprof.value.profile",
+        }
+    }
+}
+
 impl RmwOp {
     /// Textual IR spelling.
     pub fn as_str(self) -> &'static str {
