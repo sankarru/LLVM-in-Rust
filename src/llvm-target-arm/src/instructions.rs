@@ -91,6 +91,38 @@ pub const NOP: MOpcode = MOpcode(0x70);
 /// Raw inline assembly bytes emitted verbatim after minimal template decoding.
 pub const INLINE_ASM: MOpcode = MOpcode(0x71);
 
+// ── Atomics (ARMv8.1 LSE path) ──────────────────────────────────────────────
+
+/// `dmb ish` — full system data memory barrier (0xD5033BBF).
+pub const DMB_ISH: MOpcode = MOpcode(0x80);
+/// `casal Xs, Xt, [Xn]` — compare-and-swap acquire+release (CmpXchg).
+/// Layout: `dst` = old value, `operands` = [PReg(ptr), PReg(cmp), PReg(new_val)].
+pub const CASAL: MOpcode = MOpcode(0x81);
+/// `ldaddal Xs, Xt, [Xn]` — atomic load-add acquire+release.
+/// Layout: `dst` = old value, `operands` = [PReg(ptr), PReg(val)].
+pub const LDADDAL: MOpcode = MOpcode(0x82);
+/// `ldclral Xs, Xt, [Xn]` — atomic load-clear (BIC/AND-not) acquire+release.
+/// Layout: `dst` = old value, `operands` = [PReg(ptr), PReg(val)].
+pub const LDCLRAL: MOpcode = MOpcode(0x83);
+/// `ldsetal Xs, Xt, [Xn]` — atomic load-set (OR) acquire+release.
+/// Layout: `dst` = old value, `operands` = [PReg(ptr), PReg(val)].
+pub const LDSETAL: MOpcode = MOpcode(0x84);
+/// `ldeoral Xs, Xt, [Xn]` — atomic load-XOR acquire+release.
+/// Layout: `dst` = old value, `operands` = [PReg(ptr), PReg(val)].
+pub const LDEORAL: MOpcode = MOpcode(0x85);
+/// `swpal Xs, Xt, [Xn]` — atomic swap acquire+release.
+/// Layout: `dst` = old value, `operands` = [PReg(ptr), PReg(val)].
+pub const SWPAL: MOpcode = MOpcode(0x86);
+
+// ── Atomics (LL/SC path — no LSE) ───────────────────────────────────────────
+
+/// `ldxr Xt, [Xn]` — load exclusive register.
+/// Layout: `dst` = loaded value, `operands` = [PReg(ptr)].
+pub const LDXR: MOpcode = MOpcode(0x87);
+/// `stxr Ws, Xt, [Xn]` — store exclusive register.
+/// Layout: `dst` = status (0=success), `operands` = [PReg(ptr), PReg(val)].
+pub const STXR: MOpcode = MOpcode(0x88);
+
 // ── condition codes (used as Imm operands with B_COND / CSET) ────────────
 //
 // These map to AArch64 condition codes as defined in the ISA.

@@ -490,10 +490,104 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             }
         }
 
+        // ── DMB_ISH (dmb ish) — fixed encoding 0xD5033BBF ───────────────
+        DMB_ISH => {
+            ctx.emit4(0xD5033BBF);
+        }
+
+        // ── CASAL Xs, Xt, [Xn] — 64-bit compare-and-swap acquire+release ─
+        // Encoding: 0xC8E0FC00 | (Rs<<16) | (Rn<<5) | Rt
+        //   Rs = cmp register (operands[1]) — holds expected value, receives old
+        //   Rn = ptr register (operands[0]) — address
+        //   Rt = new_val register (operands[2]) — replacement value
+        //   dst is the result (old value); it shares the physical register with Rs
+        //   (after regalloc, dst.preg == rs.preg for the "old value" semantics)
+        CASAL => {
+            let rn = preg_enc_op(instr.operands.first()).unwrap_or(31);
+            let rs = preg_enc_op(instr.operands.get(1)).unwrap_or(31);
+            let rt = preg_enc_op(instr.operands.get(2)).unwrap_or(31);
+            ctx.emit4(0xC8E0FC00 | (rs << 16) | (rn << 5) | rt);
+        }
+
+        // ── LDADDAL Xs, Xt, [Xn] — 64-bit atomic load-add acquire+release ─
+        // Encoding: 0xF8E00000 | (Rs<<16) | (Rn<<5) | Rt
+        //   Rs = value to add (operands[1]), Rn = ptr (operands[0]), Rt = dst (old value)
+        LDADDAL => {
+            let rn = preg_enc_op(instr.operands.first()).unwrap_or(31);
+            let rs = preg_enc_op(instr.operands.get(1)).unwrap_or(31);
+            let rt = instr.dst.map(|v| v.0 & 0x1F).unwrap_or(31);
+            ctx.emit4(0xF8E00000 | (rs << 16) | (rn << 5) | rt);
+        }
+
+        // ── LDCLRAL Xs, Xt, [Xn] — 64-bit atomic load-clear acquire+release ─
+        // Encoding: 0xF8E01000 | (Rs<<16) | (Rn<<5) | Rt
+        LDCLRAL => {
+            let rn = preg_enc_op(instr.operands.first()).unwrap_or(31);
+            let rs = preg_enc_op(instr.operands.get(1)).unwrap_or(31);
+            let rt = instr.dst.map(|v| v.0 & 0x1F).unwrap_or(31);
+            ctx.emit4(0xF8E01000 | (rs << 16) | (rn << 5) | rt);
+        }
+
+        // ── LDSETAL Xs, Xt, [Xn] — 64-bit atomic load-set acquire+release ─
+        // Encoding: 0xF8E03000 | (Rs<<16) | (Rn<<5) | Rt
+        LDSETAL => {
+            let rn = preg_enc_op(instr.operands.first()).unwrap_or(31);
+            let rs = preg_enc_op(instr.operands.get(1)).unwrap_or(31);
+            let rt = instr.dst.map(|v| v.0 & 0x1F).unwrap_or(31);
+            ctx.emit4(0xF8E03000 | (rs << 16) | (rn << 5) | rt);
+        }
+
+        // ── LDEORAL Xs, Xt, [Xn] — 64-bit atomic load-XOR acquire+release ─
+        // Encoding: 0xF8E02000 | (Rs<<16) | (Rn<<5) | Rt
+        LDEORAL => {
+            let rn = preg_enc_op(instr.operands.first()).unwrap_or(31);
+            let rs = preg_enc_op(instr.operands.get(1)).unwrap_or(31);
+            let rt = instr.dst.map(|v| v.0 & 0x1F).unwrap_or(31);
+            ctx.emit4(0xF8E02000 | (rs << 16) | (rn << 5) | rt);
+        }
+
+        // ── SWPAL Xs, Xt, [Xn] — 64-bit atomic swap acquire+release ────────
+        // Encoding: 0xF8E08000 | (Rs<<16) | (Rn<<5) | Rt
+        SWPAL => {
+            let rn = preg_enc_op(instr.operands.first()).unwrap_or(31);
+            let rs = preg_enc_op(instr.operands.get(1)).unwrap_or(31);
+            let rt = instr.dst.map(|v| v.0 & 0x1F).unwrap_or(31);
+            ctx.emit4(0xF8E08000 | (rs << 16) | (rn << 5) | rt);
+        }
+
+        // ── LDXR Xt, [Xn] — 64-bit load exclusive register ─────────────────
+        // Encoding: 0xC85F7C00 | (Rn<<5) | Rt
+        //   Rn = ptr (operands[0]), Rt = dst (loaded value)
+        LDXR => {
+            let rn = preg_enc_op(instr.operands.first()).unwrap_or(31);
+            let rt = instr.dst.map(|v| v.0 & 0x1F).unwrap_or(31);
+            ctx.emit4(0xC85F7C00 | (rn << 5) | rt);
+        }
+
+        // ── STXR Ws, Xt, [Xn] — 64-bit store exclusive register ────────────
+        // Encoding: 0xC8007C00 | (Ws<<16) | (Rn<<5) | Rt
+        //   Ws = status result (dst, 32-bit), Xt = value to store (operands[1]),
+        //   Xn = ptr (operands[0])
+        STXR => {
+            let rn = preg_enc_op(instr.operands.first()).unwrap_or(31);
+            let rt = preg_enc_op(instr.operands.get(1)).unwrap_or(31);
+            let rs = instr.dst.map(|v| v.0 & 0x1F).unwrap_or(31);
+            ctx.emit4(0xC8007C00 | (rs << 16) | (rn << 5) | rt);
+        }
+
         // ── unsupported: emit NOP ─────────────────────────────────────────
         _ => {
             ctx.emit4(0xD503201F);
         }
+    }
+}
+
+/// Extract a PReg's 5-bit encoded register number from an `MOperand` reference.
+/// Returns `None` if the operand is not a `PReg`.
+fn preg_enc_op(op: Option<&MOperand>) -> Option<u32> {
+    match op? {
+        MOperand::PReg(r) => Some(reg_enc(*r) as u32 & 0x1F),
+        _ => None,
     }
 }
 
@@ -1131,6 +1225,161 @@ mod tests {
             sec.data.len(),
             8,
             "MOV_WIDE 0x1_2345 must emit exactly 2 instructions (8 bytes)"
+        );
+    }
+
+    // ── atomic encoding tests ─────────────────────────────────────────────
+
+    #[test]
+    fn dmb_ish_encodes_to_d5033bbf() {
+        use crate::instructions::DMB_ISH;
+        let mf = single_block_mf("dmb_fn", vec![MInstr::new(DMB_ISH)]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        assert_eq!(sec.data.len(), 4, "DMB ISH is one 4-byte instruction");
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        assert_eq!(word, 0xD5033BBF, "DMB ISH must encode as 0xD5033BBF");
+    }
+
+    #[test]
+    fn casal_encodes_correctly() {
+        // CASAL X1(cmp), X2(new_val), [X0(ptr)] — 64-bit
+        // Encoding: 0xC8E0FC00 | (Rs=X1=1 <<16) | (Rn=X0=0 <<5) | Rt=X2=2
+        //         = 0xC8E0FC00 | 0x10000 | 0 | 2 = 0xC8F0FC02
+        use crate::instructions::CASAL;
+        let mi = MInstr {
+            opcode: CASAL,
+            dst: Some(VReg(X1.0 as u32)), // result (old value) shares Rs=X1
+            operands: vec![
+                MOperand::PReg(X0), // ptr  → Rn
+                MOperand::PReg(X1), // cmp  → Rs
+                MOperand::PReg(X2), // new  → Rt
+            ],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("casal_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        // 0xC8E0FC00 | (1<<16) | (0<<5) | 2 = 0xC8F0FC02
+        let expected = 0xC8E0FC00u32 | (1 << 16) | (0 << 5) | 2;
+        assert_eq!(
+            word, expected,
+            "CASAL X1, X2, [X0] must encode as 0x{expected:08X}"
+        );
+    }
+
+    #[test]
+    fn ldaddal_encodes_correctly() {
+        // LDADDAL X1(val), X0(dst=old), [X2(ptr)]
+        // Encoding: 0xF8E00000 | (Rs=X1=1 <<16) | (Rn=X2=2 <<5) | Rt=X0=0
+        //         = 0xF8E00000 | 0x10000 | 0x40 | 0 = 0xF8F00040
+        use crate::instructions::LDADDAL;
+        let mi = MInstr {
+            opcode: LDADDAL,
+            dst: Some(VReg(X0.0 as u32)), // Rt = old value
+            operands: vec![
+                MOperand::PReg(X2), // ptr  → Rn
+                MOperand::PReg(X1), // val  → Rs
+            ],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("ldaddal_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        // 0xF8E00000 | (Rs=1 <<16) | (Rn=2 <<5) | Rt=0
+        let expected = 0xF8E00000u32 | (1 << 16) | (2 << 5) | 0;
+        assert_eq!(
+            word, expected,
+            "LDADDAL X1, X0, [X2] must encode as 0x{expected:08X}"
+        );
+    }
+
+    #[test]
+    fn ldxr_encodes_correctly() {
+        // LDXR X0, [X1]
+        // Encoding: 0xC85F7C00 | (Rn=X1=1 <<5) | Rt=X0=0
+        //         = 0xC85F7C00 | 0x20 | 0 = 0xC85F7C20
+        use crate::instructions::LDXR;
+        let mi = MInstr {
+            opcode: LDXR,
+            dst: Some(VReg(X0.0 as u32)), // Rt = loaded value
+            operands: vec![
+                MOperand::PReg(X1), // ptr → Rn
+            ],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("ldxr_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0xC85F7C00u32 | (1 << 5) | 0;
+        assert_eq!(
+            word, expected,
+            "LDXR X0, [X1] must encode as 0x{expected:08X}"
+        );
+    }
+
+    #[test]
+    fn stxr_encodes_correctly() {
+        // STXR W0(status), X2(val), [X1(ptr)]
+        // Encoding: 0xC8007C00 | (Ws=X0=0 <<16) | (Rn=X1=1 <<5) | Rt=X2=2
+        //         = 0xC8007C00 | 0 | 0x20 | 2 = 0xC8007C22
+        use crate::instructions::STXR;
+        let mi = MInstr {
+            opcode: STXR,
+            dst: Some(VReg(X0.0 as u32)), // Ws = status
+            operands: vec![
+                MOperand::PReg(X1), // ptr → Rn
+                MOperand::PReg(X2), // val → Rt (value to store)
+            ],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("stxr_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        // 0xC8007C00 | (Ws=0 <<16) | (Rn=1 <<5) | Rt=2
+        let expected = 0xC8007C00u32 | (0 << 16) | (1 << 5) | 2;
+        assert_eq!(
+            word, expected,
+            "STXR W0, X2, [X1] must encode as 0x{expected:08X}"
+        );
+    }
+
+    #[test]
+    fn swpal_encodes_correctly() {
+        // SWPAL X1(val), X0(old), [X2(ptr)]
+        // Encoding: 0xF8E08000 | (Rs=X1=1 <<16) | (Rn=X2=2 <<5) | Rt=X0=0
+        use crate::instructions::SWPAL;
+        let mi = MInstr {
+            opcode: SWPAL,
+            dst: Some(VReg(X0.0 as u32)), // Rt = old value
+            operands: vec![
+                MOperand::PReg(X2), // ptr  → Rn
+                MOperand::PReg(X1), // val  → Rs
+            ],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("swpal_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0xF8E08000u32 | (1 << 16) | (2 << 5) | 0;
+        assert_eq!(
+            word, expected,
+            "SWPAL X1, X0, [X2] must encode as 0x{expected:08X}"
         );
     }
 }

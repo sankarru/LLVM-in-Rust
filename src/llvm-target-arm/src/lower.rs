@@ -12,12 +12,51 @@ use crate::{
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MachineFunction, PReg, VReg};
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, InstrprofIntrinsic,
-    IntPredicate, Module, TypeData, ValueRef,
+    IntPredicate, Module, RmwOp, TypeData, ValueRef,
 };
 use std::collections::HashMap;
 
+/// Target feature flags for AArch64.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AArch64Features {
+    /// Enable ARMv8.1 LSE atomic instructions (CASAL, LDADDAL, etc.).
+    /// Default `true` — matches Cortex-A55+ and all Apple Silicon.
+    pub lse: bool,
+}
+
+impl AArch64Features {
+    /// Baseline ARMv8.0 — no LSE extension.
+    pub const fn baseline() -> Self {
+        Self { lse: false }
+    }
+    /// ARMv8.1 LSE enabled (modern default).
+    pub const fn lse() -> Self {
+        Self { lse: true }
+    }
+}
+
 /// AArch64 instruction-selection backend.
-pub struct AArch64Backend;
+pub struct AArch64Backend {
+    /// Target feature flags controlling which instruction set extensions to use.
+    pub features: AArch64Features,
+}
+
+impl Default for AArch64Backend {
+    fn default() -> Self {
+        // Default to LSE=true — correct for Cortex-A55+, Apple Silicon, and most
+        // modern AArch64 cores.
+        Self {
+            features: AArch64Features::lse(),
+        }
+    }
+}
+
+impl AArch64Backend {
+    /// Construct a backend with the given feature set.
+    pub fn new(features: AArch64Features) -> Self {
+        Self { features }
+    }
+}
 
 impl IselBackend for AArch64Backend {
     fn lower_function(
@@ -80,6 +119,8 @@ impl IselBackend for AArch64Backend {
             }
         }
 
+        let features = self.features;
+
         // Lower each IR block.
         for (bi, bb) in func.blocks.iter().enumerate() {
             for &iid in &bb.body {
@@ -94,7 +135,7 @@ impl IselBackend for AArch64Backend {
                 if mf.debug_line_start.is_none() {
                     mf.debug_line_start = dbg.map(|loc| loc.line);
                 }
-                lower_instr(ctx, module, func, &mut mf, bi, iid, &mut vmap);
+                lower_instr(ctx, module, func, &mut mf, bi, iid, &mut vmap, features);
             }
             if let Some(tid) = bb.terminator {
                 let dbg = func
@@ -194,6 +235,7 @@ fn pred_to_cc(pred: IntPredicate) -> i64 {
 
 // ── instruction lowering ──────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn lower_instr(
     ctx: &Context,
     _module: &Module,
@@ -202,6 +244,7 @@ fn lower_instr(
     mblock: usize,
     iid: InstrId,
     vmap: &mut HashMap<ValueRef, VReg>,
+    features: AArch64Features,
 ) {
     use InstrKind::*;
     let instr = func.instr(iid);
@@ -520,41 +563,83 @@ fn lower_instr(
             }
         }
 
-        // ── atomics (#205) — minimal byte-level emission ───────────────────
-        // AArch64 atomics use either LSE (CAS / LD<op>AL) or an LDXR/STXR
-        // loop.  For the v0.1 milestone we emit recognisable single
-        // encodings so the bytes show up in the object file; richer
-        // lowering (LSE feature gating, LL/SC loop generation) is a
-        // follow-up issue.
+        // ── atomics ────────────────────────────────────────────────────────
+        // AArch64 atomics use either LSE (CASAL / LD<op>AL) when the `lse`
+        // feature is enabled (ARMv8.1+), or a basic LDXR/STXR pair otherwise.
         Fence { .. } => {
-            // DMB ISH = 0xD5033BBF
-            mf.push(
-                mblock,
-                MInstr::new(INLINE_ASM).with_bytes(0xD5033BBFu32.to_le_bytes().to_vec()),
-            );
+            // DMB ISH — data memory barrier, inner-shareable domain.
+            mf.push(mblock, MInstr::new(DMB_ISH));
         }
         CmpXchg { ptr, cmp, new_val, .. } => {
-            let _p = res!(*ptr);
-            let _c = res!(*cmp);
-            let _n = res!(*new_val);
-            // CASAL Ws, Wt, [Xn]  →  0x88E0FC00 (template, register fields zero)
-            mf.push(
-                mblock,
-                MInstr::new(INLINE_ASM).with_bytes(0x88E0FC00u32.to_le_bytes().to_vec()),
-            );
+            let ptr_vr = res!(*ptr);
+            let cmp_vr = res!(*cmp);
+            let new_vr = res!(*new_val);
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
+            if features.lse {
+                // CASAL Xs(cmp), Xt(new_val), [Xn(ptr)]
+                // The old memory value is returned in the `cmp` register (Xs).
+                mf.push(
+                    mblock,
+                    MInstr::new(CASAL)
+                        .with_dst(dst)
+                        .with_vreg(ptr_vr)
+                        .with_vreg(cmp_vr)
+                        .with_vreg(new_vr),
+                );
+            } else {
+                // LL/SC pair (non-LSE path).
+                // Full retry loop is a follow-up; emit the basic pair here.
+                mf.push(
+                    mblock,
+                    MInstr::new(LDXR).with_dst(dst).with_vreg(ptr_vr),
+                );
+                // STXR: status dst (not exposed as an SSA result), val, ptr.
+                let status = mf.fresh_vreg();
+                mf.push(
+                    mblock,
+                    MInstr::new(STXR)
+                        .with_dst(status)
+                        .with_vreg(ptr_vr)
+                        .with_vreg(new_vr),
+                );
+            }
         }
-        AtomicRmw { ptr, val, .. } => {
-            let _p = res!(*ptr);
-            let _v = res!(*val);
-            // LDADDAL Ws, Wt, [Xn] → 0xB8E00000 (template, RegFields zero)
-            mf.push(
-                mblock,
-                MInstr::new(INLINE_ASM).with_bytes(0xB8E00000u32.to_le_bytes().to_vec()),
-            );
+        AtomicRmw { op, ptr, val, .. } => {
+            let ptr_vr = res!(*ptr);
+            let val_vr = res!(*val);
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
+            if features.lse {
+                let atomic_op = match op {
+                    RmwOp::Add | RmwOp::Sub => LDADDAL,
+                    RmwOp::And | RmwOp::Nand => LDCLRAL,
+                    RmwOp::Or => LDSETAL,
+                    RmwOp::Xor => LDEORAL,
+                    RmwOp::Xchg => SWPAL,
+                    // min/max/fp variants — use LDADDAL as a placeholder.
+                    _ => LDADDAL,
+                };
+                mf.push(
+                    mblock,
+                    MInstr::new(atomic_op)
+                        .with_dst(dst)
+                        .with_vreg(ptr_vr)
+                        .with_vreg(val_vr),
+                );
+            } else {
+                // LL/SC pair (non-LSE path).
+                mf.push(
+                    mblock,
+                    MInstr::new(LDXR).with_dst(dst).with_vreg(ptr_vr),
+                );
+                let status = mf.fresh_vreg();
+                mf.push(
+                    mblock,
+                    MInstr::new(STXR)
+                        .with_dst(status)
+                        .with_vreg(ptr_vr)
+                        .with_vreg(val_vr),
+                );
+            }
         }
 
         // ── memory (placeholder — mem2reg removes most alloca/load/store) ────
@@ -790,7 +875,7 @@ mod tests {
     #[test]
     fn lower_add_produces_machine_blocks() {
         let (ctx, module) = make_add_fn();
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         assert_eq!(mf.name, "add");
         assert!(!mf.blocks.is_empty());
@@ -802,7 +887,7 @@ mod tests {
         let mut module = Module::new("test");
         let mut b = Builder::new(&mut ctx, &mut module);
         b.add_declaration("ext", b.ctx.void_ty, vec![], false);
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         assert!(mf.blocks.is_empty(), "declaration should produce no blocks");
     }
@@ -835,7 +920,7 @@ mod tests {
     #[test]
     fn udiv_uses_udiv_rr() {
         let (ctx, module) = make_div_fn(true);
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         let has_udiv = mf
             .blocks
@@ -852,7 +937,7 @@ mod tests {
     #[test]
     fn sdiv_uses_sdiv_rr() {
         let (ctx, module) = make_div_fn(false);
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         let has_sdiv = mf
             .blocks
@@ -890,7 +975,7 @@ mod tests {
     #[test]
     fn sext_i8_uses_sxtb() {
         let (ctx, module) = make_sext_fn(8);
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         let has_sxtb = mf
             .blocks
@@ -902,7 +987,7 @@ mod tests {
     #[test]
     fn sext_i32_uses_sxtw() {
         let (ctx, module) = make_sext_fn(32);
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         let has_sxtw = mf
             .blocks
@@ -957,7 +1042,7 @@ mod tests {
         let func = &module.functions[0];
         let ir_block_count = func.blocks.len(); // 4
 
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, func);
 
         assert!(
@@ -987,7 +1072,7 @@ mod tests {
         b.build_inline_asm("", b.ctx.void_ty, "nop", "", true, false, vec![]);
         b.build_ret_void();
 
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         assert!(mf
             .blocks
@@ -1030,7 +1115,7 @@ mod tests {
         let sel = b.build_select("sel", cond, tv, fv);
         b.build_ret(sel);
 
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
 
         // The Select lowering must emit at least one MOV_WIDE instruction
@@ -1068,7 +1153,7 @@ mod tests {
         let v = b.build_load("v", b.ctx.i64_ty, p);
         b.build_ret(v);
 
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
 
         // There must be at least one instruction that has a dst VReg that
@@ -1121,7 +1206,7 @@ mod tests {
         b.build_store(v, p);
         b.build_ret_void();
 
-        let mut be = AArch64Backend;
+        let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
 
         // The function body should compile without panicking.
@@ -1129,5 +1214,296 @@ mod tests {
             !mf.blocks.is_empty(),
             "store function must produce at least one block"
         );
+    }
+
+    // ── atomic lowering tests ─────────────────────────────────────────────
+
+    #[test]
+    fn aarch64_atomic_fence_emits_dmb_ish() {
+        // Fence must produce a DMB_ISH opcode (not INLINE_ASM with raw bytes).
+        use llvm_ir::MemOrdering;
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "fence_fn",
+            b.ctx.void_ty,
+            vec![],
+            vec![],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        b.build_fence(MemOrdering::SeqCst);
+        b.build_ret_void();
+
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        let has_dmb_ish = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == DMB_ISH));
+        assert!(has_dmb_ish, "Fence must lower to DMB_ISH opcode");
+
+        // Must NOT produce a legacy INLINE_ASM with raw bytes.
+        let has_inline_asm = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == INLINE_ASM));
+        assert!(
+            !has_inline_asm,
+            "Fence must not produce INLINE_ASM — must use DMB_ISH opcode"
+        );
+
+        // Verify the encoding produces the correct DMB ISH bytes.
+        use crate::encode::AArch64Emitter;
+        use llvm_codegen::emit::{Emitter, ObjectFormat};
+        let mut emitter = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = emitter.emit_function(&mf);
+        // DMB ISH = 0xD5033BBF in LE: [BF, 3B, 03, D5]
+        let found_dmb = sec
+            .data
+            .windows(4)
+            .any(|w| w == [0xBF, 0x3B, 0x03, 0xD5]);
+        assert!(found_dmb, "DMB ISH bytes [BF 3B 03 D5] must appear in code");
+    }
+
+    #[test]
+    fn aarch64_cmpxchg_lse_emits_casal() {
+        // With LSE enabled (default), CmpXchg must lower to CASAL.
+        use llvm_ir::MemOrdering;
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "cas_fn",
+            b.ctx.i64_ty,
+            vec![b.ctx.ptr_ty, b.ctx.i64_ty, b.ctx.i64_ty],
+            vec!["ptr".into(), "cmp".into(), "new".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let ptr = b.get_arg(0);
+        let cmp = b.get_arg(1);
+        let new_val = b.get_arg(2);
+        let result = b.build_cmpxchg(
+            "r",
+            b.ctx.i64_ty,
+            ptr,
+            cmp,
+            new_val,
+            MemOrdering::SeqCst,
+            MemOrdering::SeqCst,
+            false,
+            false,
+        );
+        b.build_ret(result);
+
+        // Default backend has LSE enabled.
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        let has_casal = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == CASAL));
+        assert!(has_casal, "CmpXchg with LSE=true must emit CASAL");
+
+        let has_ldxr = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == LDXR));
+        assert!(
+            !has_ldxr,
+            "CmpXchg with LSE=true must NOT emit LDXR (LL/SC)"
+        );
+    }
+
+    #[test]
+    fn aarch64_cmpxchg_baseline_emits_ldxr_stxr() {
+        // With LSE disabled, CmpXchg must lower to LDXR + STXR.
+        use llvm_ir::MemOrdering;
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "cas_baseline_fn",
+            b.ctx.i64_ty,
+            vec![b.ctx.ptr_ty, b.ctx.i64_ty, b.ctx.i64_ty],
+            vec!["ptr".into(), "cmp".into(), "new".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let ptr = b.get_arg(0);
+        let cmp = b.get_arg(1);
+        let new_val = b.get_arg(2);
+        let result = b.build_cmpxchg(
+            "r",
+            b.ctx.i64_ty,
+            ptr,
+            cmp,
+            new_val,
+            MemOrdering::SeqCst,
+            MemOrdering::SeqCst,
+            false,
+            false,
+        );
+        b.build_ret(result);
+
+        // Baseline backend: no LSE.
+        let mut be = AArch64Backend::new(AArch64Features::baseline());
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        let has_ldxr = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == LDXR));
+        assert!(has_ldxr, "CmpXchg with LSE=false must emit LDXR");
+
+        let has_stxr = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == STXR));
+        assert!(has_stxr, "CmpXchg with LSE=false must emit STXR");
+
+        let has_casal = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == CASAL));
+        assert!(
+            !has_casal,
+            "CmpXchg with LSE=false must NOT emit CASAL"
+        );
+    }
+
+    #[test]
+    fn aarch64_atomic_rmw_add_lse_emits_ldaddal() {
+        // AtomicRmw(Add) with LSE=true must emit LDADDAL.
+        use llvm_ir::{MemOrdering, RmwOp};
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "rmw_add_fn",
+            b.ctx.i64_ty,
+            vec![b.ctx.ptr_ty, b.ctx.i64_ty],
+            vec!["ptr".into(), "val".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let ptr = b.get_arg(0);
+        let val = b.get_arg(1);
+        let old = b.build_atomicrmw(
+            "old",
+            RmwOp::Add,
+            b.ctx.i64_ty,
+            ptr,
+            val,
+            MemOrdering::SeqCst,
+            false,
+        );
+        b.build_ret(old);
+
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        let has_ldaddal = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == LDADDAL));
+        assert!(has_ldaddal, "AtomicRmw(Add) with LSE=true must emit LDADDAL");
+    }
+
+    #[test]
+    fn aarch64_atomic_rmw_xchg_lse_emits_swpal() {
+        // AtomicRmw(Xchg) with LSE=true must emit SWPAL.
+        use llvm_ir::{MemOrdering, RmwOp};
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "rmw_xchg_fn",
+            b.ctx.i64_ty,
+            vec![b.ctx.ptr_ty, b.ctx.i64_ty],
+            vec!["ptr".into(), "val".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let ptr = b.get_arg(0);
+        let val = b.get_arg(1);
+        let old = b.build_atomicrmw(
+            "old",
+            RmwOp::Xchg,
+            b.ctx.i64_ty,
+            ptr,
+            val,
+            MemOrdering::SeqCst,
+            false,
+        );
+        b.build_ret(old);
+
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        let has_swpal = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == SWPAL));
+        assert!(has_swpal, "AtomicRmw(Xchg) with LSE=true must emit SWPAL");
+    }
+
+    #[test]
+    fn aarch64_atomic_rmw_baseline_emits_ldxr_stxr() {
+        // AtomicRmw with LSE=false must emit LDXR + STXR.
+        use llvm_ir::{MemOrdering, RmwOp};
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "rmw_baseline_fn",
+            b.ctx.i64_ty,
+            vec![b.ctx.ptr_ty, b.ctx.i64_ty],
+            vec!["ptr".into(), "val".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let ptr = b.get_arg(0);
+        let val = b.get_arg(1);
+        let old = b.build_atomicrmw(
+            "old",
+            RmwOp::Or,
+            b.ctx.i64_ty,
+            ptr,
+            val,
+            MemOrdering::SeqCst,
+            false,
+        );
+        b.build_ret(old);
+
+        let mut be = AArch64Backend::new(AArch64Features::baseline());
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        let has_ldxr = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == LDXR));
+        assert!(has_ldxr, "AtomicRmw with LSE=false must emit LDXR");
+        let has_stxr = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == STXR));
+        assert!(has_stxr, "AtomicRmw with LSE=false must emit STXR");
     }
 }
