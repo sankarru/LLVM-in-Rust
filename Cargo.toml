@@ -15,5 +15,6 @@ members = [
     "src/llvm",
     "src/llvm-bench",
     "src/llvm-rustc-backend",
+    "src/llvm-jit",
     "examples/tikv_jit",
 ]
