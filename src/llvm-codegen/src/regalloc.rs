@@ -141,9 +141,24 @@ pub fn compute_live_intervals(mf: &MachineFunction) -> Vec<LiveInterval> {
                         total
                     };
                     let to_start = blk_start[to_bi];
-                    // Extend any VReg live at the start of to_bi through from_bi.
-                    for (_, (s, e)) in map.iter_mut() {
-                        if *s <= to_start && *e > to_start && *e < from_end {
+
+                    // Collect VRegs defined in the back-edge source block.
+                    // These do not need extension: their definition already keeps
+                    // the register occupied through the block.  Only VRegs that
+                    // are live INTO to_bi (loop header) but NOT redefined inside
+                    // from_bi can have their registers prematurely freed.
+                    let defined_in_from: std::collections::HashSet<VReg> = mf.blocks[from_bi]
+                        .instrs
+                        .iter()
+                        .filter_map(|mi| mi.dst)
+                        .collect();
+
+                    for (vr, (s, e)) in map.iter_mut() {
+                        if !defined_in_from.contains(vr)
+                            && *s <= to_start
+                            && *e > to_start
+                            && *e < from_end
+                        {
                             *e = from_end;
                             changed = true;
                         }
