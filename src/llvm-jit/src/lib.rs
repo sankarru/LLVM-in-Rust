@@ -373,42 +373,30 @@ entry:
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn jit_fibonacci() {
-        // Iterative (loop-based) fibonacci.  Allocas must be in the entry
-        // block so mem2reg can promote them; non-entry allocas are not
-        // promoted and the x86 backend emits placeholder NOPs (see issue #274).
+        // Explicit SSA phi nodes — no alloca/mem2reg dependency.
         let src = r#"
 define i32 @fib(i32 %n) {
 entry:
-  %a0 = alloca i32
-  %b0 = alloca i32
-  %i0 = alloca i32
   %cmp = icmp sle i32 %n, 1
-  br i1 %cmp, label %ret_n, label %loop_entry
+  br i1 %cmp, label %base_case, label %loop_init
 
-ret_n:
+base_case:
   ret i32 %n
 
-loop_entry:
-  store i32 0, i32* %a0
-  store i32 1, i32* %b0
-  store i32 1, i32* %i0
+loop_init:
   br label %loop_body
 
 loop_body:
-  %i = load i32, i32* %i0
-  %a = load i32, i32* %a0
-  %b = load i32, i32* %b0
+  %a = phi i32 [ 0, %loop_init ], [ %b, %loop_body ]
+  %b = phi i32 [ 1, %loop_init ], [ %next, %loop_body ]
+  %i = phi i32 [ 1, %loop_init ], [ %i1, %loop_body ]
   %next = add i32 %a, %b
-  store i32 %b, i32* %a0
-  store i32 %next, i32* %b0
   %i1 = add i32 %i, 1
-  store i32 %i1, i32* %i0
   %cond = icmp slt i32 %i1, %n
   br i1 %cond, label %loop_body, label %loop_exit
 
 loop_exit:
-  %result = load i32, i32* %b0
-  ret i32 %result
+  ret i32 %next
 }
 "#;
         let jit = jit_from_src(src);
@@ -416,6 +404,8 @@ loop_exit:
         // SAFETY: ptr points to compiled x86-64 code with signature `fn(i32) -> i32`.
         let f = unsafe { std::mem::transmute::<*const u8, fn(i32) -> i32>(ptr) };
         assert_eq!(unsafe { f(10) }, 55);
+        assert_eq!(unsafe { f(0) }, 0);
+        assert_eq!(unsafe { f(1) }, 1);
     }
 
     #[test]
