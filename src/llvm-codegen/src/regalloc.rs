@@ -66,53 +66,82 @@ pub fn compute_live_intervals(mf: &MachineFunction) -> Vec<LiveInterval> {
     // A linear scan over the flat instruction sequence misses that values live
     // at the top of a loop header must also stay allocated through any block
     // that branches back to that header (the back-edge source).  Without this
-    // fix, the register holding e.g. a loop-invariant argument can be reused
-    // inside a phi-destruction trampoline, corrupting the value on the next
-    // iteration.
+    // fix, the register holding a loop-invariant value (e.g. a function argument)
+    // can be reused inside a phi-destruction trampoline, corrupting the value on
+    // the next iteration.
     //
-    // Back-edge: machine block J branches to machine block B where B < J
-    // (i.e., a backward branch in the flat block ordering).  Any VReg that is
-    // live at the start of B (defined before B, live into B) must remain
-    // allocated through the end of J.  We iterate to a fixpoint because one
-    // extension can cause another VReg to straddle an additional back-edge.
+    // We detect true back-edges with an iterative DFS from block 0: an edge
+    // u→v is a back-edge iff v is "gray" (still on the DFS stack) when we visit
+    // the edge.  This correctly ignores forward edges from CondBr trampolines
+    // (which jump to lower-indexed blocks but are NOT loop back-edges).
+    //
+    // For each back-edge (J→B), we extend every VReg that is live at the start
+    // of B through the end of J, iterating to a fixpoint.
     {
-        // Compute flat start position of each machine block.
-        let mut blk_start: Vec<usize> = Vec::with_capacity(mf.blocks.len());
-        let mut p = 0usize;
-        for b in &mf.blocks {
-            blk_start.push(p);
-            p += b.instrs.len();
-        }
-        let total = p;
+        let n = mf.blocks.len();
 
-        // Collect back-edges: (from_block_idx, to_block_idx).
-        let mut back_edges: Vec<(usize, usize)> = Vec::new();
+        // Build successors list from Block operands in each machine instruction.
+        let mut succs: Vec<Vec<usize>> = vec![Vec::new(); n];
         for (bi, block) in mf.blocks.iter().enumerate() {
             for instr in &block.instrs {
                 for op in &instr.operands {
-                    if let MOperand::Block(target) = op {
-                        if *target < bi {
-                            back_edges.push((bi, *target));
+                    if let MOperand::Block(t) = op {
+                        if *t < n && !succs[bi].contains(t) {
+                            succs[bi].push(*t);
                         }
                     }
                 }
             }
         }
 
+        // Iterative DFS: color 0=white, 1=gray (on stack), 2=black (done).
+        let mut color = vec![0u8; n];
+        let mut back_edges: Vec<(usize, usize)> = Vec::new();
+        // Stack entries: (block, next-successor-index).
+        if n > 0 {
+            let mut stack: Vec<(usize, usize)> = vec![(0, 0)];
+            color[0] = 1;
+            while let Some((u, si)) = stack.last_mut() {
+                let u = *u;
+                if *si < succs[u].len() {
+                    let v = succs[u][*si];
+                    *si += 1;
+                    match color[v] {
+                        1 => back_edges.push((u, v)), // gray → back-edge
+                        0 => {
+                            color[v] = 1;
+                            stack.push((v, 0));
+                        }
+                        _ => {} // black → forward/cross edge
+                    }
+                } else {
+                    color[u] = 2;
+                    stack.pop();
+                }
+            }
+        }
+
         if !back_edges.is_empty() {
+            // Compute flat start position of each machine block.
+            let mut blk_start: Vec<usize> = Vec::with_capacity(n);
+            let mut p = 0usize;
+            for b in &mf.blocks {
+                blk_start.push(p);
+                p += b.instrs.len();
+            }
+            let total = p;
+
             let mut changed = true;
             while changed {
                 changed = false;
                 for &(from_bi, to_bi) in &back_edges {
-                    // Flat range of the back-edge source block J.
                     let from_end = if from_bi + 1 < blk_start.len() {
                         blk_start[from_bi + 1]
                     } else {
                         total
                     };
-                    // Flat start of the loop-header block B.
                     let to_start = blk_start[to_bi];
-                    // Any VReg live at the start of B must be extended through J.
+                    // Extend any VReg live at the start of to_bi through from_bi.
                     for (_, (s, e)) in map.iter_mut() {
                         if *s <= to_start && *e > to_start && *e < from_end {
                             *e = from_end;
