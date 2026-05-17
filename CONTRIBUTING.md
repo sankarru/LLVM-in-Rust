@@ -221,24 +221,39 @@ BSWAP_R => {
 
 ### Step 4 — Write a test verifying emitted bytes
 
+The easiest way to test encoding is to compile a minimal IR snippet through the
+full pipeline (parse → lower → regalloc → emit) and inspect the bytes.  See
+existing tests in `src/llvm-target-x86/src/lower.rs` for the pattern:
+
 ```rust
-// src/llvm-target-x86/tests/encode_bswap.rs  (or inline in encode.rs)
+// src/llvm-target-x86/src/lower.rs  (inside #[cfg(test)])
 #[test]
 fn bswap_rax_encodes_correctly() {
-    use llvm_codegen::isel::{MInstr, MachineFunction, PReg};
-    use crate::encode::X86Emitter;
-    use crate::instructions::BSWAP_R;
-    use llvm_codegen::emit::{Emitter, ObjectFormat};
+    use llvm_ir_parser::parser::parse;
+    use llvm_codegen::{emit_object, isel::IselBackend, ObjectFormat};
+    use llvm_codegen::regalloc::{allocate_registers, apply_allocation,
+        compute_live_intervals, insert_spill_reloads, RegAllocStrategy};
+    use crate::{X86Backend, X86Emitter};
+    use crate::instructions::{MOV_LOAD_MR, MOV_STORE_RM};
 
-    let mut mf = MachineFunction::new("f");
-    let b = mf.new_block("entry");
-    mf.set_entry(b);
-    mf.push_to(b, MInstr::new(BSWAP_R).with_dst_preg(PReg(0 /* RAX */)));
-
+    // A small IR function that uses bswap (once it is implemented).
+    let (ctx, module) = parse(
+        "define i64 @f(i64 %x) { entry: %r = bswap i64 %x  ret i64 %r }"
+    ).unwrap();
+    let func = &module.functions[0];
+    let mut backend = X86Backend::default();
+    let mut mf = backend.lower_function(&ctx, &module, func);
+    let intervals = compute_live_intervals(&mf);
+    let mut result = allocate_registers(&intervals, &mf.allocatable_pregs,
+        RegAllocStrategy::LinearScan);
+    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
+    apply_allocation(&mut mf, &result);
     let mut emitter = X86Emitter::new(ObjectFormat::Elf);
-    let section = emitter.emit_function(&mf);
-    // REX.W (0x48) + 0F + C8 = bswap rax
-    assert_eq!(&section.data[..3], &[0x48, 0x0F, 0xC8]);
+    let obj = emit_object(&mf, &mut emitter);
+    let text = &obj.sections[0].data;
+    // REX.W (0x48) + 0F + C8+rd encodes BSWAP RAX.
+    assert!(text.windows(3).any(|w| w == [0x48, 0x0F, 0xC8]),
+        "expected BSWAP RAX encoding in output");
 }
 ```
 
@@ -298,7 +313,7 @@ entry:
   ret i32 %y
 }
 "#;
-    assert_roundtrip(src);  // helper in differential.rs
+    roundtrip_and_validate("freeze_roundtrip", src);  // helper in differential.rs
 }
 ```
 
