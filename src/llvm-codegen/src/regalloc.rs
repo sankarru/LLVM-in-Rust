@@ -76,97 +76,104 @@ pub fn compute_live_intervals(mf: &MachineFunction) -> Vec<LiveInterval> {
     // (which jump to lower-indexed blocks but are NOT loop back-edges).
     //
     // For each back-edge (J→B), we extend every VReg that is live at the start
-    // of B through the end of J, iterating to a fixpoint.
+    // of B (defined strictly before B, s < to_start) through the end of J,
+    // unless the VReg is already redefined inside J (in which case its interval
+    // already covers J).  We iterate to a fixpoint.
+    //
+    // Implementation is deliberately allocation-light: the DFS is done inline
+    // without a pre-built adjacency list, and defined-in-J is checked with a
+    // small Vec rather than a HashSet.
     {
         let n = mf.blocks.len();
 
-        // Build successors list from Block operands in each machine instruction.
-        let mut succs: Vec<Vec<usize>> = vec![Vec::new(); n];
-        for (bi, block) in mf.blocks.iter().enumerate() {
-            for instr in &block.instrs {
+        // Compute flat block-start positions and look for any backward branch
+        // in a single pass (avoids paying DFS cost for loop-free functions).
+        let mut blk_start: Vec<usize> = Vec::with_capacity(n);
+        let mut has_backward_branch = false;
+        let mut p = 0usize;
+        for (bi, b) in mf.blocks.iter().enumerate() {
+            blk_start.push(p);
+            for instr in &b.instrs {
                 for op in &instr.operands {
                     if let MOperand::Block(t) = op {
-                        if *t < n && !succs[bi].contains(t) {
-                            succs[bi].push(*t);
+                        if *t < bi {
+                            has_backward_branch = true;
                         }
                     }
                 }
             }
+            p += b.instrs.len();
         }
+        let total = p;
 
-        // Iterative DFS: color 0=white, 1=gray (on stack), 2=black (done).
-        let mut color = vec![0u8; n];
-        let mut back_edges: Vec<(usize, usize)> = Vec::new();
-        // Stack entries: (block, next-successor-index).
-        if n > 0 {
-            let mut stack: Vec<(usize, usize)> = vec![(0, 0)];
-            color[0] = 1;
-            while let Some((u, si)) = stack.last_mut() {
-                let u = *u;
-                if *si < succs[u].len() {
-                    let v = succs[u][*si];
-                    *si += 1;
-                    match color[v] {
-                        1 => back_edges.push((u, v)), // gray → back-edge
-                        0 => {
-                            color[v] = 1;
-                            stack.push((v, 0));
+        if has_backward_branch {
+            // Iterative DFS without pre-building an adjacency list.
+            // Stack entries: (block, instr_idx, op_idx).
+            let mut color = vec![0u8; n];
+            let mut back_edges: Vec<(usize, usize)> = Vec::new();
+            let mut stack: Vec<(usize, usize, usize)> = Vec::with_capacity(n);
+            if n > 0 {
+                color[0] = 1;
+                stack.push((0, 0, 0));
+            }
+            'dfs: while let Some(&mut (u, ref mut ii, ref mut oi)) = stack.last_mut() {
+                let u = u;
+                let block = &mf.blocks[u];
+                // Advance through instructions looking for an unprocessed successor.
+                while *ii < block.instrs.len() {
+                    let instr = &block.instrs[*ii];
+                    while *oi < instr.operands.len() {
+                        let op_idx = *oi;
+                        *oi += 1;
+                        if let MOperand::Block(v) = instr.operands[op_idx] {
+                            if v < n {
+                                match color[v] {
+                                    1 => back_edges.push((u, v)),
+                                    0 => {
+                                        color[v] = 1;
+                                        stack.push((v, 0, 0));
+                                        continue 'dfs;
+                                    }
+                                    _ => {}
+                                }
+                            }
                         }
-                        _ => {} // black → forward/cross edge
                     }
-                } else {
-                    color[u] = 2;
-                    stack.pop();
+                    *oi = 0;
+                    *ii += 1;
                 }
+                color[u] = 2;
+                stack.pop();
             }
-        }
 
-        if !back_edges.is_empty() {
-            // Compute flat start position of each machine block.
-            let mut blk_start: Vec<usize> = Vec::with_capacity(n);
-            let mut p = 0usize;
-            for b in &mf.blocks {
-                blk_start.push(p);
-                p += b.instrs.len();
-            }
-            let total = p;
+            if !back_edges.is_empty() {
+                let mut changed = true;
+                while changed {
+                    changed = false;
+                    for &(from_bi, to_bi) in &back_edges {
+                        let from_end = blk_start.get(from_bi + 1).copied().unwrap_or(total);
+                        let to_start = blk_start[to_bi];
 
-            let mut changed = true;
-            while changed {
-                changed = false;
-                for &(from_bi, to_bi) in &back_edges {
-                    let from_end = if from_bi + 1 < blk_start.len() {
-                        blk_start[from_bi + 1]
-                    } else {
-                        total
-                    };
-                    let to_start = blk_start[to_bi];
+                        // Collect VRegs defined in the back-edge source block J.
+                        // Use a small Vec: trampoline blocks have ≤ ~12 instructions.
+                        let defined_in_from: Vec<u32> = mf.blocks[from_bi]
+                            .instrs
+                            .iter()
+                            .filter_map(|mi| mi.dst.map(|vr| vr.0))
+                            .collect();
 
-                    // Collect VRegs defined in the back-edge source block.
-                    // These do not need extension: their definition already keeps
-                    // the register occupied through the block.  Only VRegs that
-                    // are live INTO to_bi (loop header) but NOT redefined inside
-                    // from_bi can have their registers prematurely freed.
-                    let defined_in_from: std::collections::HashSet<VReg> = mf.blocks[from_bi]
-                        .instrs
-                        .iter()
-                        .filter_map(|mi| mi.dst)
-                        .collect();
-
-                    for (vr, (s, e)) in map.iter_mut() {
-                        // A VReg is "live at the start of block B" iff it was
-                        // defined strictly before B (s < to_start) and its
-                        // interval extends past B's start (e > to_start).
-                        // Using strict "<" avoids flagging VRegs first defined
-                        // inside block B (e.g. constant materializations at
-                        // the first instruction of the loop header).
-                        if !defined_in_from.contains(vr)
-                            && *s < to_start
-                            && *e > to_start
-                            && *e < from_end
-                        {
-                            *e = from_end;
-                            changed = true;
+                        for (vr, (s, e)) in map.iter_mut() {
+                            // Live at start of B: defined strictly before B AND
+                            // interval extends into B.  Strict "<" excludes VRegs
+                            // first materialized inside the loop header itself.
+                            if !defined_in_from.contains(&vr.0)
+                                && *s < to_start
+                                && *e > to_start
+                                && *e < from_end
+                            {
+                                *e = from_end;
+                                changed = true;
+                            }
                         }
                     }
                 }
