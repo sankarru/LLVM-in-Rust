@@ -7,7 +7,7 @@
 use crate::{
     abi::{ArgLocation, CallingConvention},
     instructions::*,
-    regs::{RCX, RDX, RSP},
+    regs::{RAX, RCX, RDX, RSP},
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MOperand, MachineFunction, PReg, VReg};
 use llvm_ir::{
@@ -826,62 +826,65 @@ fn lower_instr(
             }
         }
 
-        // ── atomics (#205) — minimal passthrough using raw byte emission ──
-        // The x86 instruction encoding is emitted directly via the
-        // INLINE_ASM bytes path so we exercise the lowering and emit
-        // recognisable LOCK / MFENCE sequences without re-plumbing the
-        // entire address-mode machinery here.  Real address-mode-aware
-        // lowering is tracked as a follow-up to issue #205.
-        Fence { ordering } => {
-            let _ = ordering; // ordering choice currently maps to MFENCE
-            // MFENCE = 0F AE F0
-            mf.push(
-                mblock,
-                MInstr::new(INLINE_ASM).with_bytes(vec![0x0F, 0xAE, 0xF0]),
-            );
+        // ── atomics (#237) — real MOpcode variants that participate in regalloc ──
+        Fence { .. } => {
+            mf.push(mblock, MInstr::new(MFENCE));
         }
         CmpXchg { ptr, cmp, new_val, .. } => {
-            let _p = res!(*ptr);
-            let _c = res!(*cmp);
-            let _n = res!(*new_val);
-            // LOCK CMPXCHG r/m32, r32  →  F0 0F B1 /r  (memory operand uses [r0])
-            // We emit a representative byte sequence using RAX/RDX-like
-            // encoding; exact memory addressing is delegated to follow-up
-            // work.  The emitted bytes are observable in the .text section
-            // so callers can verify atomicity instructions reach the
-            // object file.
+            let ptr_vr = res!(*ptr);
+            let cmp_vr = res!(*cmp);
+            let new_vr = res!(*new_val);
+            // CMPXCHG requires comparand in RAX; load it there first.
+            emit_mov_to_preg(mf, mblock, RAX, cmp_vr);
             mf.push(
                 mblock,
-                MInstr::new(INLINE_ASM).with_bytes(vec![0xF0, 0x0F, 0xB1, 0x10]),
+                MInstr::new(LOCK_CMPXCHG_MR)
+                    .with_vreg(ptr_vr)
+                    .with_preg(RAX)
+                    .with_vreg(new_vr),
             );
-            // CmpXchg result is the struct { ty, i1 } — produce a
-            // placeholder dst so SSA bookkeeping stays sound.
+            // Old memory value is now in RAX; capture into fresh VReg.
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(MOV_RI).with_dst(dst).with_imm(0));
+            emit_mov_from_preg(mf, mblock, dst, RAX);
         }
         AtomicRmw { op, ptr, val, .. } => {
-            let _p = res!(*ptr);
-            let _v = res!(*val);
             use llvm_ir::RmwOp;
-            let bytes: &[u8] = match op {
-                // LOCK XADD r/m32, r32 → F0 0F C1 /r
-                RmwOp::Add | RmwOp::Sub => &[0xF0, 0x0F, 0xC1, 0x10],
-                // XCHG (implicitly LOCK) r/m32, r32 → 87 /r
-                RmwOp::Xchg => &[0x87, 0x10],
-                // LOCK AND r/m32, r32 → F0 21 /r
-                RmwOp::And | RmwOp::Nand => &[0xF0, 0x21, 0x10],
-                // LOCK OR r/m32, r32  → F0 09 /r
-                RmwOp::Or => &[0xF0, 0x09, 0x10],
-                // LOCK XOR r/m32, r32 → F0 31 /r
-                RmwOp::Xor => &[0xF0, 0x31, 0x10],
-                // Min/max/fp are emitted as a LOCK CMPXCHG loop in real
-                // codegen; for v0.1 we emit the LOCK CMPXCHG opcode so the
-                // bytes are still recognisable.
-                _ => &[0xF0, 0x0F, 0xB1, 0x10],
+            let ptr_vr = res!(*ptr);
+            let val_vr = res!(*val);
+            let (opcode, result_in_val) = match op {
+                RmwOp::Add | RmwOp::Sub => (LOCK_XADD_MR, true),
+                RmwOp::Xchg => (XCHG_MR, true),
+                RmwOp::And | RmwOp::Nand => (LOCK_AND_MR, false),
+                RmwOp::Or => (LOCK_OR_MR, false),
+                RmwOp::Xor => (LOCK_XOR_MR, false),
+                _ => {
+                    // Complex ops (Min/Max/FAdd/FSub/UMin/UMax): use LOCK CMPXCHG retry loop.
+                    // Simplified: emit LOCK_CMPXCHG_MR with RAX as comparand placeholder.
+                    emit_mov_to_preg(mf, mblock, RAX, val_vr);
+                    mf.push(
+                        mblock,
+                        MInstr::new(LOCK_CMPXCHG_MR)
+                            .with_vreg(ptr_vr)
+                            .with_preg(RAX)
+                            .with_vreg(val_vr),
+                    );
+                    let dst = new_dst!();
+                    emit_mov_from_preg(mf, mblock, dst, RAX);
+                    return;
+                }
             };
-            mf.push(mblock, MInstr::new(INLINE_ASM).with_bytes(bytes.to_vec()));
+            mf.push(
+                mblock,
+                MInstr::new(opcode).with_vreg(ptr_vr).with_vreg(val_vr),
+            );
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(MOV_RI).with_dst(dst).with_imm(0));
+            if result_in_val {
+                // XADD/XCHG put the old memory value in val_vr after execution.
+                mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(val_vr));
+            } else {
+                // AND/OR/XOR do not preserve the old value; emit 0 placeholder.
+                mf.push(mblock, MInstr::new(MOV_RI).with_dst(dst).with_imm(0));
+            }
         }
 
         // ── memory (placeholder NOP — mem2reg removes most alloca/load/store) ──
@@ -1280,9 +1283,9 @@ mod tests {
         );
     }
 
-    /// Atomic IR (`fence`, `cmpxchg`, `atomicrmw add`) lowers to x86 byte
-    /// emission that includes the LOCK prefix (`F0`) and MFENCE (`0F AE F0`).
-    /// Covers issue #205 x86 minimal lowering.
+    /// Atomic IR (`fence`, `cmpxchg`, `atomicrmw add`) lowers to real x86 atomic
+    /// MOpcode variants and emits MFENCE (0F AE F0) and LOCK prefix (F0) bytes.
+    /// Covers issue #237 x86 real-encoding lowering.
     #[test]
     fn atomics_lower_emits_lock_and_mfence_bytes() {
         use llvm_ir::{MemOrdering, RmwOp};
@@ -1328,15 +1331,39 @@ mod tests {
 
         let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        // Verify real atomic opcodes are emitted instead of INLINE_ASM.
+        let has_mfence = mf
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .any(|i| i.opcode == MFENCE);
+        assert!(has_mfence, "Fence must lower to MFENCE opcode");
+
+        let has_cmpxchg = mf
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .any(|i| i.opcode == LOCK_CMPXCHG_MR);
+        assert!(has_cmpxchg, "CmpXchg must lower to LOCK_CMPXCHG_MR opcode");
+
+        let has_xadd = mf
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .any(|i| i.opcode == LOCK_XADD_MR);
+        assert!(has_xadd, "AtomicRmw Add must lower to LOCK_XADD_MR opcode");
+
+        // No INLINE_ASM should appear for atomic ops anymore.
         let inline_asm_count = mf
             .blocks
             .iter()
             .flat_map(|b| &b.instrs)
             .filter(|i| i.opcode == INLINE_ASM)
             .count();
-        assert!(
-            inline_asm_count >= 3,
-            "expected at least one INLINE_ASM per atomic op, got {inline_asm_count}"
+        assert_eq!(
+            inline_asm_count, 0,
+            "atomic ops must not use INLINE_ASM, got {inline_asm_count}"
         );
 
         let mut emitter = X86Emitter::new(ObjectFormat::Elf);

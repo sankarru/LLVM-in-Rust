@@ -245,6 +245,46 @@ fn modrm_rr(r: PReg, rm: PReg) -> u8 {
     0xC0 | (reg_enc(r) << 3) | reg_enc(rm)
 }
 
+/// ModRM byte for [ptr_reg] addressing (mod=00, reg=val_reg, rm=ptr_reg).
+/// Note: callers must handle RSP (enc=4) and RBP (enc=5) edge cases separately.
+fn modrm_mem(val_reg: PReg, ptr_reg: PReg) -> u8 {
+    (reg_enc(val_reg) << 3) | reg_enc(ptr_reg)
+}
+
+/// Emit REX prefix for 64-bit memory-operand instructions.
+/// REX.W always set; REX.R if val_reg is extended; REX.B if ptr_reg is extended.
+fn rex_mem(ctx: &mut EncodeCtx, val_reg: PReg, ptr_reg: PReg) {
+    let rex = 0x48
+        | (if is_extended(val_reg) { 0x04 } else { 0 })
+        | (if is_extended(ptr_reg) { 0x01 } else { 0 });
+    ctx.emit(rex);
+}
+
+/// Extract the PReg at a given operand index.
+fn preg_at(instr: &MInstr, idx: usize) -> Option<PReg> {
+    match instr.operands.get(idx) {
+        Some(MOperand::PReg(r)) => Some(*r),
+        _ => None,
+    }
+}
+
+/// Emit ModRM + optional SIB for [ptr_reg] addressing.
+/// Handles RSP (SIB required) and RBP (must use mod=01+disp8=0) edge cases.
+fn emit_mem_modrm(ctx: &mut EncodeCtx, val_reg: PReg, ptr_reg: PReg) {
+    let ptr_enc = reg_enc(ptr_reg);
+    if ptr_enc == 5 {
+        // RBP/R13: mod=00 rm=5 means [RIP+disp32]; use mod=01 disp8=0 instead.
+        ctx.emit(0x40 | (reg_enc(val_reg) << 3) | 5);
+        ctx.emit(0x00); // disp8=0
+    } else {
+        ctx.emit(modrm_mem(val_reg, ptr_reg));
+        if ptr_enc == 4 {
+            // RSP/R12: rm=4 means SIB follows in mod=00; emit SIB=0x24 ([RSP]).
+            ctx.emit(0x24);
+        }
+    }
+}
+
 // ── instruction encoding ─────────────────────────────────────────────────
 
 fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
@@ -709,6 +749,89 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
                 ctx.emit(0x7F);
                 ctx.emit(0x80 | (reg_enc(src) << 3) | 5);
                 ctx.emit32(disp);
+            } else {
+                ctx.emit(0x90);
+            }
+        }
+
+        // ── atomic memory operations ──────────────────────────────────────
+        MFENCE => {
+            ctx.emit(0x0F);
+            ctx.emit(0xAE);
+            ctx.emit(0xF0);
+        }
+
+        // LOCK CMPXCHG [ptr], new_val  (F0 REX.W 0F B1 /r)
+        // operands[0]=ptr_preg, operands[1]=RAX (comparand), operands[2]=new_val_preg
+        LOCK_CMPXCHG_MR => {
+            if let (Some(ptr), Some(new_v)) = (preg_at(instr, 0), preg_at(instr, 2)) {
+                ctx.emit(0xF0); // LOCK prefix
+                rex_mem(ctx, new_v, ptr);
+                ctx.emit(0x0F);
+                ctx.emit(0xB1);
+                emit_mem_modrm(ctx, new_v, ptr);
+            } else {
+                ctx.emit(0x90);
+            }
+        }
+
+        // LOCK XADD [ptr], val  (F0 REX.W 0F C1 /r)
+        // operands[0]=ptr_preg, operands[1]=val_preg
+        LOCK_XADD_MR => {
+            if let (Some(ptr), Some(val)) = (preg_at(instr, 0), preg_at(instr, 1)) {
+                ctx.emit(0xF0);
+                rex_mem(ctx, val, ptr);
+                ctx.emit(0x0F);
+                ctx.emit(0xC1);
+                emit_mem_modrm(ctx, val, ptr);
+            } else {
+                ctx.emit(0x90);
+            }
+        }
+
+        // XCHG [ptr], val  (REX.W 87 /r) — implicitly LOCK
+        // operands[0]=ptr_preg, operands[1]=val_preg
+        XCHG_MR => {
+            if let (Some(ptr), Some(val)) = (preg_at(instr, 0), preg_at(instr, 1)) {
+                rex_mem(ctx, val, ptr);
+                ctx.emit(0x87);
+                emit_mem_modrm(ctx, val, ptr);
+            } else {
+                ctx.emit(0x90);
+            }
+        }
+
+        // LOCK AND [ptr], val  (F0 REX.W 21 /r)
+        LOCK_AND_MR => {
+            if let (Some(ptr), Some(val)) = (preg_at(instr, 0), preg_at(instr, 1)) {
+                ctx.emit(0xF0);
+                rex_mem(ctx, val, ptr);
+                ctx.emit(0x21);
+                emit_mem_modrm(ctx, val, ptr);
+            } else {
+                ctx.emit(0x90);
+            }
+        }
+
+        // LOCK OR [ptr], val  (F0 REX.W 09 /r)
+        LOCK_OR_MR => {
+            if let (Some(ptr), Some(val)) = (preg_at(instr, 0), preg_at(instr, 1)) {
+                ctx.emit(0xF0);
+                rex_mem(ctx, val, ptr);
+                ctx.emit(0x09);
+                emit_mem_modrm(ctx, val, ptr);
+            } else {
+                ctx.emit(0x90);
+            }
+        }
+
+        // LOCK XOR [ptr], val  (F0 REX.W 31 /r)
+        LOCK_XOR_MR => {
+            if let (Some(ptr), Some(val)) = (preg_at(instr, 0), preg_at(instr, 1)) {
+                ctx.emit(0xF0);
+                rex_mem(ctx, val, ptr);
+                ctx.emit(0x31);
+                emit_mem_modrm(ctx, val, ptr);
             } else {
                 ctx.emit(0x90);
             }
@@ -1503,5 +1626,192 @@ mod tests {
             !sec.relocs.iter().any(|r| r.external_name.as_deref() == Some("__chkstk")),
             "ELF must not emit __chkstk reloc"
         );
+    }
+
+    // ── atomic encoding tests ─────────────────────────────────────────────
+
+    #[test]
+    fn mfence_encodes_correctly() {
+        let mf = single_block_mf("mfence_fn", vec![MInstr::new(MFENCE)]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        assert_eq!(sec.data, vec![0x0F, 0xAE, 0xF0]);
+    }
+
+    #[test]
+    fn lock_cmpxchg_mr_rcx_rdx_encodes_correctly() {
+        // LOCK CMPXCHG [RCX], RDX  (ptr=RCX=1, comparand=RAX=0, new_val=RDX=2)
+        // Expected: F0 (LOCK) + REX.W(0x48) + 0F B1 + ModRM(00_010_001=0x11)
+        use crate::regs::{RCX, RDX};
+        let mi = MInstr {
+            opcode: LOCK_CMPXCHG_MR,
+            dst: None,
+            operands: vec![MOperand::PReg(RCX), MOperand::PReg(RAX), MOperand::PReg(RDX)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("cmpxchg_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        // F0 LOCK, 48 REX.W, 0F B1, ModRM(mod=00, reg=RDX=2, rm=RCX=1) = 0x11
+        assert_eq!(sec.data[0], 0xF0, "LOCK prefix");
+        assert_eq!(sec.data[1], 0x48, "REX.W");
+        assert_eq!(sec.data[2], 0x0F, "escape byte");
+        assert_eq!(sec.data[3], 0xB1, "CMPXCHG opcode");
+        assert_eq!(sec.data[4], 0x11, "ModRM(00 010 001): mod=00 reg=RDX rm=RCX");
+    }
+
+    #[test]
+    fn lock_xadd_mr_rdi_rsi_encodes_correctly() {
+        // LOCK XADD [RDI], RSI  (ptr=RDI=7, val=RSI=6)
+        // Expected: F0 + REX.W(0x48) + 0F C1 + ModRM(00_110_111=0x37)
+        use crate::regs::{RDI, RSI};
+        let mi = MInstr {
+            opcode: LOCK_XADD_MR,
+            dst: None,
+            operands: vec![MOperand::PReg(RDI), MOperand::PReg(RSI)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("xadd_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        // F0, 48, 0F, C1, ModRM(00 110 111) = 0x37
+        assert_eq!(sec.data[0], 0xF0, "LOCK prefix");
+        assert_eq!(sec.data[1], 0x48, "REX.W");
+        assert_eq!(sec.data[2], 0x0F);
+        assert_eq!(sec.data[3], 0xC1, "XADD opcode");
+        assert_eq!(sec.data[4], 0x37, "ModRM(00 110 111): mod=00 reg=RSI rm=RDI");
+    }
+
+    #[test]
+    fn xchg_mr_rax_rdi_encodes_correctly() {
+        // XCHG [RDI], RAX  (ptr=RDI=7, val=RAX=0)
+        // Expected: REX.W(0x48) + 0x87 + ModRM(00_000_111=0x07)
+        let mi = MInstr {
+            opcode: XCHG_MR,
+            dst: None,
+            operands: vec![MOperand::PReg(RDI), MOperand::PReg(RAX)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("xchg_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        // 48, 87, ModRM(00 000 111) = 0x07
+        assert_eq!(sec.data[0], 0x48, "REX.W");
+        assert_eq!(sec.data[1], 0x87, "XCHG opcode");
+        assert_eq!(sec.data[2], 0x07, "ModRM(00 000 111): mod=00 reg=RAX rm=RDI");
+    }
+
+    #[test]
+    fn lock_and_mr_rsi_rdi_encodes_correctly() {
+        // LOCK AND [RDI], RSI  (ptr=RDI=7, val=RSI=6)
+        // Expected: F0 + REX.W(0x48) + 0x21 + ModRM(00_110_111=0x37)
+        let mi = MInstr {
+            opcode: LOCK_AND_MR,
+            dst: None,
+            operands: vec![MOperand::PReg(RDI), MOperand::PReg(RSI)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("lock_and_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        assert_eq!(sec.data[0], 0xF0, "LOCK prefix");
+        assert_eq!(sec.data[1], 0x48, "REX.W");
+        assert_eq!(sec.data[2], 0x21, "AND r/m64,r64 opcode");
+        assert_eq!(sec.data[3], 0x37, "ModRM(00 110 111)");
+    }
+
+    #[test]
+    fn lock_or_mr_encodes_correctly() {
+        // LOCK OR [RDI], RSI
+        let mi = MInstr {
+            opcode: LOCK_OR_MR,
+            dst: None,
+            operands: vec![MOperand::PReg(RDI), MOperand::PReg(RSI)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("lock_or_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        assert_eq!(sec.data[0], 0xF0, "LOCK prefix");
+        assert_eq!(sec.data[1], 0x48, "REX.W");
+        assert_eq!(sec.data[2], 0x09, "OR r/m64,r64 opcode");
+        assert_eq!(sec.data[3], 0x37, "ModRM(00 110 111)");
+    }
+
+    #[test]
+    fn lock_xor_mr_encodes_correctly() {
+        // LOCK XOR [RDI], RSI
+        let mi = MInstr {
+            opcode: LOCK_XOR_MR,
+            dst: None,
+            operands: vec![MOperand::PReg(RDI), MOperand::PReg(RSI)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("lock_xor_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        assert_eq!(sec.data[0], 0xF0, "LOCK prefix");
+        assert_eq!(sec.data[1], 0x48, "REX.W");
+        assert_eq!(sec.data[2], 0x31, "XOR r/m64,r64 opcode");
+        assert_eq!(sec.data[3], 0x37, "ModRM(00 110 111)");
+    }
+
+    #[test]
+    fn modrm_mem_helper_rsp_edge_case() {
+        // When ptr_reg=RSP (enc=4), ModRM rm=4 means SIB follows.
+        // LOCK AND [RSP], RSI must emit SIB=0x24 after ModRM.
+        let mi = MInstr {
+            opcode: LOCK_AND_MR,
+            dst: None,
+            operands: vec![MOperand::PReg(RSP), MOperand::PReg(RSI)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("lock_and_rsp_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        // F0 LOCK, 48 REX.W, 21 AND, ModRM(00 110 100=0x34), SIB(0x24)
+        assert_eq!(sec.data[0], 0xF0, "LOCK prefix");
+        assert_eq!(sec.data[1], 0x48, "REX.W");
+        assert_eq!(sec.data[2], 0x21, "AND opcode");
+        assert_eq!(sec.data[3], 0x34, "ModRM(00 110 100): reg=RSI rm=RSP");
+        assert_eq!(sec.data[4], 0x24, "SIB(00 100 100) for [RSP]");
+    }
+
+    #[test]
+    fn modrm_mem_helper_rbp_edge_case() {
+        // When ptr_reg=RBP (enc=5), mod=00 rm=5 means [RIP+disp32].
+        // Must use mod=01 disp8=0 instead.
+        use crate::regs::RBP;
+        let mi = MInstr {
+            opcode: LOCK_AND_MR,
+            dst: None,
+            operands: vec![MOperand::PReg(RBP), MOperand::PReg(RSI)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("lock_and_rbp_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        // F0 LOCK, 48 REX.W, 21 AND, ModRM(01 110 101=0x75), disp8=0x00
+        assert_eq!(sec.data[0], 0xF0, "LOCK prefix");
+        assert_eq!(sec.data[1], 0x48, "REX.W");
+        assert_eq!(sec.data[2], 0x21, "AND opcode");
+        assert_eq!(sec.data[3], 0x75, "ModRM(01 110 101): mod=01 reg=RSI rm=RBP");
+        assert_eq!(sec.data[4], 0x00, "disp8=0 for mod=01 RBP base");
     }
 }
