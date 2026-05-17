@@ -10,6 +10,7 @@ use crate::{
     regs::{ALLOCATABLE, CALLEE_SAVED},
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MachineFunction, PReg, VReg};
+use llvm_codegen::sizeof_ty;
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, InstrprofIntrinsic,
     IntPredicate, Module, RmwOp, TypeData, ValueRef,
@@ -70,6 +71,7 @@ impl IselBackend for AArch64Backend {
     ) -> MachineFunction {
         let mut mf = MachineFunction::new(func.name.clone());
         mf.allocatable_pregs = ALLOCATABLE.to_vec();
+        mf.allocatable_fp_pregs = vec![]; // FP register class: populated in subsequent FP PR
         mf.callee_saved_pregs = CALLEE_SAVED.to_vec();
         mf.debug_source = module.source_filename.clone();
 
@@ -642,16 +644,36 @@ fn lower_instr(
             }
         }
 
-        // ── memory (placeholder — mem2reg removes most alloca/load/store) ────
-        // Store produces no SSA result, so we must not call new_dst!().
-        // Alloca / Load / GEP produce a result; emit a zero-materialisation so
-        // the destination VReg is defined before its first use.
-        Store { .. } => {
-            mf.push(mblock, MInstr::new(NOP));
-        }
-        Alloca { .. } | Load { .. } | GetElementPtr { .. } => {
+        // ── memory: alloca, load, store ────────────────────────────────────
+        //
+        // mem2reg eliminates most alloca/load/store sequences (pure SSA values).
+        // What remains are non-promotable allocas (address-taken, non-constant GEP).
+        Alloca { alloc_ty, align, .. } => {
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
+            let size_bytes = sizeof_ty(ctx, *alloc_ty) as u32;
+            let align_bytes = align.unwrap_or(8);
+            let slot_idx = mf.alloc_alloca_slot(size_bytes, align_bytes);
+            // SUB_FP_IMM carries the slot index; encoder converts to:
+            //   sub xd, x29, #(slot_idx+1)*8
+            mf.push(mblock, MInstr::new(SUB_FP_IMM).with_dst(dst).with_imm(slot_idx as i64));
+        }
+        GetElementPtr { ptr, .. } => {
+            // Simple GEP: propagate the base pointer VReg.
+            let dst = new_dst!();
+            let base = res!(*ptr);
+            mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(base));
+        }
+        Load { ptr, .. } => {
+            let dst = new_dst!();
+            let ptr_vr = res!(*ptr);
+            // LDR_REG: ldr xd, [xn]
+            mf.push(mblock, MInstr::new(LDR_REG).with_dst(dst).with_vreg(ptr_vr));
+        }
+        Store { val, ptr, .. } => {
+            let src = res!(*val);
+            let ptr_vr = res!(*ptr);
+            // STR_REG: str xs, [xn]
+            mf.push(mblock, MInstr::new(STR_REG).with_vreg(ptr_vr).with_vreg(src));
         }
 
         // ── FP arithmetic (not yet supported) ──────────────────────────────

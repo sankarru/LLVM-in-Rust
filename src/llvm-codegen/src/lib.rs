@@ -25,7 +25,7 @@ pub use emit::{
     Section, Symbol,
 };
 /// Public API for `re-export`.
-pub use isel::{IselBackend, MInstr, MOpcode, MOperand, MachineBlock, MachineFunction, PReg, VReg};
+pub use isel::{IselBackend, MInstr, MOpcode, MOperand, MachineBlock, MachineFunction, PReg, RegClass, VReg};
 /// Public API for `re-export`.
 pub use regalloc::{
     allocate_registers, apply_allocation, compute_live_intervals, graph_color,

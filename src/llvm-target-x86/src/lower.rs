@@ -10,6 +10,7 @@ use crate::{
     regs::{RAX, RCX, RDX, RSP},
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MOperand, MachineFunction, PReg, VReg};
+use llvm_codegen::sizeof_ty;
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, FloatKind, Function, InstrId, InstrKind,
     InstrprofIntrinsic, IntPredicate, Module, TypeData, ValueRef, VpIntrinsic,
@@ -101,6 +102,7 @@ impl IselBackend for X86Backend {
         let cc = CallingConvention::from_target_triple(module.target_triple.as_deref());
         let mut mf = MachineFunction::new(func.name.clone());
         mf.allocatable_pregs = cc.allocatable_pregs().to_vec();
+        mf.allocatable_fp_pregs = vec![]; // FP register class: populated in subsequent FP PR
         mf.callee_saved_pregs = cc.callee_saved_pregs().to_vec();
         mf.debug_source = module.source_filename.clone();
 
@@ -892,13 +894,30 @@ fn lower_instr(
             }
         }
 
-        // ── memory (placeholder NOP — mem2reg removes most alloca/load/store) ──
-        Alloca { .. } | GetElementPtr { .. } => {
+        // ── memory: alloca, load, store ────────────────────────────────────
+        //
+        // mem2reg eliminates most alloca/load/store sequences (pure SSA values).
+        // What remains here are non-promotable allocas (address escapes, non-constant
+        // GEP indices) and loads/stores through pointer-valued arguments or globals.
+        Alloca { alloc_ty, align, .. } => {
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(NOP));
-            let _ = dst;
+            // Compute the allocation size and alignment from the alloc_ty.
+            let size_bytes = sizeof_ty(ctx, *alloc_ty) as u32;
+            let align_bytes = align.unwrap_or(8);
+            let slot_idx = mf.alloc_alloca_slot(size_bytes, align_bytes);
+            // Materialize the frame-slot address into dst.
+            // LEA_FRAME_MR carries the slot index; the encoder converts it to
+            // [RBP - (callee_save_bytes + alloca_frame_bytes - slot_idx*8)].
+            // Encoding convention: Imm(slot_idx) — encoder computes the displacement.
+            mf.push(mblock, MInstr::new(LEA_FRAME_MR).with_dst(dst).with_imm(slot_idx as i64));
         }
-        Load { ty, .. } => {
+        GetElementPtr { ptr, .. } => {
+            // Simple GEP: propagate the base pointer VReg (full GEP lowering is out of scope).
+            let dst = new_dst!();
+            let base = res!(*ptr);
+            mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(base));
+        }
+        Load { ty, ptr, .. } => {
             let dst = new_dst!();
             if matches!(ctx.get_type(*ty), TypeData::Vector { .. }) && features.simd_enabled() {
                 mf.push(
@@ -906,10 +925,12 @@ fn lower_instr(
                     MInstr::new(MOVDQU_LOAD_MR).with_dst(dst).with_imm(0),
                 );
             } else {
-                mf.push(mblock, MInstr::new(NOP));
+                // Load through pointer: MOV dst, [ptr_reg].
+                let ptr_vr = res!(*ptr);
+                mf.push(mblock, MInstr::new(MOV_LOAD_REG_MR).with_dst(dst).with_vreg(ptr_vr));
             }
         }
-        Store { val, .. } => {
+        Store { val, ptr, .. } => {
             if let Some(ty) = func.type_of_value(*val) {
                 if matches!(ctx.get_type(ty), TypeData::Vector { .. }) && features.simd_enabled() {
                     let src = res!(*val);
@@ -920,7 +941,10 @@ fn lower_instr(
                     return;
                 }
             }
-            mf.push(mblock, MInstr::new(NOP));
+            // Store through pointer: MOV [ptr_reg], src.
+            let src = res!(*val);
+            let ptr_vr = res!(*ptr);
+            mf.push(mblock, MInstr::new(MOV_STORE_REG_RM).with_vreg(ptr_vr).with_vreg(src));
         }
 
         // ── FP arithmetic (not yet supported) ──────────────────────────────
@@ -2309,11 +2333,14 @@ mod tests {
         let mut result = allocate_registers(
             &intervals,
             &mf.allocatable_pregs,
+            &mf.allocatable_fp_pregs,
             RegAllocStrategy::LinearScan,
         );
         insert_spill_reloads(
             &mut mf,
             &mut result,
+            crate::instructions::MOV_LOAD_MR,
+            crate::instructions::MOV_STORE_RM,
             crate::instructions::MOV_LOAD_MR,
             crate::instructions::MOV_STORE_RM,
         );

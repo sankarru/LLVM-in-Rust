@@ -34,9 +34,10 @@ fn emits_codeview_debug_s_for_coff_when_dbg_metadata_present() {
     let mut result = allocate_registers(
         &intervals,
         &mf.allocatable_pregs,
+        &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
+    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
     apply_allocation(&mut mf, &result);
 
     let mut emitter = X86Emitter::new(ObjectFormat::Coff);
@@ -80,9 +81,10 @@ fn build_coff_cv_obj() -> (Vec<u8>, Vec<u8>) {
     let mut result = allocate_registers(
         &intervals,
         &mf.allocatable_pregs,
+        &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
+    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
     apply_allocation(&mut mf, &result);
 
     let mut emitter = X86Emitter::new(ObjectFormat::Coff);

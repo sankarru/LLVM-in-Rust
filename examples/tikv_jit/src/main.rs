@@ -152,9 +152,10 @@ fn main() {
     let mut result = allocate_registers(
         &intervals,
         &mf.allocatable_pregs,
+        &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
+    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
     apply_allocation(&mut mf, &result);
 
     // ── Step 5: Emit ELF object file ──────────────────────────────────────────

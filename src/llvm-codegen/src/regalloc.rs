@@ -209,16 +209,42 @@ pub enum RegAllocStrategy {
     GraphColor,
 }
 
-/// Allocate registers with the selected strategy.
+/// Allocate registers with the selected strategy, routing Int and Float
+/// VRegs to their respective physical-register pools.
+///
+/// `int_pregs` is the pool of general-purpose physical registers.
+/// `fp_pregs` is the pool of floating-point physical registers (XMM, V, F, …).
+///
+/// The function partitions `intervals` by [`VReg::class`], runs one allocation
+/// pass per class, and merges the two [`RegAllocResult`]s into one.  If a pool
+/// is empty, all intervals for that class are spilled.
 pub fn allocate_registers(
     intervals: &[LiveInterval],
-    allocatable: &[PReg],
+    int_pregs: &[PReg],
+    fp_pregs: &[PReg],
     strategy: RegAllocStrategy,
 ) -> RegAllocResult {
-    match strategy {
-        RegAllocStrategy::LinearScan => linear_scan(intervals, allocatable),
-        RegAllocStrategy::GraphColor => graph_color(intervals, allocatable),
-    }
+    // Partition live intervals by register class.
+    let (int_intervals, fp_intervals): (Vec<_>, Vec<_>) =
+        intervals.iter().cloned().partition(|iv| iv.vreg.class() == crate::isel::RegClass::Int);
+
+    let int_result = match strategy {
+        RegAllocStrategy::LinearScan => linear_scan(&int_intervals, int_pregs),
+        RegAllocStrategy::GraphColor => graph_color(&int_intervals, int_pregs),
+    };
+    let fp_result = match strategy {
+        RegAllocStrategy::LinearScan => linear_scan(&fp_intervals, fp_pregs),
+        RegAllocStrategy::GraphColor => graph_color(&fp_intervals, fp_pregs),
+    };
+
+    // Merge the two results.
+    let mut merged = RegAllocResult {
+        vreg_to_preg: int_result.vreg_to_preg,
+        spilled: int_result.spilled,
+    };
+    merged.vreg_to_preg.extend(fp_result.vreg_to_preg);
+    merged.spilled.extend(fp_result.spilled);
+    merged
 }
 
 // ── linear scan ────────────────────────────────────────────────────────────
@@ -315,8 +341,13 @@ pub fn linear_scan(intervals: &[LiveInterval], allocatable: &[PReg]) -> RegAlloc
 /// short live intervals so they virtually never cause additional spills).  The
 /// result is merged into `result`.
 ///
-/// `load_op` / `store_op` are target-provided opcodes.  The instructions
-/// have the layout:
+/// `load_op` / `store_op` are target-provided opcodes for **integer** spills.
+/// `fp_load_op` / `fp_store_op` are used for **Float**-class VRegs.
+/// Backends that do not yet implement FP spilling may pass the integer opcodes
+/// for both pairs — the result will be incorrect at runtime but will at least
+/// compile.  Correct FP opcodes are wired in subsequent backend PRs.
+///
+/// Instruction layout:
 /// - LOAD:  `dst = VReg(fresh), operands = [Imm(slot)]`
 /// - STORE: `dst = None,        operands = [Imm(slot), VReg(src)]`
 pub fn insert_spill_reloads(
@@ -324,6 +355,8 @@ pub fn insert_spill_reloads(
     result: &mut RegAllocResult,
     load_op: MOpcode,
     store_op: MOpcode,
+    fp_load_op: MOpcode,
+    fp_store_op: MOpcode,
 ) {
     if result.spilled.is_empty() {
         return;
@@ -346,9 +379,14 @@ pub fn insert_spill_reloads(
             for op in &mut instr.operands {
                 if let MOperand::VReg(vr) = op {
                     if let Some(&slot) = mf.spill_slots.get(vr) {
-                        let fresh = mf.fresh_vreg();
+                        // Choose opcode and fresh VReg class based on the spilled VReg's class.
+                        let (chosen_load, fresh) = if vr.class() == crate::isel::RegClass::Float {
+                            (fp_load_op, mf.fresh_float_vreg())
+                        } else {
+                            (load_op, mf.fresh_vreg())
+                        };
                         // Insert LOAD before this instruction.
-                        new_instrs.push(MInstr::new(load_op).with_dst(fresh).with_imm(slot as i64));
+                        new_instrs.push(MInstr::new(chosen_load).with_dst(fresh).with_imm(slot as i64));
                         *op = MOperand::VReg(fresh);
                     }
                 }
@@ -358,9 +396,13 @@ pub fn insert_spill_reloads(
             //    fresh VReg, emit the instruction, then insert a STORE.
             let store_after = if let Some(dst_vr) = instr.dst {
                 if let Some(&slot) = mf.spill_slots.get(&dst_vr) {
-                    let fresh = mf.fresh_vreg();
+                    let (chosen_store, fresh) = if dst_vr.class() == crate::isel::RegClass::Float {
+                        (fp_store_op, mf.fresh_float_vreg())
+                    } else {
+                        (store_op, mf.fresh_vreg())
+                    };
                     instr.dst = Some(fresh);
-                    Some((fresh, slot))
+                    Some((fresh, slot, chosen_store))
                 } else {
                     None
                 }
@@ -370,8 +412,8 @@ pub fn insert_spill_reloads(
 
             new_instrs.push(instr);
 
-            if let Some((fresh, slot)) = store_after {
-                new_instrs.push(MInstr::new(store_op).with_imm(slot as i64).with_vreg(fresh));
+            if let Some((fresh, slot, chosen_store)) = store_after {
+                new_instrs.push(MInstr::new(chosen_store).with_imm(slot as i64).with_vreg(fresh));
             }
         }
 
@@ -379,6 +421,7 @@ pub fn insert_spill_reloads(
     }
 
     // Second allocation pass for the fresh VRegs just created.
+    // Use the class-split allocator so fresh Float VRegs go to the FP pool.
     let fresh_intervals = compute_live_intervals(mf);
     // Only allocate the truly-fresh VRegs (those not yet in result).
     let fresh_only: Vec<LiveInterval> = fresh_intervals
@@ -387,16 +430,21 @@ pub fn insert_spill_reloads(
         .collect();
 
     if !fresh_only.is_empty() {
-        let alloc = mf.allocatable_pregs.clone();
-        let second = linear_scan(&fresh_only, &alloc);
+        let int_alloc = mf.allocatable_pregs.clone();
+        let fp_alloc = mf.allocatable_fp_pregs.clone();
+        let second = allocate_registers(&fresh_only, &int_alloc, &fp_alloc, RegAllocStrategy::LinearScan);
         // Merge — fresh VRegs should not spill given their tiny intervals.
         for (vr, pr) in second.vreg_to_preg {
             result.vreg_to_preg.insert(vr, pr);
         }
-        // Any unexpected spills from fresh VRegs: just assign the first allocatable reg.
+        // Any unexpected spills from fresh VRegs: assign first pool register by class.
         if !second.spilled.is_empty() {
-            let fallback = alloc.first().copied().unwrap_or(PReg(0));
             for vr in second.spilled {
+                let fallback = if vr.class() == crate::isel::RegClass::Float {
+                    fp_alloc.first().copied().unwrap_or(PReg(0))
+                } else {
+                    int_alloc.first().copied().unwrap_or(PReg(0))
+                };
                 result.vreg_to_preg.entry(vr).or_insert(fallback);
             }
         }
@@ -669,7 +717,7 @@ mod tests {
             "one VReg must spill with 1 reg, 2 simultaneously live"
         );
 
-        insert_spill_reloads(&mut mf, &mut result, LOAD_OP, STORE_OP);
+        insert_spill_reloads(&mut mf, &mut result, LOAD_OP, STORE_OP, LOAD_OP, STORE_OP);
 
         // After insertion: no VReg should remain in result.spilled (they were processed).
         assert!(
@@ -738,6 +786,91 @@ mod tests {
                 !mf.used_callee_saved.contains(&PReg(3)),
                 "unused callee-saved PReg must not appear in mf.used_callee_saved"
             );
+        }
+    }
+
+    // ── RegClass tests ────────────────────────────────────────────────────────
+
+    #[test]
+    fn int_vreg_allocates_to_int_pool() {
+        // Two Int VRegs with overlapping intervals; FP pool empty.
+        // Both must be assigned from the int pool.
+        let int_pool = vec![PReg(0), PReg(1)];
+        let fp_pool: Vec<PReg> = vec![];
+        let intervals = vec![
+            LiveInterval { vreg: VReg::new_int(0), start: 0, end: 4 },
+            LiveInterval { vreg: VReg::new_int(1), start: 1, end: 5 },
+        ];
+        let result = allocate_registers(&intervals, &int_pool, &fp_pool, RegAllocStrategy::LinearScan);
+        assert!(result.spilled.is_empty(), "no spills expected with 2 regs for 2 int VRegs");
+        // Both assignments must be in the int pool.
+        for (vr, pr) in &result.vreg_to_preg {
+            assert!(
+                int_pool.contains(pr),
+                "int VReg {vr:?} was assigned to {pr:?} which is not in the int pool"
+            );
+        }
+    }
+
+    #[test]
+    fn float_vreg_allocates_to_fp_pool() {
+        // Two Float VRegs; int pool has some pregs but fp pool has distinct pregs.
+        // Float VRegs must land in the FP pool, not the int pool.
+        let int_pool = vec![PReg(0), PReg(1)];
+        let fp_pool = vec![PReg(16), PReg(17)]; // simulate XMM0/XMM1
+        let intervals = vec![
+            LiveInterval { vreg: VReg::new_float(0), start: 0, end: 4 },
+            LiveInterval { vreg: VReg::new_float(1), start: 1, end: 5 },
+        ];
+        let result = allocate_registers(&intervals, &int_pool, &fp_pool, RegAllocStrategy::LinearScan);
+        assert!(result.spilled.is_empty(), "no spills: 2 FP regs for 2 float VRegs");
+        for (vr, pr) in &result.vreg_to_preg {
+            assert!(
+                fp_pool.contains(pr),
+                "float VReg {vr:?} was assigned to {pr:?} which is not in the FP pool"
+            );
+            assert!(
+                !int_pool.contains(pr),
+                "float VReg {vr:?} must not be assigned to an int-pool register {pr:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_int_and_float_allocated_to_separate_pools() {
+        // 2 Int + 2 Float VRegs; verify no cross-pool assignments.
+        let int_pool = vec![PReg(0), PReg(1)];
+        let fp_pool = vec![PReg(16), PReg(17)];
+        let intervals = vec![
+            LiveInterval { vreg: VReg::new_int(0),   start: 0, end: 6 },
+            LiveInterval { vreg: VReg::new_int(1),   start: 1, end: 7 },
+            LiveInterval { vreg: VReg::new_float(2), start: 2, end: 8 },
+            LiveInterval { vreg: VReg::new_float(3), start: 3, end: 9 },
+        ];
+        let result = allocate_registers(&intervals, &int_pool, &fp_pool, RegAllocStrategy::LinearScan);
+        assert!(result.spilled.is_empty(), "no spills: 2+2 regs for 2+2 VRegs");
+        assert_eq!(result.vreg_to_preg.len(), 4, "all 4 VRegs must be assigned");
+
+        for (vr, pr) in &result.vreg_to_preg {
+            if vr.class() == crate::isel::RegClass::Int {
+                assert!(
+                    int_pool.contains(pr),
+                    "int VReg {vr:?} must land in int pool, got {pr:?}"
+                );
+                assert!(
+                    !fp_pool.contains(pr),
+                    "int VReg {vr:?} must not land in FP pool, got {pr:?}"
+                );
+            } else {
+                assert!(
+                    fp_pool.contains(pr),
+                    "float VReg {vr:?} must land in FP pool, got {pr:?}"
+                );
+                assert!(
+                    !int_pool.contains(pr),
+                    "float VReg {vr:?} must not land in int pool, got {pr:?}"
+                );
+            }
         }
     }
 }

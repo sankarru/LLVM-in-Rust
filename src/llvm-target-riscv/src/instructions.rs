@@ -59,6 +59,18 @@ pub const SW: MOpcode = MOpcode(0x42);
 /// Public API for `SD`.
 pub const SD: MOpcode = MOpcode(0x43);
 
+// ── non-promotable memory: alloca frame-slot addressing ─────────────────────
+/// `addi xd, s0, -(slot_idx+1)*8`  — materialize an alloca frame-slot address.
+/// `dst` = VReg, `operands[0]` = `Imm(slot_idx)`.
+/// Encodes as ADDI with imm = -(slot_idx+1)*8.
+pub const ADDI_FP_SLOT: MOpcode = MOpcode(0x44);
+/// `ld xd, 0(xn)`  — 64-bit load through a register-held pointer (no offset).
+/// `dst` = VReg, `operands[0]` = PReg (pointer register).
+pub const LD_REG: MOpcode = MOpcode(0x45);
+/// `sd xs, 0(xn)`  — 64-bit store through a register-held pointer (no offset).
+/// `dst` = None, `operands[0]` = PReg (pointer register), `operands[1]` = PReg (value).
+pub const SD_REG: MOpcode = MOpcode(0x46);
+
 /// Public API for `BEQ`.
 pub const BEQ: MOpcode = MOpcode(0x50);
 /// Public API for `BNE`.

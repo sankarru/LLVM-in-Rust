@@ -122,9 +122,10 @@ fn compile_and_run_ours_exit_code(src: &str) -> Option<i32> {
     let mut result = allocate_registers(
         &intervals,
         &mf.allocatable_pregs,
+        &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
+    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
     apply_allocation(&mut mf, &result);
 
     let mut emitter = X86Emitter::new(obj_format);

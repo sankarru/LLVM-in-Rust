@@ -166,6 +166,17 @@ pub const LOCK_OR_MR: MOpcode = MOpcode(0x95);
 /// operands[0]=ptr_preg, operands[1]=val_preg.
 pub const LOCK_XOR_MR: MOpcode = MOpcode(0x96);
 
+// ── non-promotable memory: alloca frame-slot addressing ───────────────────
+/// `lea dst, [rbp + offset]`  — materialize a frame-slot address.
+/// `dst` = VReg, `operands[0]` = `Imm(offset)` (signed, negative for below RBP).
+pub const LEA_FRAME_MR: MOpcode = MOpcode(0xA0);
+/// `mov dst, [ptr_reg]`  — 64-bit load through a register-held pointer.
+/// `dst` = VReg, `operands[0]` = PReg (pointer register).
+pub const MOV_LOAD_REG_MR: MOpcode = MOpcode(0xA1);
+/// `mov [ptr_reg], src`  — 64-bit store through a register-held pointer.
+/// `dst` = None, `operands[0]` = PReg (pointer register), `operands[1]` = PReg (value).
+pub const MOV_STORE_REG_RM: MOpcode = MOpcode(0xA2);
+
 // ── condition codes (used as Imm operands with JCC / SETCC) ────────────────
 /// Public API for `CC_EQ`.
 pub const CC_EQ: i64 = 0; // je  / jz

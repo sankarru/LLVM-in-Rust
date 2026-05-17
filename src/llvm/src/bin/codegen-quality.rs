@@ -102,9 +102,10 @@ fn compile_kernel(path: &Path, emit_dir: &Path) -> Result<KernelMetrics, String>
     let mut result = allocate_registers(
         &intervals,
         &mf.allocatable_pregs,
+        &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
+    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
     apply_allocation(&mut mf, &result);
 
     let machine_instructions: usize = mf.blocks.iter().map(|b| b.instrs.len()).sum();
