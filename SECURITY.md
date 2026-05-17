@@ -103,9 +103,9 @@ release. Please let us know your preferred credit attribution when you report.
 The following modules use `unsafe` Rust or perform low-level byte manipulation.
 They are particularly worth careful review when auditing the codebase:
 
-- **`llvm-jit/src/lib.rs`** — `mmap` + `mprotect` calls and function-pointer
-  transmutes for JIT-compiled code execution. Any bug here can lead to arbitrary
-  code execution in the host process.
+- **`src/llvm-jit/src/lib.rs`** — `mmap` + `mprotect` calls and function-pointer
+  transmutes for JIT-compiled code execution (added in the `llvm-in-rust-jit`
+  crate). Any bug here can lead to arbitrary code execution in the host process.
 - **`llvm-codegen/src/emit.rs`** — raw byte encoding of machine instructions
   into ELF/Mach-O/COFF object files. Incorrect encoding could produce object
   files with malformed sections or relocations.
