@@ -179,6 +179,18 @@ fn enc_j(imm: i32, rd: u8, opc: u32) -> u32 {
     (b20 << 31) | (b10_1 << 21) | (b11 << 20) | (b19_12 << 12) | ((rd as u32) << 7) | opc
 }
 
+/// Encode an A-extension AMO instruction (R4-type: funct5|aq|rl|rs2|rs1|funct3|rd|opcode=0x2F).
+fn enc_amo(funct5: u32, aq: bool, rl: bool, rs2: u32, rs1: u32, funct3: u32, rd: u32) -> u32 {
+    ((funct5 & 0x1F) << 27)
+        | ((aq as u32) << 26)
+        | ((rl as u32) << 25)
+        | ((rs2 & 0x1F) << 20)
+        | ((rs1 & 0x1F) << 15)
+        | ((funct3 & 0x7) << 12)
+        | ((rd & 0x1F) << 7)
+        | 0x2F
+}
+
 fn encode_instr(instr: &MInstr) -> u32 {
     let rd = instr.dst.map(reg_of_dst).unwrap_or(0);
     let rs1 = instr.operands.first().and_then(reg_of_op).unwrap_or(0);
@@ -239,6 +251,35 @@ fn encode_instr(instr: &MInstr) -> u32 {
 
         LUI => enc_u(imm_of_op(instr.operands.first()), rd, 0x37),
         AUIPC => enc_u(imm_of_op(instr.operands.first()), rd, 0x17),
+
+        // ── A-extension atomics ────────────────────────────────────────────
+        FENCE => 0x0FF0_000F, // fence iorw,iorw (seq_cst)
+
+        // LR.W / LR.D: rs2 = 0 (no second register operand)
+        LR_W => enc_amo(0b00010, true, true, 0, rs1 as u32, 0b010, rd as u32),
+        LR_D => enc_amo(0b00010, true, true, 0, rs1 as u32, 0b011, rd as u32),
+
+        // SC.W / SC.D: operands[0]=rs1(ptr), operands[1]=rs2(new value)
+        SC_W => enc_amo(0b00011, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+        SC_D => enc_amo(0b00011, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
+
+        // AMO word variants
+        AMOADD_W  => enc_amo(0b00000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+        AMOSWAP_W => enc_amo(0b00001, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+        AMOXOR_W  => enc_amo(0b00100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+        AMOAND_W  => enc_amo(0b01100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+        AMOOR_W   => enc_amo(0b01000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+        AMOMIN_W  => enc_amo(0b10000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+        AMOMAX_W  => enc_amo(0b10100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+        AMOMINU_W => enc_amo(0b11000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+        AMOMAXU_W => enc_amo(0b11100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+
+        // AMO doubleword variants
+        AMOADD_D  => enc_amo(0b00000, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
+        AMOSWAP_D => enc_amo(0b00001, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
+        AMOXOR_D  => enc_amo(0b00100, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
+        AMOAND_D  => enc_amo(0b01100, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
+        AMOOR_D   => enc_amo(0b01000, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
 
         _ => panic!("unsupported RISC-V opcode {:?}", instr.opcode),
     }
@@ -449,5 +490,125 @@ mod tests {
     #[should_panic(expected = "unsupported RISC-V opcode")]
     fn enc_unknown_opcode_panics() {
         let _ = encode_instr(&MInstr::new(llvm_codegen::isel::MOpcode(0xFFFF)));
+    }
+
+    // ── A-extension encoding tests ─────────────────────────────────────────
+
+    #[test]
+    fn enc_fence_iorw() {
+        let mi = MInstr::new(FENCE);
+        assert_eq!(encode_instr(&mi), 0x0FF0_000F);
+    }
+
+    #[test]
+    fn enc_amo_amoadd_w() {
+        // amoadd.w.aqrl rd=x1, rs2=x2, (rs1=x3)
+        let mi = MInstr::new(AMOADD_W).with_dst(VReg(1)).with_preg(PReg(3)).with_preg(PReg(2));
+        let expected = enc_amo(0b00000, true, true, 2, 3, 0b010, 1);
+        assert_eq!(encode_instr(&mi), expected, "amoadd.w encoding mismatch");
+    }
+
+    #[test]
+    fn enc_amo_lr_w() {
+        // lr.w.aqrl rd=x5, (rs1=x1); rs2 must be 0
+        let mi = MInstr::new(LR_W).with_dst(VReg(5)).with_preg(PReg(1));
+        let expected = enc_amo(0b00010, true, true, 0, 1, 0b010, 5);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_sc_w() {
+        // sc.w.aqrl rd=x1, rs2=x2, (rs1=x3)
+        let mi = MInstr::new(SC_W).with_dst(VReg(1)).with_preg(PReg(3)).with_preg(PReg(2));
+        let expected = enc_amo(0b00011, true, true, 2, 3, 0b010, 1);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_amoswap_d() {
+        // amoswap.d.aqrl rd=x1, rs2=x3, (rs1=x2) — 64-bit variant
+        let mi = MInstr::new(AMOSWAP_D).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+        let expected = enc_amo(0b00001, true, true, 3, 2, 0b011, 1);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_amoxor_w() {
+        let mi = MInstr::new(AMOXOR_W).with_dst(VReg(2)).with_preg(PReg(4)).with_preg(PReg(5));
+        let expected = enc_amo(0b00100, true, true, 5, 4, 0b010, 2);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_amoand_w() {
+        let mi = MInstr::new(AMOAND_W).with_dst(VReg(3)).with_preg(PReg(1)).with_preg(PReg(2));
+        let expected = enc_amo(0b01100, true, true, 2, 1, 0b010, 3);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_amoor_w() {
+        let mi = MInstr::new(AMOOR_W).with_dst(VReg(4)).with_preg(PReg(5)).with_preg(PReg(6));
+        let expected = enc_amo(0b01000, true, true, 6, 5, 0b010, 4);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_amomin_w() {
+        let mi = MInstr::new(AMOMIN_W).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+        let expected = enc_amo(0b10000, true, true, 3, 2, 0b010, 1);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_amomax_w() {
+        let mi = MInstr::new(AMOMAX_W).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+        let expected = enc_amo(0b10100, true, true, 3, 2, 0b010, 1);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_amominu_w() {
+        let mi = MInstr::new(AMOMINU_W).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+        let expected = enc_amo(0b11000, true, true, 3, 2, 0b010, 1);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_amomaxu_w() {
+        let mi = MInstr::new(AMOMAXU_W).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+        let expected = enc_amo(0b11100, true, true, 3, 2, 0b010, 1);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_lr_d() {
+        let mi = MInstr::new(LR_D).with_dst(VReg(5)).with_preg(PReg(1));
+        let expected = enc_amo(0b00010, true, true, 0, 1, 0b011, 5);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_sc_d() {
+        let mi = MInstr::new(SC_D).with_dst(VReg(1)).with_preg(PReg(3)).with_preg(PReg(2));
+        let expected = enc_amo(0b00011, true, true, 2, 3, 0b011, 1);
+        assert_eq!(encode_instr(&mi), expected);
+    }
+
+    #[test]
+    fn enc_amo_opcode_field() {
+        // All AMO instructions must have opcode bits [6:0] = 0x2F
+        let opcodes = [
+            FENCE, LR_W, SC_W, AMOADD_W, AMOSWAP_W, AMOXOR_W, AMOAND_W,
+            AMOOR_W, AMOMIN_W, AMOMAX_W, AMOMINU_W, AMOMAXU_W,
+            LR_D, SC_D, AMOADD_D, AMOSWAP_D, AMOXOR_D, AMOAND_D, AMOOR_D,
+        ];
+        // FENCE is not an AMO instruction; skip it in this check
+        let amo_opcodes = &opcodes[1..]; // skip FENCE
+        for &op in amo_opcodes {
+            let mi = MInstr::new(op).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+            let word = encode_instr(&mi);
+            assert_eq!(word & 0x7F, 0x2F, "opcode 0x{:X} should have AMO opcode 0x2F in bits[6:0], got 0x{:X}", op.0, word & 0x7F);
+        }
     }
 }
