@@ -266,4 +266,191 @@ mod tests {
             panic!("expected InvalidMagic error");
         }
     }
+
+    // ── globals round-trip tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_globals_round_trip_no_init() {
+        use llvm_ir::GlobalVariable;
+        let ctx = Context::new();
+        let mut module = Module::new("test");
+        module.add_global(GlobalVariable {
+            name: "x".into(),
+            ty: ctx.i32_ty,
+            initializer: None,
+            is_constant: false,
+            linkage: Linkage::External,
+        });
+        let bytes = write_bitcode(&ctx, &module);
+        let (ctx2, module2) = read_bitcode(&bytes).expect("round-trip failed");
+        assert_eq!(module2.globals.len(), 1);
+        let gv = &module2.globals[0];
+        assert_eq!(gv.name, "x");
+        assert_eq!(gv.ty, ctx2.i32_ty);
+        assert!(!gv.is_constant);
+        assert_eq!(gv.linkage, Linkage::External);
+        assert!(gv.initializer.is_none());
+    }
+
+    #[test]
+    fn test_globals_round_trip_with_int_init() {
+        use llvm_ir::{ConstantData, GlobalVariable};
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let init = ctx.push_const(ConstantData::Int {
+            ty: ctx.i32_ty,
+            val: 42,
+        });
+        module.add_global(GlobalVariable {
+            name: "answer".into(),
+            ty: ctx.i32_ty,
+            initializer: Some(init),
+            is_constant: true,
+            linkage: Linkage::Internal,
+        });
+        let bytes = write_bitcode(&ctx, &module);
+        let (ctx2, module2) = read_bitcode(&bytes).expect("round-trip failed");
+        assert_eq!(module2.globals.len(), 1);
+        let gv = &module2.globals[0];
+        assert_eq!(gv.name, "answer");
+        assert_eq!(gv.ty, ctx2.i32_ty);
+        assert!(gv.is_constant);
+        assert_eq!(gv.linkage, Linkage::Internal);
+        let init_cid = gv.initializer.expect("initializer must be present");
+        match ctx2.get_const(init_cid) {
+            ConstantData::Int { val, .. } => assert_eq!(*val, 42),
+            other => panic!("expected Int constant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_globals_round_trip_constant_array() {
+        use llvm_ir::{ConstantData, GlobalVariable};
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        // Build [i32 1, i32 2, i32 3].
+        let e0 = ctx.push_const(ConstantData::Int { ty: ctx.i32_ty, val: 1 });
+        let e1 = ctx.push_const(ConstantData::Int { ty: ctx.i32_ty, val: 2 });
+        let e2 = ctx.push_const(ConstantData::Int { ty: ctx.i32_ty, val: 3 });
+        let arr_ty = ctx.mk_array(ctx.i32_ty, 3);
+        let init = ctx.push_const(ConstantData::Array {
+            ty: arr_ty,
+            elements: vec![e0, e1, e2],
+        });
+        module.add_global(GlobalVariable {
+            name: "arr".into(),
+            ty: arr_ty,
+            initializer: Some(init),
+            is_constant: true,
+            linkage: Linkage::External,
+        });
+        let bytes = write_bitcode(&ctx, &module);
+        let (ctx2, module2) = read_bitcode(&bytes).expect("round-trip failed");
+        assert_eq!(module2.globals.len(), 1);
+        let gv = &module2.globals[0];
+        assert_eq!(gv.name, "arr");
+        assert!(gv.is_constant);
+        let init_cid = gv.initializer.expect("initializer must be present");
+        match ctx2.get_const(init_cid) {
+            ConstantData::Array { elements, .. } => {
+                assert_eq!(elements.len(), 3);
+                // Check element values survive.
+                for (expected, &elem_cid) in [1u64, 2, 3].iter().zip(elements.iter()) {
+                    match ctx2.get_const(elem_cid) {
+                        ConstantData::Int { val, .. } => assert_eq!(*val, *expected),
+                        other => panic!("expected Int, got {other:?}"),
+                    }
+                }
+            }
+            other => panic!("expected Array constant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_globals_round_trip_preserves_linkage() {
+        use llvm_ir::GlobalVariable;
+        let ctx = Context::new();
+        let mut module = Module::new("test");
+        module.add_global(GlobalVariable {
+            name: "sym".into(),
+            ty: ctx.i32_ty,
+            initializer: None,
+            is_constant: false,
+            linkage: Linkage::Internal,
+        });
+        let bytes = write_bitcode(&ctx, &module);
+        let (_, module2) = read_bitcode(&bytes).expect("round-trip failed");
+        assert_eq!(module2.globals.len(), 1);
+        assert_eq!(module2.globals[0].linkage, Linkage::Internal);
+        assert_eq!(module2.globals[0].name, "sym");
+    }
+
+    #[test]
+    fn test_globals_round_trip_with_expr_init() {
+        use llvm_ir::{ConstantData, ConstExprOp, GlobalId, GlobalVariable};
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        // Declare an i8 array global first (GlobalId(0)).
+        let i8_ty = ctx.mk_int(8);
+        let arr_ty = ctx.mk_array(i8_ty, 4);
+        let e0 = ctx.push_const(ConstantData::Int { ty: i8_ty, val: b'h' as u64 });
+        let e1 = ctx.push_const(ConstantData::Int { ty: i8_ty, val: b'i' as u64 });
+        let e2 = ctx.push_const(ConstantData::Int { ty: i8_ty, val: 0 });
+        let e3 = ctx.push_const(ConstantData::Int { ty: i8_ty, val: 0 });
+        let arr_init = ctx.push_const(ConstantData::Array {
+            ty: arr_ty,
+            elements: vec![e0, e1, e2, e3],
+        });
+        let gid0 = module.add_global(GlobalVariable {
+            name: "str_data".into(),
+            ty: arr_ty,
+            initializer: Some(arr_init),
+            is_constant: true,
+            linkage: Linkage::Private,
+        });
+        // Now create a constexpr getelementptr pointing to GlobalId(0).
+        let base_ptr = ctx.push_const(ConstantData::GlobalRef {
+            ty: ctx.ptr_ty,
+            id: gid0,
+            name: "str_data".into(),
+        });
+        let idx0 = ctx.push_const(ConstantData::Int { ty: ctx.i64_ty, val: 0 });
+        let gep_expr = ctx.push_const(ConstantData::Expr {
+            ty: ctx.ptr_ty,
+            op: ConstExprOp::GetElementPtr { inbounds: true, base_ty: arr_ty },
+            operands: vec![base_ptr, idx0, idx0],
+        });
+        // Second global: a pointer initialized with the GEP expression.
+        module.add_global(GlobalVariable {
+            name: "str_ptr".into(),
+            ty: ctx.ptr_ty,
+            initializer: Some(gep_expr),
+            is_constant: false,
+            linkage: Linkage::External,
+        });
+        let bytes = write_bitcode(&ctx, &module);
+        let (ctx2, module2) = read_bitcode(&bytes).expect("round-trip failed");
+        assert_eq!(module2.globals.len(), 2);
+        // Check GlobalRef survived.
+        let str_ptr = &module2.globals[1];
+        assert_eq!(str_ptr.name, "str_ptr");
+        let expr_cid = str_ptr.initializer.expect("must have initializer");
+        match ctx2.get_const(expr_cid) {
+            ConstantData::Expr { op, operands, .. } => {
+                assert!(
+                    matches!(op, ConstExprOp::GetElementPtr { inbounds: true, .. }),
+                    "must be inbounds GEP"
+                );
+                // First operand must be a GlobalRef pointing back to GlobalId(0).
+                match ctx2.get_const(operands[0]) {
+                    ConstantData::GlobalRef { id, name, .. } => {
+                        assert_eq!(*id, GlobalId(0));
+                        assert_eq!(name, "str_data");
+                    }
+                    other => panic!("expected GlobalRef, got {other:?}"),
+                }
+            }
+            other => panic!("expected Expr constant, got {other:?}"),
+        }
+    }
 }

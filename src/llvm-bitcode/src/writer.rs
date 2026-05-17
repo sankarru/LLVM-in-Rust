@@ -22,8 +22,8 @@
 //! Optional strings use a 0 length to mean "absent".
 
 use llvm_ir::{
-    BasicBlock, ConstantData, Context, FloatKind, Function, InstrKind, Instruction, Module,
-    TypeData, ValueRef,
+    BasicBlock, ConstantData, Context, FloatKind, Function, GlobalVariable, InstrKind, Instruction,
+    Module, TypeData, ValueRef,
 };
 
 /// Serialize `(ctx, module)` into the LRIR binary format.
@@ -49,6 +49,12 @@ pub fn write_bitcode(ctx: &Context, module: &Module) -> Vec<u8> {
     w.u32(const_count);
     for cd in &ctx.constants {
         encode_const(&mut w, cd);
+    }
+
+    // ── globals ──────────────────────────────────────────────────────────────
+    w.u32(module.globals.len() as u32);
+    for gv in &module.globals {
+        encode_global(&mut w, gv);
     }
 
     // ── module header ──────────────────────────────────────────────────────
@@ -340,6 +346,34 @@ mod linkage_tag {
     pub const COMMON: u8 = 7;
     /// Public API for `AVAILABLE_EXTERNALLY`.
     pub const AVAILABLE_EXTERNALLY: u8 = 8;
+}
+
+fn encode_global(w: &mut Writer, gv: &GlobalVariable) {
+    w.u32(gv.ty.0);
+    use llvm_ir::Linkage;
+    let ltag = match gv.linkage {
+        Linkage::Private => linkage_tag::PRIVATE,
+        Linkage::Internal => linkage_tag::INTERNAL,
+        Linkage::External => linkage_tag::EXTERNAL,
+        Linkage::Weak => linkage_tag::WEAK,
+        Linkage::WeakOdr => linkage_tag::WEAK_ODR,
+        Linkage::LinkOnce => linkage_tag::LINK_ONCE,
+        Linkage::LinkOnceOdr => linkage_tag::LINK_ONCE_ODR,
+        Linkage::Common => linkage_tag::COMMON,
+        Linkage::AvailableExternally => linkage_tag::AVAILABLE_EXTERNALLY,
+    };
+    w.u8(ltag);
+    w.u8(if gv.is_constant { 1 } else { 0 });
+    match gv.initializer {
+        Some(init) => {
+            w.u8(1);
+            w.u32(init.0);
+        }
+        None => {
+            w.u8(0);
+        }
+    }
+    w.string(&gv.name);
 }
 
 fn encode_function(w: &mut Writer, func: &Function) {
