@@ -523,6 +523,10 @@ fn roundtrip_fixture_50_bitwise_shifts() {
 fn roundtrip_fixture_51_cast_chain() {
     roundtrip_and_validate("51", include_str!("fixtures/51_cast_chain.ll"));
 }
+#[test]
+fn roundtrip_fixture_52_phi_back_edge() {
+    roundtrip_and_validate("52", include_str!("fixtures/52_phi_back_edge.ll"));
+}
 
 // ── Part 2 helpers ────────────────────────────────────────────────────────────
 
