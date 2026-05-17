@@ -111,7 +111,7 @@ fn emit_dbg_elf_obj_from_ir(src: &str, out: &Path) -> ObjectFile {
         .find(|f| !f.is_declaration)
         .expect("one definition must exist");
 
-    let mut backend = AArch64Backend;
+    let mut backend = AArch64Backend::default();
     let mut mf = backend.lower_function(&ctx, &module, func);
     let intervals = compute_live_intervals(&mf);
     let mut result = allocate_registers(

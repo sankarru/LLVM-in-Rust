@@ -100,7 +100,7 @@ fn emit_host_obj_aarch64(
         lower::AArch64Backend,
     };
 
-    let mut backend = AArch64Backend;
+    let mut backend = AArch64Backend::default();
     let mut mf = backend.lower_function(ctx, module, func);
     let intervals = compute_live_intervals(&mf);
     let mut result = allocate_registers(
