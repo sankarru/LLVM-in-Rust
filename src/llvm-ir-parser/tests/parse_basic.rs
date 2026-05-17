@@ -677,3 +677,113 @@ entry:
     assert_eq!(bb.body.len(), 1);
     assert_eq!(f.instr(bb.body[0]).kind.opcode(), "freeze");
 }
+
+// ---------------------------------------------------------------------------
+// Phi forward-reference tests (issue #253)
+// ---------------------------------------------------------------------------
+
+/// Named back-edge phi forward-reference: %i_next is defined AFTER the phi
+/// that references it.  The parser's staged_phi_patches / resolve_phi_patches
+/// mechanism must resolve it at end-of-function.
+#[test]
+fn parse_phi_named_back_edge_forward_ref() {
+    let src = r#"
+define i32 @counter(i32 %n) {
+entry:
+  br label %loop
+loop:
+  %i = phi i32 [ 0, %entry ], [ %i_next, %loop ]
+  %i_next = add i32 %i, 1
+  %done = icmp eq i32 %i_next, %n
+  br i1 %done, label %exit, label %loop
+exit:
+  ret i32 %i_next
+}
+"#;
+    let (_ctx, module) = parse(src).expect("phi back-edge forward-ref parse failed");
+    let f = &module.functions[0];
+    // Should have three blocks: entry, loop, exit.
+    assert_eq!(f.blocks.len(), 3);
+    // The loop block must contain the phi as its first body instruction.
+    let loop_block = f.blocks.iter().find(|b| b.name == "loop").expect("loop block");
+    let phi_instr = f.instr(loop_block.body[0]);
+    assert_eq!(phi_instr.kind.opcode(), "phi");
+    // Verify both incoming entries were parsed (entry and loop back-edge).
+    if let InstrKind::Phi { incoming, .. } = &phi_instr.kind {
+        assert_eq!(incoming.len(), 2, "expected 2 incoming edges in phi");
+    } else {
+        panic!("first loop body instruction is not a phi");
+    }
+}
+
+/// Multiple phi nodes with mutual back-edge forward references (adler32 pattern):
+/// %s1 and %s2 both reference values (%s1_next, %s2_next) defined later in %body.
+/// All four back-edge slots must be patched correctly.
+#[test]
+fn parse_phi_multiple_back_edges_adler32() {
+    let src = r#"
+define i32 @adler32_loop(ptr %buf, i32 %len) {
+entry:
+  %len64 = sext i32 %len to i64
+  br label %loop
+loop:
+  %i      = phi i64 [ 0, %entry ], [ %i_next,   %body ]
+  %s1     = phi i32 [ 1, %entry ], [ %s1_next,  %body ]
+  %s2     = phi i32 [ 0, %entry ], [ %s2_next,  %body ]
+  %cmp    = icmp slt i64 %i, %len64
+  br i1 %cmp, label %body, label %exit
+body:
+  %p      = getelementptr i8, ptr %buf, i64 %i
+  %byte   = load i8, ptr %p
+  %b32    = zext i8 %byte to i32
+  %s1_add = add i32 %s1, %b32
+  %s1_next = urem i32 %s1_add, 65521
+  %s2_add  = add i32 %s2, %s1_next
+  %s2_next = urem i32 %s2_add, 65521
+  %i_next  = add i64 %i, 1
+  br label %loop
+exit:
+  %sh = shl i32 %s2, 16
+  %r  = or i32 %sh, %s1
+  ret i32 %r
+}
+"#;
+    let (_ctx, module) = parse(src).expect("adler32 multi-phi parse failed");
+    let f = &module.functions[0];
+    assert_eq!(f.blocks.len(), 4, "expected entry, loop, body, exit — got {}", f.blocks.len());
+    let loop_block = f.blocks.iter().find(|b| b.name == "loop").expect("loop block");
+    // First three body instructions in loop are phi nodes.
+    assert!(loop_block.body.len() >= 3, "loop block should have at least 3 body instrs (3 phis)");
+    for idx in 0..3 {
+        let instr = f.instr(loop_block.body[idx]);
+        assert_eq!(
+            instr.kind.opcode(),
+            "phi",
+            "instruction {idx} in loop block should be phi, got {}",
+            instr.kind.opcode()
+        );
+        if let InstrKind::Phi { incoming, .. } = &instr.kind {
+            assert_eq!(incoming.len(), 2, "phi {idx} should have 2 incoming edges");
+        }
+    }
+}
+
+/// An undefined local name that appears as a phi incoming value and is never
+/// defined anywhere in the function must produce a clear parse error from
+/// `resolve_phi_patches` at end-of-function.
+#[test]
+fn parse_phi_undefined_local_produces_error() {
+    let src = r#"define i32 @f() {
+entry:
+  %v = phi i32 [ %undef_val, %entry ]
+  ret i32 %v
+}"#;
+    match parse(src) {
+        Err(err) => assert!(
+            err.message.contains("undefined local value"),
+            "expected 'undefined local value' in error message, got: {}",
+            err.message
+        ),
+        Ok(_) => panic!("expected parse error for undefined phi forward-ref, but parse succeeded"),
+    }
+}

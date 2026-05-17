@@ -1,25 +1,18 @@
-; Loop using alloca/load/store (like clang -O0) to avoid forward-reference
-; phi nodes, which our single-pass parser does not support.
+; Loop using SSA phi nodes with back-edge forward references.
+; The parser's staged_phi_patches / pending_phi_patches / resolve_phi_patches
+; mechanism resolves %i_next and %acc_next after the full function body is seen.
 define i64 @sum_n(i64 %n) {
 entry:
-  %acc = alloca i64
-  %i   = alloca i64
-  store i64 0, ptr %acc
-  store i64 0, ptr %i
   br label %loop
 loop:
-  %iv   = load i64, ptr %i
-  %done = icmp sge i64 %iv, %n
+  %i   = phi i64 [ 0, %entry ], [ %i_next, %body ]
+  %acc = phi i64 [ 0, %entry ], [ %acc_next, %body ]
+  %done = icmp sge i64 %i, %n
   br i1 %done, label %exit, label %body
 body:
-  %iv2  = load i64, ptr %i
-  %accv = load i64, ptr %acc
-  %nacc = add i64 %accv, %iv2
-  store i64 %nacc, ptr %acc
-  %inc  = add i64 %iv2, 1
-  store i64 %inc, ptr %i
+  %acc_next = add i64 %acc, %i
+  %i_next   = add i64 %i, 1
   br label %loop
 exit:
-  %ret = load i64, ptr %acc
-  ret i64 %ret
+  ret i64 %acc
 }
