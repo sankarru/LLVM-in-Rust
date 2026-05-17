@@ -81,6 +81,8 @@ Draft  -->  Review (min 7 days)  -->  FCP (3 days)  -->  Accepted / Rejected
 3. Fill in every section of the template.  Leave the number as `0000` — a
    maintainer will assign the final number before merging.
 4. Open a PR against `main` targeting only `docs/rfcs/`.
+   > **Tip**: append `?template=rfc.md` to the PR creation URL so GitHub
+   > pre-loads the RFC PR checklist from `.github/PULL_REQUEST_TEMPLATE/rfc.md`.
 5. Add the `rfc` label to the PR.
 6. Post a link to the PR in the relevant issue (if one exists).
 
@@ -90,7 +92,7 @@ Draft  -->  Review (min 7 days)  -->  FCP (3 days)  -->  Accepted / Rejected
 
 Any maintainer can approve an RFC by posting `r+ fcp` to start the Final
 Comment Period, and can merge the RFC PR after FCP concludes.  Maintainers are
-listed in [AGENTS.md](../../AGENTS.md).
+GitHub org owners of the `yudongusa/LLVM-in-Rust` repository.
 
 Implementors are encouraged to volunteer to implement accepted RFCs by claiming
 the tracking issue.
