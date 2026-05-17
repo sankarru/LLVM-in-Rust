@@ -154,8 +154,14 @@ pub fn compute_live_intervals(mf: &MachineFunction) -> Vec<LiveInterval> {
                         .collect();
 
                     for (vr, (s, e)) in map.iter_mut() {
+                        // A VReg is "live at the start of block B" iff it was
+                        // defined strictly before B (s < to_start) and its
+                        // interval extends past B's start (e > to_start).
+                        // Using strict "<" avoids flagging VRegs first defined
+                        // inside block B (e.g. constant materializations at
+                        // the first instruction of the loop header).
                         if !defined_in_from.contains(vr)
-                            && *s <= to_start
+                            && *s < to_start
                             && *e > to_start
                             && *e < from_end
                         {
