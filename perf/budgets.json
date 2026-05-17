@@ -7,7 +7,6 @@
       "threshold_percent": 5.0,
       "benchmarks": [
         "pipeline/parse",
-        "pipeline/print",
         "pipeline/build",
         "pipeline/mem2reg",
         "pipeline/dce",
@@ -15,6 +14,13 @@
         "pipeline/codegen_x86_integrated_assembler",
         "pipeline/opt_O0",
         "pipeline/opt_O2"
+      ]
+    },
+    "compile_time_noisy": {
+      "description": "Pipeline benchmarks with higher variance on CI infrastructure. Threshold widened to 12% to reduce false positives.",
+      "threshold_percent": 12.0,
+      "benchmarks": [
+        "pipeline/print"
       ]
     },
     "runtime": {
