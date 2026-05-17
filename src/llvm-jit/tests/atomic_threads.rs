@@ -43,6 +43,31 @@ entry:
 
     // ── tests ────────────────────────────────────────────────────────────────
 
+    /// Single-threaded correctness check: one call must add exactly 1.
+    ///
+    /// Confirms the JIT-compiled `atomicrmw add i32` uses a 32-bit LOCK XADD
+    /// (no REX.W) so that exactly 4 bytes are read/written — preventing the
+    /// bug where REX.W made it a 64-bit operation and read adjacent memory.
+    #[test]
+    fn single_threaded_increment_correctness() {
+        let jit = build_jit();
+        let ptr = jit.get_function_ptr("increment").expect("symbol not found");
+        let counter = Arc::new(AtomicI32::new(0));
+        let ctr_ptr = counter.as_ref() as *const AtomicI32 as *mut i32;
+        // SAFETY: ptr points to JIT-compiled x86-64 `void @increment(ptr %ctr)`.
+        let f: fn(*mut i32) = unsafe { std::mem::transmute(ptr) };
+        f(ctr_ptr);
+        assert_eq!(counter.load(Ordering::SeqCst), 1, "single call should increment by 1");
+        for _ in 0..999 {
+            f(ctr_ptr);
+        }
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1000,
+            "1000 sequential calls should increment by 1000"
+        );
+    }
+
     /// Two threads each call `increment` N times; final counter must equal 2 × N.
     ///
     /// Verifies that the JIT-compiled `atomicrmw add seq_cst` produces a real
