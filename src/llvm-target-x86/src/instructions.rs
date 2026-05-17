@@ -147,9 +147,12 @@ pub const MFENCE: MOpcode = MOpcode(0x90);
 /// `lock cmpxchg [ptr], new_val` — compare-and-swap (F0 REX.W 0F B1 /r).
 /// operands[0]=ptr_preg, operands[1]=RAX (comparand, pre-loaded), operands[2]=new_val_preg.
 pub const LOCK_CMPXCHG_MR: MOpcode = MOpcode(0x91);
-/// `lock xadd [ptr], val` — atomic exchange-add (F0 REX.W 0F C1 /r).
+/// `lock xadd [ptr], val` — atomic exchange-add, 64-bit (F0 REX.W 0F C1 /r).
 /// operands[0]=ptr_preg, operands[1]=val_preg; old value returned in val_preg.
 pub const LOCK_XADD_MR: MOpcode = MOpcode(0x92);
+/// `lock xadd [ptr], val` — atomic exchange-add, 32-bit (F0 [REX] 0F C1 /r, no REX.W).
+/// operands[0]=ptr_preg, operands[1]=val_preg; old value returned in val_preg.
+pub const LOCK_XADD32_MR: MOpcode = MOpcode(0x9A);
 /// `xchg [ptr], val` — atomic exchange, implicitly LOCK (REX.W 87 /r).
 /// operands[0]=ptr_preg, operands[1]=val_preg; old value returned in val_preg.
 pub const XCHG_MR: MOpcode = MOpcode(0x93);

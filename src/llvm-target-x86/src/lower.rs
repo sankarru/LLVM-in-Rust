@@ -851,8 +851,13 @@ fn lower_instr(
             use llvm_ir::RmwOp;
             let ptr_vr = res!(*ptr);
             let val_vr = res!(*val);
+            // Use 32-bit opcodes (no REX.W) when the element type is narrower than 64 bits.
+            // `instr.ty` is the element type of the atomicrmw (e.g. i32).
+            let is_64bit = instr.ty == ctx.i64_ty;
             let (opcode, result_in_val) = match op {
-                RmwOp::Add | RmwOp::Sub => (LOCK_XADD_MR, true),
+                RmwOp::Add | RmwOp::Sub => {
+                    if is_64bit { (LOCK_XADD_MR, true) } else { (LOCK_XADD32_MR, true) }
+                }
                 RmwOp::Xchg => (XCHG_MR, true),
                 RmwOp::And | RmwOp::Nand => (LOCK_AND_MR, false),
                 RmwOp::Or => (LOCK_OR_MR, false),
@@ -1199,7 +1204,12 @@ mod tests {
     use crate::encode::X86Emitter;
     use llvm_codegen::emit::{Emitter, ObjectFormat};
     use llvm_codegen::isel::MOperand;
-    use llvm_ir::{Builder, ConstantData, Context, GlobalId, Linkage, Module, ValueRef};
+    use llvm_codegen::regalloc::{
+        allocate_registers, apply_allocation, compute_live_intervals, insert_spill_reloads,
+        RegAllocStrategy,
+    };
+    use llvm_ir::{Builder, ConstantData, Context, GlobalId, Linkage, MemOrdering, Module,
+                  RmwOp, ValueRef};
 
     fn make_add_fn() -> (Context, Module) {
         let mut ctx = Context::new();
@@ -1347,12 +1357,13 @@ mod tests {
             .any(|i| i.opcode == LOCK_CMPXCHG_MR);
         assert!(has_cmpxchg, "CmpXchg must lower to LOCK_CMPXCHG_MR opcode");
 
+        // i32 atomicrmw add → 32-bit LOCK_XADD32_MR (no REX.W).
         let has_xadd = mf
             .blocks
             .iter()
             .flat_map(|b| &b.instrs)
-            .any(|i| i.opcode == LOCK_XADD_MR);
-        assert!(has_xadd, "AtomicRmw Add must lower to LOCK_XADD_MR opcode");
+            .any(|i| i.opcode == LOCK_XADD32_MR);
+        assert!(has_xadd, "i32 AtomicRmw Add must lower to LOCK_XADD32_MR opcode");
 
         // No INLINE_ASM should appear for atomic ops anymore.
         let inline_asm_count = mf
@@ -2238,6 +2249,124 @@ mod tests {
                 .flat_map(|b| &b.instrs)
                 .all(|i| i.opcode != PADDD_RR),
             "without AVX-512F, <16 x i32> should avoid AVX-512-gated SIMD opcode path"
+        );
+    }
+
+    /// Diagnostic test: build `void @increment(ptr %ctr)` — atomicrmw add ptr %ctr, i32 1 —
+    /// run the full pipeline (lower → regalloc → apply_allocation → emit_object), then
+    /// inspect the bytes of the text section.
+    ///
+    /// Regression test for two bugs:
+    /// 1. LOCK XADD must be present (val_reg must survive regalloc with a real PReg).
+    /// 2. For i32 atomicrmw, LOCK XADD32 (no REX.W) must be emitted — not the 64-bit
+    ///    LOCK XADD (REX.W), which reads 8 bytes from the counter and causes the
+    ///    multithreaded counter to accumulate 249500 instead of 1000.
+    #[test]
+    fn atomics_increment_full_pipeline_emits_lock_xadd() {
+        // Build `void @increment(ptr %ctr) { %old = atomicrmw add ptr %ctr, i32 1 seq_cst; ret void }`
+        let mut ctx = Context::new();
+        let mut module = Module::new("increment_test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "increment",
+            b.ctx.void_ty,
+            vec![b.ctx.ptr_ty],
+            vec!["ctr".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let ptr_arg = b.get_arg(0);
+        let i32_ty = b.ctx.i32_ty;
+        let one = b.const_int(i32_ty, 1);
+        b.build_atomicrmw("old", RmwOp::Add, i32_ty, ptr_arg, one, MemOrdering::SeqCst, false);
+        b.build_ret_void();
+        drop(b);
+
+        // Lower
+        let mut be = X86Backend::new(TargetFeatures::baseline());
+        let mut mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        // i32 atomicrmw add must lower to LOCK_XADD32_MR (32-bit, no REX.W).
+        let has_xadd32 = mf
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .any(|i| i.opcode == LOCK_XADD32_MR);
+        assert!(has_xadd32, "i32 atomicrmw add must lower to LOCK_XADD32_MR (not LOCK_XADD_MR)");
+
+        // Must NOT use the 64-bit opcode for an i32 element type.
+        let has_xadd64 = mf
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .any(|i| i.opcode == LOCK_XADD_MR);
+        assert!(!has_xadd64, "i32 atomicrmw must not emit the 64-bit LOCK_XADD_MR opcode");
+
+        // Run register allocation
+        let intervals = compute_live_intervals(&mf);
+        let mut result = allocate_registers(
+            &intervals,
+            &mf.allocatable_pregs,
+            RegAllocStrategy::LinearScan,
+        );
+        insert_spill_reloads(
+            &mut mf,
+            &mut result,
+            crate::instructions::MOV_LOAD_MR,
+            crate::instructions::MOV_STORE_RM,
+        );
+        apply_allocation(&mut mf, &result);
+
+        // Emit the function to bytes
+        let mut emitter = X86Emitter::new(ObjectFormat::Elf);
+        let section = emitter.emit_function(&mf);
+
+        // Print the bytes for diagnosis
+        eprintln!("increment text section bytes ({} bytes):", section.data.len());
+        for (i, chunk) in section.data.chunks(16).enumerate() {
+            eprint!("  {:04x}: ", i * 16);
+            for b in chunk {
+                eprint!("{b:02X} ");
+            }
+            eprintln!();
+        }
+
+        // LOCK prefix (F0) must be present — the XADD must have been emitted
+        assert!(
+            section.data.contains(&0xF0),
+            "LOCK prefix (0xF0) not found — LOCK XADD was not emitted (got NOP instead). \
+             This means preg_at(instr, 0) or preg_at(instr, 1) returned None after regalloc. \
+             bytes: {:02X?}",
+            section.data,
+        );
+
+        // For i32 atomicrmw: LOCK XADD32 = F0 [no REX.W] 0F C1 /r.
+        // With typical registers (RAX/RCX/RDX — not R8-R15), no REX byte is emitted.
+        // Check that 0xF0 0x0F 0xC1 appears (no REX.W = 0x48 between F0 and 0F).
+        let has_32bit_lock_xadd = section
+            .data
+            .windows(3)
+            .any(|w| w == [0xF0, 0x0F, 0xC1]);
+        assert!(
+            has_32bit_lock_xadd,
+            "32-bit LOCK XADD sequence F0 0F C1 not found in emitted bytes — \
+             did REX.W (0x48) sneak in between F0 and 0F? \
+             bytes: {:02X?}",
+            section.data,
+        );
+
+        // Double-check: 64-bit sequence F0 48 0F C1 must NOT appear.
+        let has_64bit_lock_xadd = section
+            .data
+            .windows(4)
+            .any(|w| w == [0xF0, 0x48, 0x0F, 0xC1]);
+        assert!(
+            !has_64bit_lock_xadd,
+            "64-bit LOCK XADD sequence F0 48 0F C1 must not appear for i32 atomicrmw. \
+             bytes: {:02X?}",
+            section.data,
         );
     }
 }

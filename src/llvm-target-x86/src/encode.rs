@@ -260,6 +260,18 @@ fn rex_mem(ctx: &mut EncodeCtx, val_reg: PReg, ptr_reg: PReg) {
     ctx.emit(rex);
 }
 
+/// Emit an optional REX prefix for 32-bit memory-operand instructions (no REX.W).
+/// Only emitted when at least one of val_reg or ptr_reg is an extended register (R8-R15).
+fn rex_mem32_opt(ctx: &mut EncodeCtx, val_reg: PReg, ptr_reg: PReg) {
+    let need_rex = is_extended(val_reg) || is_extended(ptr_reg);
+    if need_rex {
+        let rex = 0x40
+            | (if is_extended(val_reg) { 0x04 } else { 0 })
+            | (if is_extended(ptr_reg) { 0x01 } else { 0 });
+        ctx.emit(rex);
+    }
+}
+
 /// Extract the PReg at a given operand index.
 fn preg_at(instr: &MInstr, idx: usize) -> Option<PReg> {
     match instr.operands.get(idx) {
@@ -781,6 +793,20 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             if let (Some(ptr), Some(val)) = (preg_at(instr, 0), preg_at(instr, 1)) {
                 ctx.emit(0xF0);
                 rex_mem(ctx, val, ptr);
+                ctx.emit(0x0F);
+                ctx.emit(0xC1);
+                emit_mem_modrm(ctx, val, ptr);
+            } else {
+                ctx.emit(0x90);
+            }
+        }
+
+        // LOCK XADD [ptr], val  (F0 [REX] 0F C1 /r) — 32-bit, no REX.W
+        // operands[0]=ptr_preg, operands[1]=val_preg
+        LOCK_XADD32_MR => {
+            if let (Some(ptr), Some(val)) = (preg_at(instr, 0), preg_at(instr, 1)) {
+                ctx.emit(0xF0);
+                rex_mem32_opt(ctx, val, ptr);
                 ctx.emit(0x0F);
                 ctx.emit(0xC1);
                 emit_mem_modrm(ctx, val, ptr);
