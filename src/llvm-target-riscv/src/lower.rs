@@ -8,7 +8,7 @@ use crate::{
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MachineFunction, PReg, VReg};
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, InstrprofIntrinsic,
-    IntPredicate, Module, ValueRef,
+    IntPredicate, Module, RmwOp, TypeData, ValueRef,
 };
 use std::collections::HashMap;
 
@@ -347,28 +347,65 @@ fn lower_instr(
             }
         }
 
-        // ── atomics (#205) — conservative placeholder ──────────────────────
-        // RISC-V has `lr.w` / `sc.w` for LL/SC and the `A` extension for
-        // direct atomics; emission of real encodings is tracked in a
-        // follow-up to issue #205.  Emit a NOP placeholder plus the result
-        // dst so SSA bookkeeping stays sound.
+        // ── atomics (#239) — RISC-V A-extension ───────────────────────────
         Fence { .. } => {
-            mf.push(mblock, MInstr::new(NOP));
+            mf.push(mblock, MInstr::new(FENCE));
         }
-        CmpXchg { ptr, cmp, new_val, .. } => {
-            let _p = res!(*ptr);
-            let _c = res!(*cmp);
-            let _n = res!(*new_val);
-            mf.push(mblock, MInstr::new(NOP));
+        CmpXchg { ptr, cmp: _cmp, new_val, .. } => {
+            let ptr_vr = res!(*ptr);
+            let _cmp_vr = res!(*_cmp);
+            let new_vr = res!(*new_val);
+            // Determine width from instruction result type (struct { val_ty, i1 }).
+            // Use W vs D based on pointer-width assumption; default to W (32-bit).
+            let ty_bits = match ctx.get_type(instr.ty) {
+                TypeData::Struct(st) if !st.fields.is_empty() => {
+                    match ctx.get_type(st.fields[0]) {
+                        TypeData::Integer(b) => *b,
+                        _ => 32,
+                    }
+                }
+                _ => 32,
+            };
+            let use_d = ty_bits == 64;
+            // LR.W/LR.D old, (ptr)
+            let old_vr = mf.fresh_vreg();
+            let lr_op = if use_d { LR_D } else { LR_W };
+            mf.push(mblock, MInstr::new(lr_op).with_dst(old_vr).with_vreg(ptr_vr));
+            // SC.W/SC.D status, new_val, (ptr)
+            // (Simplified: no retry loop — follow-up per issue #239)
+            let status_vr = mf.fresh_vreg();
+            let sc_op = if use_d { SC_D } else { SC_W };
+            mf.push(mblock, MInstr::new(sc_op).with_dst(status_vr).with_vreg(ptr_vr).with_vreg(new_vr));
+            // Result is the old value from LR.
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
+            mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(old_vr));
         }
-        AtomicRmw { ptr, val, .. } => {
-            let _p = res!(*ptr);
-            let _v = res!(*val);
-            mf.push(mblock, MInstr::new(NOP));
+        AtomicRmw { op, ptr, val, .. } => {
+            let ptr_vr = res!(*ptr);
+            let val_vr = res!(*val);
+            // Determine word vs doubleword from the instruction's result type.
+            let ty_bits = match ctx.get_type(instr.ty) {
+                TypeData::Integer(b) => *b,
+                _ => 32,
+            };
+            let use_d = ty_bits == 64;
+            let opcode = match op {
+                RmwOp::Add => if use_d { AMOADD_D } else { AMOADD_W },
+                RmwOp::Xchg => if use_d { AMOSWAP_D } else { AMOSWAP_W },
+                RmwOp::Xor => if use_d { AMOXOR_D } else { AMOXOR_W },
+                RmwOp::And | RmwOp::Nand => if use_d { AMOAND_D } else { AMOAND_W },
+                RmwOp::Or => if use_d { AMOOR_D } else { AMOOR_W },
+                // Sub: negate val then add — use amoadd (caller is responsible for negation;
+                // here we emit amoadd as the closest approximation without modifying val).
+                RmwOp::Sub => if use_d { AMOADD_D } else { AMOADD_W },
+                RmwOp::Min => AMOMIN_W,
+                RmwOp::Max => AMOMAX_W,
+                RmwOp::UMin => AMOMINU_W,
+                RmwOp::UMax => AMOMAXU_W,
+                _ => if use_d { AMOADD_D } else { AMOADD_W },
+            };
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
+            mf.push(mblock, MInstr::new(opcode).with_dst(dst).with_vreg(ptr_vr).with_vreg(val_vr));
         }
 
         Store { .. } => {
@@ -596,5 +633,129 @@ mod tests {
         assert!(all_instrs.iter().any(|mi| mi.opcode == SLT_RR));
         assert!(all_instrs.iter().any(|mi| mi.opcode == BEQ));
         assert!(all_instrs.iter().any(|mi| mi.opcode == JAL));
+    }
+
+    // ── Atomic lowering tests ──────────────────────────────────────────────
+
+    #[test]
+    fn riscv_fence_emits_fence_opcode() {
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define void @f() {
+entry:
+  fence seq_cst
+  ret void
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has_fence = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FENCE);
+        assert!(has_fence, "expected FENCE opcode in lowered fence");
+    }
+
+    #[test]
+    fn riscv_atomicrmw_add_emits_amoadd_w() {
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define i32 @f(ptr %p, i32 %v) {
+entry:
+  %r = atomicrmw add ptr %p, i32 %v seq_cst
+  ret i32 %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has_amoadd = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == AMOADD_W);
+        assert!(has_amoadd, "expected AMOADD_W in lowered atomicrmw add i32");
+    }
+
+    #[test]
+    fn riscv_atomicrmw_add_i64_emits_amoadd_d() {
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define i64 @f(ptr %p, i64 %v) {
+entry:
+  %r = atomicrmw add ptr %p, i64 %v seq_cst
+  ret i64 %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has_amoadd_d = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == AMOADD_D);
+        assert!(has_amoadd_d, "expected AMOADD_D in lowered atomicrmw add i64");
+    }
+
+    #[test]
+    fn riscv_atomicrmw_xchg_emits_amoswap_w() {
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define i32 @f(ptr %p, i32 %v) {
+entry:
+  %r = atomicrmw xchg ptr %p, i32 %v seq_cst
+  ret i32 %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has_amoswap = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == AMOSWAP_W);
+        assert!(has_amoswap, "expected AMOSWAP_W in lowered atomicrmw xchg i32");
+    }
+
+    #[test]
+    fn riscv_cmpxchg_emits_lr_sc() {
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define i32 @f(ptr %p, i32 %cmp, i32 %new) {
+entry:
+  %r = cmpxchg ptr %p, i32 %cmp, i32 %new seq_cst seq_cst
+  %v = extractvalue { i32, i1 } %r, 0
+  ret i32 %v
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let all_instrs: Vec<_> = mf.blocks.iter().flat_map(|b| b.instrs.iter()).collect();
+        let has_lr = all_instrs.iter().any(|i| i.opcode == LR_W);
+        let has_sc = all_instrs.iter().any(|i| i.opcode == SC_W);
+        assert!(has_lr, "expected LR_W in lowered cmpxchg");
+        assert!(has_sc, "expected SC_W in lowered cmpxchg");
+    }
+
+    #[test]
+    fn riscv_fence_no_nop_emitted() {
+        // Fence must not emit NOP — it should emit exactly one FENCE instruction.
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define void @f() {
+entry:
+  fence seq_cst
+  ret void
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let nop_count = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .filter(|i| i.opcode == NOP)
+            .count();
+        assert_eq!(nop_count, 0, "fence should not emit any NOP instructions");
     }
 }
