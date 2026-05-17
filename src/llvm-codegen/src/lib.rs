@@ -20,7 +20,10 @@ pub use assembler::{
     McAssembler, McAssemblyReport,
 };
 /// Public API for `re-export`.
-pub use emit::{emit_object, Emitter, ObjectFile, ObjectFormat, Reloc, RelocKind, Section, Symbol};
+pub use emit::{
+    emit_globals, emit_object, sizeof_ty, Emitter, ObjectFile, ObjectFormat, Reloc, RelocKind,
+    Section, Symbol,
+};
 /// Public API for `re-export`.
 pub use isel::{IselBackend, MInstr, MOpcode, MOperand, MachineBlock, MachineFunction, PReg, VReg};
 /// Public API for `re-export`.
