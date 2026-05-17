@@ -14,6 +14,8 @@ pub use llvm_target_arm as target_arm;
 /// Public API for `re-export`.
 pub use llvm_target_riscv as target_riscv;
 /// Public API for `re-export`.
+pub use llvm_target_wasm as target_wasm;
+/// Public API for `re-export`.
 pub use llvm_target_x86 as target_x86;
 /// Public API for `re-export`.
 pub use llvm_transforms as transforms;

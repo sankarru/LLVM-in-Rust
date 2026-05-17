@@ -1,0 +1,21 @@
+[package]
+name = "llvm-in-rust-target-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+description = "WebAssembly (wasm32) target backend for LLVM-in-Rust code generation."
+repository = "https://github.com/yudongusa/LLVM-in-Rust"
+homepage = "https://github.com/yudongusa/LLVM-in-Rust"
+keywords = ["llvm", "compiler", "ir", "codegen", "rust"]
+categories = ["compilers", "development-tools"]
+
+[lib]
+name = "llvm_target_wasm"
+
+[dependencies]
+llvm-ir = { package = "llvm-in-rust-ir", version = "0.1.0", path = "../llvm-ir" }
+llvm-codegen = { package = "llvm-in-rust-codegen", version = "0.1.0", path = "../llvm-codegen" }
+llvm-analysis = { package = "llvm-in-rust-analysis", version = "0.1.0", path = "../llvm-analysis" }
+llvm-ir-parser = { package = "llvm-in-rust-ir-parser", version = "0.1.0", path = "../llvm-ir-parser" }
+llvm-transforms = { package = "llvm-in-rust-transforms", version = "0.1.0", path = "../llvm-transforms" }

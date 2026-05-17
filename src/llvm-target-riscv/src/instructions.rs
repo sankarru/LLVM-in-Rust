@@ -83,3 +83,46 @@ pub const RET: MOpcode = MOpcode(0x62);
 pub const LUI: MOpcode = MOpcode(0x70);
 /// Public API for `AUIPC`.
 pub const AUIPC: MOpcode = MOpcode(0x71);
+
+// ── A-extension atomics ────────────────────────────────────────────────────
+
+/// `fence iorw,iorw` (sequential consistency fence).
+pub const FENCE: MOpcode = MOpcode(0x80);
+/// `lr.w rd, (rs1)` — load-reserved word.
+pub const LR_W: MOpcode = MOpcode(0x81);
+/// `sc.w rd, rs2, (rs1)` — store-conditional word.
+pub const SC_W: MOpcode = MOpcode(0x82);
+/// `amoadd.w rd, rs2, (rs1)`.
+pub const AMOADD_W: MOpcode = MOpcode(0x83);
+/// `amoswap.w rd, rs2, (rs1)`.
+pub const AMOSWAP_W: MOpcode = MOpcode(0x84);
+/// `amoxor.w rd, rs2, (rs1)`.
+pub const AMOXOR_W: MOpcode = MOpcode(0x85);
+/// `amoand.w rd, rs2, (rs1)`.
+pub const AMOAND_W: MOpcode = MOpcode(0x86);
+/// `amoor.w rd, rs2, (rs1)`.
+pub const AMOOR_W: MOpcode = MOpcode(0x87);
+/// `amomin.w rd, rs2, (rs1)`.
+pub const AMOMIN_W: MOpcode = MOpcode(0x88);
+/// `amomax.w rd, rs2, (rs1)`.
+pub const AMOMAX_W: MOpcode = MOpcode(0x89);
+/// `amominu.w rd, rs2, (rs1)`.
+pub const AMOMINU_W: MOpcode = MOpcode(0x8A);
+/// `amomaxu.w rd, rs2, (rs1)`.
+pub const AMOMAXU_W: MOpcode = MOpcode(0x8B);
+
+// 64-bit (D) variants for RV64.
+/// `lr.d rd, (rs1)` — load-reserved doubleword.
+pub const LR_D: MOpcode = MOpcode(0x8C);
+/// `sc.d rd, rs2, (rs1)` — store-conditional doubleword.
+pub const SC_D: MOpcode = MOpcode(0x8D);
+/// `amoadd.d rd, rs2, (rs1)`.
+pub const AMOADD_D: MOpcode = MOpcode(0x8E);
+/// `amoswap.d rd, rs2, (rs1)`.
+pub const AMOSWAP_D: MOpcode = MOpcode(0x8F);
+/// `amoxor.d rd, rs2, (rs1)`.
+pub const AMOXOR_D: MOpcode = MOpcode(0x90);
+/// `amoand.d rd, rs2, (rs1)`.
+pub const AMOAND_D: MOpcode = MOpcode(0x91);
+/// `amoor.d rd, rs2, (rs1)`.
+pub const AMOOR_D: MOpcode = MOpcode(0x92);

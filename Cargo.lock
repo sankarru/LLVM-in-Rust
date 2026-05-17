@@ -460,6 +460,7 @@ dependencies = [
  "llvm-in-rust-jit",
  "llvm-in-rust-target-arm",
  "llvm-in-rust-target-riscv",
+ "llvm-in-rust-target-wasm",
  "llvm-in-rust-target-x86",
  "llvm-in-rust-transforms",
 ]
@@ -556,6 +557,17 @@ dependencies = [
 name = "llvm-in-rust-target-riscv"
 version = "0.1.0"
 dependencies = [
+ "llvm-in-rust-codegen",
+ "llvm-in-rust-ir",
+ "llvm-in-rust-ir-parser",
+ "llvm-in-rust-transforms",
+]
+
+[[package]]
+name = "llvm-in-rust-target-wasm"
+version = "0.1.0"
+dependencies = [
+ "llvm-in-rust-analysis",
  "llvm-in-rust-codegen",
  "llvm-in-rust-ir",
  "llvm-in-rust-ir-parser",

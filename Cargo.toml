@@ -10,6 +10,7 @@ members = [
     "src/llvm-target-x86",
     "src/llvm-target-arm",
     "src/llvm-target-riscv",
+    "src/llvm-target-wasm",
     "src/llvm-bitcode",
     "src/llvm",
     "src/llvm-bench",

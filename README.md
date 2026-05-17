@@ -728,6 +728,19 @@ llvm-target-x86 = { package = "llvm-in-rust-target-x86", path = "path/to/LLVM-in
 
 ---
 
+## RFC Process
+
+Breaking changes to the public API, IR semantics (`InstrKind`/`TypeData` variants),
+object-file format compatibility, or mandatory trait methods require an RFC before
+implementation.  An RFC is a short Markdown document that describes the motivation,
+the precise before/after API change, a migration guide, and alternatives considered.
+RFCs go through at least 7 days of open review followed by a 3-day Final Comment
+Period before a maintainer merges them.  See
+[`docs/rfcs/README.md`](docs/rfcs/README.md) for the full process, triggers, and
+submission instructions.
+
+---
+
 ## Contributing
 
 1. Fork the repository and create a feature branch.
@@ -736,6 +749,12 @@ llvm-target-x86 = { package = "llvm-in-rust-target-x86", path = "path/to/LLVM-in
 4. Open a pull request against `main`.
 
 Bug reports and feature requests go to the [issue tracker](https://github.com/yudongusa/LLVM-in-Rust/issues).
+
+---
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for how to report a vulnerability.
 
 ---
 

@@ -28,20 +28,8 @@ pub struct LiveInterval {
     pub end: usize,
 }
 
-/// Compute flat program-order starting positions for each block.
-fn block_starts(mf: &MachineFunction) -> Vec<usize> {
-    let mut starts = Vec::with_capacity(mf.blocks.len());
-    let mut pos = 0;
-    for b in &mf.blocks {
-        starts.push(pos);
-        pos += b.instrs.len();
-    }
-    starts
-}
-
 /// Build live intervals by scanning all instructions of `mf`.
 pub fn compute_live_intervals(mf: &MachineFunction) -> Vec<LiveInterval> {
-    let _ = block_starts(mf); // kept for potential future use
     let mut map: HashMap<VReg, (usize, usize)> = HashMap::new();
     let mut pos = 0usize;
 
@@ -70,6 +58,126 @@ pub fn compute_live_intervals(mf: &MachineFunction) -> Vec<LiveInterval> {
                 }
             }
             pos += 1;
+        }
+    }
+
+    // Extend live intervals across loop back-edges.
+    //
+    // A linear scan over the flat instruction sequence misses that values live
+    // at the top of a loop header must also stay allocated through any block
+    // that branches back to that header (the back-edge source).  Without this
+    // fix, the register holding a loop-invariant value (e.g. a function argument)
+    // can be reused inside a phi-destruction trampoline, corrupting the value on
+    // the next iteration.
+    //
+    // We detect true back-edges with an iterative DFS from block 0: an edge
+    // u→v is a back-edge iff v is "gray" (still on the DFS stack) when we visit
+    // the edge.  This correctly ignores forward edges from CondBr trampolines
+    // (which jump to lower-indexed blocks but are NOT loop back-edges).
+    //
+    // For each back-edge (J→B), we extend every VReg that is live at the start
+    // of B (defined strictly before B, s < to_start) through the end of J,
+    // unless the VReg is already redefined inside J (in which case its interval
+    // already covers J).  We iterate to a fixpoint.
+    //
+    // Implementation is deliberately allocation-light: the DFS is done inline
+    // without a pre-built adjacency list, and defined-in-J is checked with a
+    // small Vec rather than a HashSet.
+    {
+        let n = mf.blocks.len();
+
+        // Compute flat block-start positions and look for any backward branch
+        // in a single pass (avoids paying DFS cost for loop-free functions).
+        let mut blk_start: Vec<usize> = Vec::with_capacity(n);
+        let mut has_backward_branch = false;
+        let mut p = 0usize;
+        for (bi, b) in mf.blocks.iter().enumerate() {
+            blk_start.push(p);
+            for instr in &b.instrs {
+                for op in &instr.operands {
+                    if let MOperand::Block(t) = op {
+                        if *t < bi {
+                            has_backward_branch = true;
+                        }
+                    }
+                }
+            }
+            p += b.instrs.len();
+        }
+        let total = p;
+
+        if has_backward_branch {
+            // Iterative DFS without pre-building an adjacency list.
+            // Stack entries: (block, instr_idx, op_idx).
+            let mut color = vec![0u8; n];
+            let mut back_edges: Vec<(usize, usize)> = Vec::new();
+            let mut stack: Vec<(usize, usize, usize)> = Vec::with_capacity(n);
+            if n > 0 {
+                color[0] = 1;
+                stack.push((0, 0, 0));
+            }
+            'dfs: while let Some(&mut (u, ref mut ii, ref mut oi)) = stack.last_mut() {
+                let u = u;
+                let block = &mf.blocks[u];
+                // Advance through instructions looking for an unprocessed successor.
+                while *ii < block.instrs.len() {
+                    let instr = &block.instrs[*ii];
+                    while *oi < instr.operands.len() {
+                        let op_idx = *oi;
+                        *oi += 1;
+                        if let MOperand::Block(v) = instr.operands[op_idx] {
+                            if v < n {
+                                match color[v] {
+                                    1 => back_edges.push((u, v)),
+                                    0 => {
+                                        color[v] = 1;
+                                        stack.push((v, 0, 0));
+                                        continue 'dfs;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    *oi = 0;
+                    *ii += 1;
+                }
+                color[u] = 2;
+                stack.pop();
+            }
+
+            if !back_edges.is_empty() {
+                let mut changed = true;
+                while changed {
+                    changed = false;
+                    for &(from_bi, to_bi) in &back_edges {
+                        let from_end = blk_start.get(from_bi + 1).copied().unwrap_or(total);
+                        let to_start = blk_start[to_bi];
+
+                        // Collect VRegs defined in the back-edge source block J.
+                        // Use a small Vec: trampoline blocks have ≤ ~12 instructions.
+                        let defined_in_from: Vec<u32> = mf.blocks[from_bi]
+                            .instrs
+                            .iter()
+                            .filter_map(|mi| mi.dst.map(|vr| vr.0))
+                            .collect();
+
+                        for (vr, (s, e)) in map.iter_mut() {
+                            // Live at start of B: defined strictly before B AND
+                            // interval extends into B.  Strict "<" excludes VRegs
+                            // first materialized inside the loop header itself.
+                            if !defined_in_from.contains(&vr.0)
+                                && *s < to_start
+                                && *e > to_start
+                                && *e < from_end
+                            {
+                                *e = from_end;
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
