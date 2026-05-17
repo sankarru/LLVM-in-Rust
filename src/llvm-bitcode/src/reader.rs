@@ -4,8 +4,9 @@ use crate::error::BitcodeError;
 use llvm_ir::value::Argument;
 use llvm_ir::{
     ArgId, BasicBlock, BlockId, ConstId, ConstantData, Context, FastMathFlags, FloatKind,
-    FloatPredicate, Function, GlobalId, InstrId, InstrKind, Instruction, IntArithFlags,
-    IntPredicate, Linkage, MemOrdering, Module, RmwOp, TailCallKind, TypeData, TypeId, ValueRef,
+    FloatPredicate, Function, GlobalId, GlobalVariable, InstrId, InstrKind, Instruction,
+    IntArithFlags, IntPredicate, Linkage, MemOrdering, Module, RmwOp, TailCallKind,
+    TypeData, TypeId, ValueRef,
 };
 
 /// Magic bytes for the LRIR format.
@@ -52,9 +53,22 @@ pub fn read_bitcode(bytes: &[u8]) -> Result<(Context, Module), BitcodeError> {
         const_id_map.push(cid);
     }
 
+    // ── globals ──────────────────────────────────────────────────────────────
+    let global_count = r.u32()? as usize;
+    let mut globals_buf: Vec<GlobalVariable> = Vec::with_capacity(global_count);
+    for _ in 0..global_count {
+        let gv = decode_global(&mut r, &type_id_map, &const_id_map)?;
+        globals_buf.push(gv);
+    }
+
     // ── module header ──────────────────────────────────────────────────────
     let module_name = r.string()?;
     let mut module = Module::new(module_name);
+
+    // Add buffered globals.
+    for gv in globals_buf {
+        module.add_global(gv);
+    }
 
     // ── functions ──────────────────────────────────────────────────────────
     let func_count = r.u32()? as usize;
@@ -429,6 +443,31 @@ fn decode_linkage(tag: u8) -> Result<Linkage, BitcodeError> {
         linkage_tag::AVAILABLE_EXTERNALLY => Ok(Linkage::AvailableExternally),
         other => Err(BitcodeError::UnsupportedRecord(other as u32)),
     }
+}
+
+fn decode_global(
+    r: &mut Reader,
+    type_id_map: &[TypeId],
+    const_id_map: &[ConstId],
+) -> Result<GlobalVariable, BitcodeError> {
+    let ty = map_type_id(type_id_map, r.u32()? as usize)?;
+    let linkage = decode_linkage(r.u8()?)?;
+    let is_constant = r.u8()? != 0;
+    let has_initializer = r.u8()? != 0;
+    let initializer = if has_initializer {
+        let init_raw = r.u32()? as usize;
+        Some(map_const_id(const_id_map, init_raw)?)
+    } else {
+        None
+    };
+    let name = r.string()?;
+    Ok(GlobalVariable {
+        name,
+        ty,
+        initializer,
+        is_constant,
+        linkage,
+    })
 }
 
 fn decode_function(
