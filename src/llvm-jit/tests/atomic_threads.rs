@@ -66,16 +66,18 @@ entry:
         let f: fn(*mut i32) = unsafe { std::mem::transmute(ptr) };
 
         let t1 = {
-            let p = ctr_ptr;
+            let addr = ctr_ptr as usize;
             std::thread::spawn(move || {
+                let p = addr as *mut i32;
                 for _ in 0..N {
                     f(p);
                 }
             })
         };
         let t2 = {
-            let p = ctr_ptr;
+            let addr = ctr_ptr as usize;
             std::thread::spawn(move || {
+                let p = addr as *mut i32;
                 for _ in 0..N {
                     f(p);
                 }
@@ -115,8 +117,9 @@ entry:
 
         let threads: Vec<_> = (0..4)
             .map(|_| {
-                let p = ctr_ptr;
+                let addr = ctr_ptr as usize;
                 std::thread::spawn(move || {
+                    let p = addr as *mut i32;
                     for _ in 0..1000 {
                         f(p);
                     }
