@@ -28,20 +28,8 @@ pub struct LiveInterval {
     pub end: usize,
 }
 
-/// Compute flat program-order starting positions for each block.
-fn block_starts(mf: &MachineFunction) -> Vec<usize> {
-    let mut starts = Vec::with_capacity(mf.blocks.len());
-    let mut pos = 0;
-    for b in &mf.blocks {
-        starts.push(pos);
-        pos += b.instrs.len();
-    }
-    starts
-}
-
 /// Build live intervals by scanning all instructions of `mf`.
 pub fn compute_live_intervals(mf: &MachineFunction) -> Vec<LiveInterval> {
-    let _ = block_starts(mf); // kept for potential future use
     let mut map: HashMap<VReg, (usize, usize)> = HashMap::new();
     let mut pos = 0usize;
 
@@ -70,6 +58,69 @@ pub fn compute_live_intervals(mf: &MachineFunction) -> Vec<LiveInterval> {
                 }
             }
             pos += 1;
+        }
+    }
+
+    // Extend live intervals across loop back-edges.
+    //
+    // A linear scan over the flat instruction sequence misses that values live
+    // at the top of a loop header must also stay allocated through any block
+    // that branches back to that header (the back-edge source).  Without this
+    // fix, the register holding e.g. a loop-invariant argument can be reused
+    // inside a phi-destruction trampoline, corrupting the value on the next
+    // iteration.
+    //
+    // Back-edge: machine block J branches to machine block B where B < J
+    // (i.e., a backward branch in the flat block ordering).  Any VReg that is
+    // live at the start of B (defined before B, live into B) must remain
+    // allocated through the end of J.  We iterate to a fixpoint because one
+    // extension can cause another VReg to straddle an additional back-edge.
+    {
+        // Compute flat start position of each machine block.
+        let mut blk_start: Vec<usize> = Vec::with_capacity(mf.blocks.len());
+        let mut p = 0usize;
+        for b in &mf.blocks {
+            blk_start.push(p);
+            p += b.instrs.len();
+        }
+        let total = p;
+
+        // Collect back-edges: (from_block_idx, to_block_idx).
+        let mut back_edges: Vec<(usize, usize)> = Vec::new();
+        for (bi, block) in mf.blocks.iter().enumerate() {
+            for instr in &block.instrs {
+                for op in &instr.operands {
+                    if let MOperand::Block(target) = op {
+                        if *target < bi {
+                            back_edges.push((bi, *target));
+                        }
+                    }
+                }
+            }
+        }
+
+        if !back_edges.is_empty() {
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for &(from_bi, to_bi) in &back_edges {
+                    // Flat range of the back-edge source block J.
+                    let from_end = if from_bi + 1 < blk_start.len() {
+                        blk_start[from_bi + 1]
+                    } else {
+                        total
+                    };
+                    // Flat start of the loop-header block B.
+                    let to_start = blk_start[to_bi];
+                    // Any VReg live at the start of B must be extended through J.
+                    for (_, (s, e)) in map.iter_mut() {
+                        if *s <= to_start && *e > to_start && *e < from_end {
+                            *e = from_end;
+                            changed = true;
+                        }
+                    }
+                }
+            }
         }
     }
 
