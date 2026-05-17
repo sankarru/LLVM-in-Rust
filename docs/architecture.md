@@ -650,7 +650,7 @@ values. For full 64-bit constants, `MOV_WIDE` emits up to four instructions:
 16-bit chunk.
 
 **Condition codes**: `CSET Xd, cond` is encoded as `CSINC Xd, XZR, XZR, inv_cond`
-(base encoding `0x9A9F07E0` | `inv_cond << 12 | rd`). `cc_to_hw(cc)` maps the
+(base encoding `0x9ADF07E0` | `inv_cond << 12 | rd`). `cc_to_hw(cc)` maps the
 internal `CC_*` constants to AArch64 hardware condition-code values.
 
 **Prologue/epilogue**: `STP X29, X30, [SP, #-frame]!` saves the frame pointer
@@ -745,8 +745,7 @@ struct Parser<'src> {
     current_func: Option<usize>,
     current_block: Option<BlockId>,
     locals: HashMap<String, ValueRef>,          // current function value table
-    unnamed_slots: HashMap<u64, ValueRef>,      // %0, %1, ... numbered slots
-    pending_phi_patches: Vec<...>,              // phi forward-refs
+    unnamed: HashMap<u64, ValueRef>,            // %0, %1, ... numbered slots
 }
 ```
 
@@ -755,10 +754,10 @@ seen, `pending_blocks` allocates a `BlockId` speculatively. When `%foo:` is
 encountered later, the block is matched to that `BlockId`. Unresolved forward
 refs are an error.
 
-**Phi forward references**: phi incoming values may reference instructions not
-yet parsed (e.g. a phi in a loop header references a value defined in the back
-edge block). These are recorded in `pending_phi_patches` and resolved after the
-entire function body is parsed.
+**Phi value references**: phi incoming values are resolved via `locals` and
+`unnamed` at parse time; SSA definitions in LLVM IR text always precede their
+phi uses within the same function (dominance ordering is preserved in the `.ll`
+format).
 
 **`skip_trailing_fn_attrs`**: this helper consumes trailing function attributes
 (like `nounwind`, `#0`, `align`, etc.) after a function signature. It must stop
