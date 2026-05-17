@@ -141,6 +141,28 @@ pub const MOVDQU_STORE_RM: MOpcode = MOpcode(0x8A);
 /// Public API for `MOVAPS_LOAD_MR`.
 pub const MOVAPS_LOAD_MR: MOpcode = MOpcode(0x8B);
 
+// ── atomic memory operations ───────────────────────────────────────────────
+/// `mfence` — full memory barrier (0F AE F0).
+pub const MFENCE: MOpcode = MOpcode(0x90);
+/// `lock cmpxchg [ptr], new_val` — compare-and-swap (F0 REX.W 0F B1 /r).
+/// operands[0]=ptr_preg, operands[1]=RAX (comparand, pre-loaded), operands[2]=new_val_preg.
+pub const LOCK_CMPXCHG_MR: MOpcode = MOpcode(0x91);
+/// `lock xadd [ptr], val` — atomic exchange-add (F0 REX.W 0F C1 /r).
+/// operands[0]=ptr_preg, operands[1]=val_preg; old value returned in val_preg.
+pub const LOCK_XADD_MR: MOpcode = MOpcode(0x92);
+/// `xchg [ptr], val` — atomic exchange, implicitly LOCK (REX.W 87 /r).
+/// operands[0]=ptr_preg, operands[1]=val_preg; old value returned in val_preg.
+pub const XCHG_MR: MOpcode = MOpcode(0x93);
+/// `lock and [ptr], val` — atomic bitwise AND (F0 REX.W 21 /r).
+/// operands[0]=ptr_preg, operands[1]=val_preg.
+pub const LOCK_AND_MR: MOpcode = MOpcode(0x94);
+/// `lock or [ptr], val` — atomic bitwise OR (F0 REX.W 09 /r).
+/// operands[0]=ptr_preg, operands[1]=val_preg.
+pub const LOCK_OR_MR: MOpcode = MOpcode(0x95);
+/// `lock xor [ptr], val` — atomic bitwise XOR (F0 REX.W 31 /r).
+/// operands[0]=ptr_preg, operands[1]=val_preg.
+pub const LOCK_XOR_MR: MOpcode = MOpcode(0x96);
+
 // ── condition codes (used as Imm operands with JCC / SETCC) ────────────────
 /// Public API for `CC_EQ`.
 pub const CC_EQ: i64 = 0; // je  / jz
