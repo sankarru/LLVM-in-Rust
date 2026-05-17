@@ -288,7 +288,7 @@ fn emit_code_for_function(
 
         // Emit all non-terminator instructions.
         for &iid in &bb.body {
-            emit_instr(ctx, func, vmap, code, iid, &func_idx_map);
+            emit_instr(ctx, func, module, vmap, code, iid, &func_idx_map);
         }
 
         // Emit the terminator.
@@ -363,6 +363,7 @@ fn emit_value(
 fn emit_instr(
     ctx: &Context,
     func: &Function,
+    module: &Module,
     vmap: &HashMap<ValueRef, u32>,
     code: &mut Vec<u8>,
     iid: InstrId,
@@ -603,9 +604,9 @@ fn emit_instr(
                     ConstantData::GlobalRef { name, .. } => Some(name.as_str()),
                     _ => None,
                 },
-                ValueRef::Global(_) => {
-                    // Try to find by function index.
-                    None
+                ValueRef::Global(gid) => {
+                    // Look up by function index in the module.
+                    module.functions.get(gid.0 as usize).map(|f| f.name.as_str())
                 }
                 _ => None,
             };
