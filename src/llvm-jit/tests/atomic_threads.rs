@@ -5,6 +5,10 @@
 //! then drives two or more OS threads against the resulting function pointer and
 //! checks that no increment is lost.
 //!
+//! The backend must emit `F0 0F C1` (32-bit LOCK XADD, no REX.W) for i32 element
+//! types. If REX.W (0x48) is mistakenly inserted, the instruction becomes a 64-bit
+//! load/add and reads 8 bytes from the counter, corrupting the result.
+//!
 //! Only runs on x86-64 because `SimpleJit` only emits x86-64 machine code.
 
 // Everything in this file is x86-64-only: gate the entire module contents so
