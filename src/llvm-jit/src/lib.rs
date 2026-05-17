@@ -373,10 +373,15 @@ entry:
     #[test]
     #[cfg(target_arch = "x86_64")]
     fn jit_fibonacci() {
-        // Iterative (loop-based) fibonacci.
+        // Iterative (loop-based) fibonacci.  Allocas must be in the entry
+        // block so mem2reg can promote them; non-entry allocas are not
+        // promoted and the x86 backend emits placeholder NOPs (see issue #274).
         let src = r#"
 define i32 @fib(i32 %n) {
 entry:
+  %a0 = alloca i32
+  %b0 = alloca i32
+  %i0 = alloca i32
   %cmp = icmp sle i32 %n, 1
   br i1 %cmp, label %ret_n, label %loop_entry
 
@@ -384,9 +389,6 @@ ret_n:
   ret i32 %n
 
 loop_entry:
-  %a0 = alloca i32
-  %b0 = alloca i32
-  %i0 = alloca i32
   store i32 0, i32* %a0
   store i32 1, i32* %b0
   store i32 1, i32* %i0
