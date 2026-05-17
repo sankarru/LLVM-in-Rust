@@ -280,38 +280,6 @@ pub fn emit_object(mf: &MachineFunction, emitter: &mut dyn Emitter) -> ObjectFil
 //   Section data: .text, .symtab, .strtab, .shstrtab, .rela.text
 
 fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
-    let text_sec = obj.sections.first();
-    let text_data = text_sec.map_or(&[][..], |s| s.data.as_slice());
-    let text_relocs = text_sec.map_or(&[][..], |s| s.relocs.as_slice());
-    let extra_secs = if obj.sections.len() > 1 {
-        &obj.sections[1..]
-    } else {
-        &[][..]
-    };
-    let has_relocs = !text_relocs.is_empty();
-
-    let mut shstrtab: Vec<u8> = vec![0u8];
-    let text_name_off = push_str(&mut shstrtab, b".text");
-    let extra_name_offs: Vec<u32> = extra_secs
-        .iter()
-        .map(|s| push_str(&mut shstrtab, s.name.as_bytes()))
-        .collect();
-    let symtab_name_off = push_str(&mut shstrtab, b".symtab");
-    let strtab_name_off = push_str(&mut shstrtab, b".strtab");
-    let shstrtab_name_off = push_str(&mut shstrtab, b".shstrtab");
-    let relatext_name_off = if has_relocs {
-        push_str(&mut shstrtab, b".rela.text")
-    } else {
-        0
-    };
-
-    let mut strtab: Vec<u8> = vec![0u8];
-    let sym_name_offs: Vec<u32> = obj
-        .symbols
-        .iter()
-        .map(|s| push_str(&mut strtab, s.name.as_bytes()))
-        .collect();
-
     const ELF_HDR: u64 = 64;
     const SH_ENT: u64 = 64;
     const SYM_ENT: u64 = 24;
@@ -321,64 +289,131 @@ fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
     const SHT_STRTAB: u32 = 3;
     const SHT_RELA: u32 = 4;
 
-    let idx_text = 1u16;
-    let idx_extra_start = idx_text + 1;
-    let idx_symtab = idx_extra_start + extra_secs.len() as u16;
+    // SHF flags per section name heuristic.
+    // .text → SHF_ALLOC|SHF_EXECINSTR (6)
+    // .data → SHF_ALLOC|SHF_WRITE (3)
+    // .rodata / debug / eh_frame → SHF_ALLOC (2) or 0
+    let sec_flags = |name: &str| -> u64 {
+        if name == ".text" || name == "__text" {
+            6
+        } else if name == ".data" || name == "__data" {
+            3
+        } else if name.starts_with(".rodata") || name.starts_with("__const") {
+            2
+        } else {
+            0
+        }
+    };
+    let sec_align = |name: &str| -> u64 {
+        if name == ".text" || name == "__text" { 16 }
+        else if name == ".data" || name.starts_with(".rodata") { 8 }
+        else { 1 }
+    };
+
+    // Identify sections with relocs — we'll emit a .rela.<name> for each.
+    let secs_with_relocs: Vec<usize> = obj
+        .sections
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| !s.relocs.is_empty())
+        .map(|(i, _)| i)
+        .collect();
+
+    // Build shstrtab.
+    let mut shstrtab: Vec<u8> = vec![0u8];
+    let sec_name_offs: Vec<u32> = obj
+        .sections
+        .iter()
+        .map(|s| push_str(&mut shstrtab, s.name.as_bytes()))
+        .collect();
+    let symtab_name_off = push_str(&mut shstrtab, b".symtab");
+    let strtab_name_off = push_str(&mut shstrtab, b".strtab");
+    let shstrtab_name_off = push_str(&mut shstrtab, b".shstrtab");
+    let rela_name_offs: Vec<u32> = secs_with_relocs
+        .iter()
+        .map(|&si| {
+            let rela_name = format!(".rela{}", obj.sections[si].name);
+            push_str(&mut shstrtab, rela_name.as_bytes())
+        })
+        .collect();
+
+    // Build strtab.
+    let mut strtab: Vec<u8> = vec![0u8];
+    let sym_name_offs: Vec<u32> = obj
+        .symbols
+        .iter()
+        .map(|s| push_str(&mut strtab, s.name.as_bytes()))
+        .collect();
+
+    // Section-header index assignments:
+    // [0]          null
+    // [1..n]       data sections (obj.sections)
+    // [n+1]        .symtab
+    // [n+2]        .strtab
+    // [n+3]        .shstrtab
+    // [n+4..]      .rela.<x> for each section with relocs
+    let num_data_secs = obj.sections.len() as u16;
+    let idx_symtab = 1 + num_data_secs;
     let idx_strtab = idx_symtab + 1;
     let idx_shstrtab = idx_strtab + 1;
-    let idx_rela = idx_shstrtab + 1;
+    let idx_rela_base = idx_shstrtab + 1;
+    let num_sections = idx_rela_base + secs_with_relocs.len() as u16;
 
-    let num_sections: u16 = if has_relocs {
-        idx_rela + 1
-    } else {
-        idx_shstrtab + 1
-    };
     let sh_table_size = num_sections as u64 * SH_ENT;
-
     let mut cursor = ELF_HDR + sh_table_size;
-    let text_off = cursor;
-    let text_size = text_data.len() as u64;
-    cursor += text_size;
 
-    let mut extra_offs = Vec::with_capacity(extra_secs.len());
-    for sec in extra_secs {
-        extra_offs.push(cursor);
-        cursor += sec.data.len() as u64;
-    }
+    // Lay out section data.
+    let sec_offs: Vec<u64> = obj
+        .sections
+        .iter()
+        .map(|s| {
+            let off = cursor;
+            cursor += s.data.len() as u64;
+            off
+        })
+        .collect();
 
     let sym_count = 1 + obj.symbols.len() as u64;
     let symtab_off = cursor;
     let symtab_size = sym_count * SYM_ENT;
     cursor += symtab_size;
-
     let strtab_off = cursor;
     cursor += strtab.len() as u64;
     let shstrtab_off = cursor;
     cursor += shstrtab.len() as u64;
 
-    let relatext_off = cursor;
-    let relatext_size = text_relocs.len() as u64 * RELA_ENT;
+    // Lay out .rela sections.
+    let rela_offs: Vec<u64> = secs_with_relocs
+        .iter()
+        .map(|&si| {
+            let off = cursor;
+            cursor += obj.sections[si].relocs.len() as u64 * RELA_ENT;
+            off
+        })
+        .collect();
 
     let mut buf = Vec::<u8>::new();
+
+    // ELF header.
     buf.extend_from_slice(b"\x7fELF");
-    buf.push(2);
-    buf.push(1);
-    buf.push(1);
-    buf.push(0);
+    buf.push(2); // EI_CLASS = ELFCLASS64
+    buf.push(1); // EI_DATA  = ELFDATA2LSB
+    buf.push(1); // EI_VERSION
+    buf.push(0); // EI_OSABI
     buf.extend_from_slice(&[0u8; 8]);
-    w16(&mut buf, 1);
+    w16(&mut buf, 1); // e_type = ET_REL
     w16(&mut buf, obj.elf_machine);
-    w32(&mut buf, 1);
-    w64(&mut buf, 0);
-    w64(&mut buf, 0);
-    w64(&mut buf, ELF_HDR);
-    w32(&mut buf, 0);
-    w16(&mut buf, ELF_HDR as u16);
-    w16(&mut buf, 0);
-    w16(&mut buf, 0);
-    w16(&mut buf, SH_ENT as u16);
-    w16(&mut buf, num_sections);
-    w16(&mut buf, idx_shstrtab);
+    w32(&mut buf, 1); // e_version
+    w64(&mut buf, 0); // e_entry
+    w64(&mut buf, 0); // e_phoff
+    w64(&mut buf, ELF_HDR); // e_shoff
+    w32(&mut buf, 0); // e_flags
+    w16(&mut buf, ELF_HDR as u16); // e_ehsize
+    w16(&mut buf, 0); // e_phentsize
+    w16(&mut buf, 0); // e_phnum
+    w16(&mut buf, SH_ENT as u16); // e_shentsize
+    w16(&mut buf, num_sections); // e_shnum
+    w16(&mut buf, idx_shstrtab); // e_shstrndx
 
     let write_shdr = |buf: &mut Vec<u8>,
                       name: u32,
@@ -403,37 +438,27 @@ fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
         w64(buf, entsize);
     };
 
+    // Null section header.
     write_shdr(&mut buf, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-    write_shdr(
-        &mut buf,
-        text_name_off,
-        SHT_PROGBITS,
-        6,
-        0,
-        text_off,
-        text_size,
-        0,
-        0,
-        16,
-        0,
-    );
 
-    for (i, sec) in extra_secs.iter().enumerate() {
+    // Data section headers.
+    for (i, sec) in obj.sections.iter().enumerate() {
         write_shdr(
             &mut buf,
-            extra_name_offs[i],
+            sec_name_offs[i],
             SHT_PROGBITS,
+            sec_flags(&sec.name),
             0,
-            0,
-            extra_offs[i],
+            sec_offs[i],
             sec.data.len() as u64,
             0,
             0,
-            1,
+            sec_align(&sec.name),
             0,
         );
     }
 
+    // .symtab
     write_shdr(
         &mut buf,
         symtab_name_off,
@@ -447,6 +472,7 @@ fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
         8,
         SYM_ENT,
     );
+    // .strtab
     write_shdr(
         &mut buf,
         strtab_name_off,
@@ -460,6 +486,7 @@ fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
         1,
         0,
     );
+    // .shstrtab
     write_shdr(
         &mut buf,
         shstrtab_name_off,
@@ -473,31 +500,44 @@ fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
         1,
         0,
     );
-    if has_relocs {
+
+    // .rela.<section> headers.
+    for (j, &si) in secs_with_relocs.iter().enumerate() {
+        let rela_size = obj.sections[si].relocs.len() as u64 * RELA_ENT;
         write_shdr(
             &mut buf,
-            relatext_name_off,
+            rela_name_offs[j],
             SHT_RELA,
             0,
             0,
-            relatext_off,
-            relatext_size,
+            rela_offs[j],
+            rela_size,
             idx_symtab as u32,
-            idx_text as u32,
+            (1 + si) as u32, // sh_info = index of target section
             8,
             RELA_ENT,
         );
     }
 
-    buf.extend_from_slice(text_data);
-    for sec in extra_secs {
+    // Section data.
+    for sec in &obj.sections {
         buf.extend_from_slice(&sec.data);
     }
 
+    // Symbol table: null entry first.
     buf.extend_from_slice(&[0u8; 24]);
     for (i, sym) in obj.symbols.iter().enumerate() {
-        let st_info: u8 = (1u8 << 4) | 2u8;
-        let st_shndx: u16 = (sym.section + 1) as u16;
+        let st_info: u8 = if sym.undefined {
+            (1u8 << 4) | 0u8 // STB_GLOBAL | STT_NOTYPE
+        } else {
+            (1u8 << 4) | 1u8 // STB_GLOBAL | STT_OBJECT (for data) or FUNC
+        };
+        // st_shndx: 0 for undefined, otherwise section index (1-based).
+        let st_shndx: u16 = if sym.undefined {
+            0
+        } else {
+            (sym.section + 1) as u16
+        };
         w32(&mut buf, sym_name_offs[i]);
         buf.push(st_info);
         buf.push(0);
@@ -509,12 +549,13 @@ fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
     buf.extend_from_slice(&strtab);
     buf.extend_from_slice(&shstrtab);
 
-    if has_relocs {
-        for reloc in text_relocs {
+    // Relocation tables.
+    for &si in &secs_with_relocs {
+        for reloc in &obj.sections[si].relocs {
             let sym_idx = (reloc.symbol + 1) as u64;
             let r_type: u64 = match reloc.kind {
-                RelocKind::Pc32 => 2,
-                RelocKind::Abs64 => 1,
+                RelocKind::Pc32 => 2,  // R_X86_64_PC32
+                RelocKind::Abs64 => 1, // R_X86_64_64
             };
             let r_info = (sym_idx << 32) | r_type;
             w64(&mut buf, reloc.offset);
@@ -522,6 +563,7 @@ fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
             buf.extend_from_slice(&reloc.addend.to_le_bytes());
         }
     }
+
     buf
 }
 
@@ -2008,4 +2050,431 @@ mod tests {
         let operand = u16::from_le_bytes([xdata[6], xdata[7]]);
         assert_eq!(operand, 32, "ALLOC_LARGE operand must be alloc_size/8 = 32");
     }
+}
+
+// ── Global-variable data section emission ─────────────────────────────────
+
+use llvm_ir::{
+    context::ConstId,
+    ConstExprOp, ConstantData, Context, FloatKind, Linkage, Module, TypeData,
+};
+use std::collections::HashMap;
+
+/// Byte size of an IR type under the System V / AAPCS64 ABI model.
+///
+/// Pointers are always 8 bytes; integer types round up to the nearest byte;
+/// aggregates include natural padding.  Void / label / metadata / function
+/// types have size 0.
+pub fn sizeof_ty(ctx: &Context, ty: llvm_ir::context::TypeId) -> u64 {
+    match ctx.get_type(ty) {
+        TypeData::Integer(bits) => (*bits as u64 + 7) / 8,
+        TypeData::Float(k) => match k {
+            FloatKind::Half | FloatKind::BFloat => 2,
+            FloatKind::Single => 4,
+            FloatKind::Double => 8,
+            FloatKind::Fp128 => 16,
+            FloatKind::X86Fp80 => 16,
+        },
+        TypeData::Pointer => 8,
+        TypeData::Array { element, len } => {
+            let esz = sizeof_ty(ctx, *element);
+            esz * len
+        }
+        TypeData::Vector { element, len, .. } => {
+            let esz = sizeof_ty(ctx, *element);
+            esz * (*len as u64)
+        }
+        TypeData::Struct(st) => struct_total_size(ctx, &st.fields.clone(), st.packed),
+        TypeData::Void | TypeData::Label | TypeData::Metadata | TypeData::Function(_) => 0,
+    }
+}
+
+fn align_of_ty(ctx: &Context, ty: llvm_ir::context::TypeId) -> u64 {
+    sizeof_ty(ctx, ty).min(8).max(1)
+}
+
+fn struct_total_size(ctx: &Context, fields: &[llvm_ir::context::TypeId], packed: bool) -> u64 {
+    let mut offset = 0u64;
+    let mut max_align = 1u64;
+    for &f in fields {
+        let fsz = sizeof_ty(ctx, f);
+        let al = if packed { 1 } else { align_of_ty(ctx, f) };
+        if al > max_align {
+            max_align = al;
+        }
+        offset = (offset + al - 1) & !(al - 1);
+        offset += fsz;
+    }
+    if !packed && max_align > 1 {
+        offset = (offset + max_align - 1) & !(max_align - 1);
+    }
+    offset
+}
+
+fn struct_field_byte_offset(
+    ctx: &Context,
+    fields: &[llvm_ir::context::TypeId],
+    field_idx: usize,
+    packed: bool,
+) -> u64 {
+    let mut offset = 0u64;
+    for (i, &f) in fields.iter().enumerate() {
+        let al = if packed { 1 } else { align_of_ty(ctx, f) };
+        offset = (offset + al - 1) & !(al - 1);
+        if i == field_idx {
+            return offset;
+        }
+        offset += sizeof_ty(ctx, f);
+    }
+    0
+}
+
+/// Compute the addend (in bytes) for a GEP constexpr.
+///
+/// `base_ty` is the aggregate/element type that the first GEP index scales
+/// over.  `indices` are the already-extracted integer index values.
+fn gep_byte_offset(ctx: &Context, base_ty: llvm_ir::context::TypeId, indices: &[i64]) -> i64 {
+    let mut offset: i64 = 0;
+    let mut cur_ty = base_ty;
+    for (depth, &idx) in indices.iter().enumerate() {
+        if depth == 0 {
+            offset += idx * sizeof_ty(ctx, cur_ty) as i64;
+        } else {
+            match ctx.get_type(cur_ty).clone() {
+                TypeData::Array { element, .. } => {
+                    offset += idx * sizeof_ty(ctx, element) as i64;
+                    cur_ty = element;
+                }
+                TypeData::Struct(st) => {
+                    let fi = idx as usize;
+                    let flds: Vec<_> = st.fields.clone();
+                    offset +=
+                        struct_field_byte_offset(ctx, &flds, fi, st.packed) as i64;
+                    if fi < flds.len() {
+                        cur_ty = flds[fi];
+                    }
+                }
+                TypeData::Vector { element, .. } => {
+                    offset += idx * sizeof_ty(ctx, element) as i64;
+                    cur_ty = element;
+                }
+                _ => break,
+            }
+        }
+    }
+    offset
+}
+
+fn const_as_i64(ctx: &Context, cid: ConstId) -> i64 {
+    match ctx.get_const(cid) {
+        ConstantData::Int { val, .. } => *val as i64,
+        _ => 0,
+    }
+}
+
+/// Evaluate `cid` into raw bytes appended to `out`, recording any needed
+/// relocations in `relocs` with offsets relative to `sec_base` (the
+/// section-absolute byte offset at which `out` starts).
+fn eval_const_bytes(
+    ctx: &Context,
+    cid: ConstId,
+    sec_base: u64,
+    global_sym_map: &HashMap<String, usize>,
+    relocs: &mut Vec<Reloc>,
+    out: &mut Vec<u8>,
+) {
+    let cd = ctx.get_const(cid).clone();
+    match cd {
+        ConstantData::Int { ty, val } => {
+            let byte_count = (match ctx.get_type(ty) {
+                TypeData::Integer(b) => *b,
+                _ => 64,
+            } as u64 + 7) / 8;
+            for i in 0..byte_count {
+                out.push((val >> (i * 8)) as u8);
+            }
+        }
+        ConstantData::IntWide { ty, words } => {
+            let bits = match ctx.get_type(ty) {
+                TypeData::Integer(b) => *b as u64,
+                _ => 64 * words.len() as u64,
+            };
+            let byte_count = (bits + 7) / 8;
+            let raw: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let take = (byte_count as usize).min(raw.len());
+            out.extend_from_slice(&raw[..take]);
+        }
+        ConstantData::Float { ty, bits } => {
+            let sz = sizeof_ty(ctx, ty) as usize;
+            for i in 0..sz {
+                out.push((bits >> (i * 8)) as u8);
+            }
+        }
+        ConstantData::Null(ty) | ConstantData::Undef(ty) | ConstantData::Poison(ty) => {
+            let sz = sizeof_ty(ctx, ty) as usize;
+            out.extend(std::iter::repeat(0u8).take(sz));
+        }
+        ConstantData::ZeroInitializer(ty) => {
+            let sz = sizeof_ty(ctx, ty) as usize;
+            out.extend(std::iter::repeat(0u8).take(sz));
+        }
+        ConstantData::Array { elements, .. } | ConstantData::Vector { elements, .. } => {
+            for elem in elements {
+                eval_const_bytes(ctx, elem, sec_base, global_sym_map, relocs, out);
+            }
+        }
+        ConstantData::Struct { ty, fields } => {
+            let (field_tys, is_packed) = match ctx.get_type(ty) {
+                TypeData::Struct(st) => (st.fields.clone(), st.packed),
+                _ => (vec![], false),
+            };
+            let struct_start = out.len();
+            for (i, fld_cid) in fields.iter().enumerate() {
+                let fty = field_tys.get(i).copied().unwrap_or(ctx.i8_ty);
+                let al = if is_packed { 1 } else { align_of_ty(ctx, fty) as usize };
+                let local_pos = out.len() - struct_start;
+                let pad = if al > 0 { (al - local_pos % al) % al } else { 0 };
+                out.extend(std::iter::repeat(0u8).take(pad));
+                eval_const_bytes(ctx, *fld_cid, sec_base, global_sym_map, relocs, out);
+            }
+            // Trailing struct padding
+            let content = out.len() - struct_start;
+            let total = struct_total_size(ctx, &field_tys, is_packed) as usize;
+            if total > content {
+                out.extend(std::iter::repeat(0u8).take(total - content));
+            }
+        }
+        ConstantData::GlobalRef { name, .. } => {
+            push_ptr_reloc(sec_base, &name, 0, global_sym_map, relocs, out);
+        }
+        ConstantData::Expr { op, ty, operands } => {
+            match op {
+                ConstExprOp::BitCast | ConstExprOp::AddrSpaceCast => {
+                    if let Some(&base_cid) = operands.first() {
+                        eval_const_bytes(ctx, base_cid, sec_base, global_sym_map, relocs, out);
+                    } else {
+                        out.extend(std::iter::repeat(0u8).take(sizeof_ty(ctx, ty) as usize));
+                    }
+                }
+                ConstExprOp::GetElementPtr { base_ty, .. } => {
+                    let indices: Vec<i64> =
+                        operands[1..].iter().map(|&c| const_as_i64(ctx, c)).collect();
+                    let addend = gep_byte_offset(ctx, base_ty, &indices);
+                    match ctx.get_const(operands[0]).clone() {
+                        ConstantData::GlobalRef { name, .. } => {
+                            push_ptr_reloc(sec_base, &name, addend, global_sym_map, relocs, out);
+                        }
+                        _ => {
+                            eval_const_bytes(
+                                ctx, operands[0], sec_base, global_sym_map, relocs, out,
+                            );
+                        }
+                    }
+                }
+                ConstExprOp::IntToPtr => {
+                    // Absolute address — no relocation
+                    if let Some(&val_cid) = operands.first() {
+                        match ctx.get_const(val_cid) {
+                            ConstantData::Int { val, .. } => {
+                                out.extend_from_slice(&val.to_le_bytes());
+                            }
+                            _ => out.extend_from_slice(&0u64.to_le_bytes()),
+                        }
+                    } else {
+                        out.extend_from_slice(&0u64.to_le_bytes());
+                    }
+                }
+                ConstExprOp::PtrToInt => {
+                    let int_bits = match ctx.get_type(ty) {
+                        TypeData::Integer(b) => *b,
+                        _ => 64,
+                    };
+                    let byte_count = ((int_bits as usize) + 7) / 8;
+                    if let Some(&base_cid) = operands.first() {
+                        match ctx.get_const(base_cid).clone() {
+                            ConstantData::GlobalRef { name, .. } => {
+                                push_ptr_reloc(sec_base, &name, 0, global_sym_map, relocs, out);
+                                // push_ptr_reloc always emits 8 bytes; truncate if int is narrower
+                                if byte_count < 8 {
+                                    let extra = 8 - byte_count;
+                                    let len = out.len();
+                                    out.truncate(len - extra);
+                                }
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                    out.extend(std::iter::repeat(0u8).take(byte_count));
+                }
+                ConstExprOp::Trunc | ConstExprOp::ZExt | ConstExprOp::SExt => {
+                    let dst_bits = match ctx.get_type(ty) {
+                        TypeData::Integer(b) => *b as usize,
+                        _ => 64,
+                    };
+                    let dst_bytes = (dst_bits + 7) / 8;
+                    if let Some(&src_cid) = operands.first() {
+                        let mut src_buf = Vec::new();
+                        eval_const_bytes(
+                            ctx, src_cid, sec_base, global_sym_map, relocs, &mut src_buf,
+                        );
+                        let sign_extend = op == ConstExprOp::SExt;
+                        let fill = if sign_extend {
+                            src_buf.last().map(|&b| if b & 0x80 != 0 { 0xFF } else { 0 }).unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        src_buf.resize(dst_bytes, fill);
+                        out.extend_from_slice(&src_buf[..dst_bytes.min(src_buf.len())]);
+                    } else {
+                        out.extend(std::iter::repeat(0u8).take(dst_bytes));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn push_ptr_reloc(
+    sec_base: u64,
+    name: &str,
+    addend: i64,
+    global_sym_map: &HashMap<String, usize>,
+    relocs: &mut Vec<Reloc>,
+    out: &mut Vec<u8>,
+) {
+    let reloc_offset = sec_base + out.len() as u64;
+    if let Some(&sym_idx) = global_sym_map.get(name) {
+        relocs.push(Reloc {
+            offset: reloc_offset,
+            symbol: sym_idx,
+            kind: RelocKind::Abs64,
+            addend,
+            external_name: None,
+        });
+    } else {
+        relocs.push(Reloc {
+            offset: reloc_offset,
+            symbol: 0,
+            kind: RelocKind::Abs64,
+            addend,
+            external_name: Some(name.to_string()),
+        });
+    }
+    out.extend_from_slice(&0u64.to_le_bytes());
+}
+
+/// Emit all global variables in `module` as data sections with relocations.
+///
+/// Returns `(sections, symbols)` ready to be merged into an [`ObjectFile`].
+/// Symbol indices in the returned relocs are relative to the returned
+/// `symbols` vec; callers must adjust them if merging into a larger symbol
+/// table.
+///
+/// Returns `None` when the module contains no global variables.
+pub fn emit_globals(
+    ctx: &Context,
+    module: &Module,
+    format: ObjectFormat,
+) -> Option<(Vec<Section>, Vec<Symbol>)> {
+    if module.globals.is_empty() {
+        return None;
+    }
+
+    // Map global name → symbol index (within our local symbols vec).
+    let mut global_sym_map: HashMap<String, usize> = HashMap::new();
+    for (i, gv) in module.globals.iter().enumerate() {
+        global_sym_map.insert(gv.name.clone(), i);
+    }
+
+    let rodata_name = match format {
+        ObjectFormat::MachO => "__const",
+        _ => ".rodata",
+    };
+    let data_name = match format {
+        ObjectFormat::MachO => "__data",
+        _ => ".data",
+    };
+
+    // Build one section for read-only globals, one for mutable globals.
+    let has_readonly = module.globals.iter().any(|gv| gv.is_constant);
+    let has_rw = module.globals.iter().any(|gv| !gv.is_constant);
+
+    let mut sections: Vec<Section> = Vec::new();
+    if has_readonly {
+        sections.push(Section {
+            name: rodata_name.to_string(),
+            data: Vec::new(),
+            relocs: Vec::new(),
+            debug_rows: Vec::new(),
+        });
+    }
+    if has_rw {
+        sections.push(Section {
+            name: data_name.to_string(),
+            data: Vec::new(),
+            relocs: Vec::new(),
+            debug_rows: Vec::new(),
+        });
+    }
+
+    let mut symbols: Vec<Symbol> = Vec::new();
+
+    for gv in &module.globals {
+        let sec_idx = if gv.is_constant {
+            sections.iter().position(|s| s.name == rodata_name).unwrap()
+        } else {
+            sections.iter().position(|s| s.name == data_name).unwrap()
+        };
+        let sec = &mut sections[sec_idx];
+
+        // Natural alignment: min of sizeof(ty), 16.
+        let sz = sizeof_ty(ctx, gv.ty) as usize;
+        let al = (sz as u64).min(16).max(1) as usize;
+        let pad = if al > 0 { (al - sec.data.len() % al) % al } else { 0 };
+        sec.data.extend(std::iter::repeat(0u8).take(pad));
+
+        let global_offset = sec.data.len() as u64;
+
+        if let Some(init_cid) = gv.initializer {
+            // sec_base = 0: `sec.data` is the full section buffer, so
+            // `out.len()` directly gives the section-absolute byte position.
+            eval_const_bytes(
+                ctx,
+                init_cid,
+                0,
+                &global_sym_map,
+                &mut sec.relocs,
+                &mut sec.data,
+            );
+        } else {
+            // Declaration only (extern) — emit zero bytes as placeholder.
+            sec.data.extend(std::iter::repeat(0u8).take(sz));
+        }
+
+        let emitted_size = sec.data.len() as u64 - global_offset;
+        let is_global_sym = !matches!(gv.linkage, Linkage::Private | Linkage::Internal);
+        symbols.push(Symbol {
+            name: gv.name.clone(),
+            section: sec_idx,
+            offset: global_offset,
+            size: emitted_size,
+            global: is_global_sym,
+            undefined: false,
+        });
+    }
+
+    // Resolve external_name relocs within our own global_sym_map.
+    // (Relocs referencing *other* globals outside this module are left as
+    // external_name for the caller to resolve after merging symbol tables.)
+    let sym_count = symbols.len();
+    for sec in &mut sections {
+        for reloc in &mut sec.relocs {
+            if reloc.external_name.is_none() && reloc.symbol >= sym_count {
+                // Symbol index is already correct (relative to our vec).
+            }
+        }
+    }
+
+    Some((sections, symbols))
 }

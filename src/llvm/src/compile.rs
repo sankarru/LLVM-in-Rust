@@ -3,10 +3,11 @@
 //! This module exposes [`compile_ir_to_object`] which drives the full pipeline
 //! from LLVM IR source text to a raw object file (ELF / Mach-O / COFF).
 //! Multiple non-declaration functions in the input module are all compiled and
-//! merged into a single `.text` section.
+//! merged into a single `.text` section.  Global variables are emitted into
+//! `.rodata` / `.data` sections with proper relocation entries.
 
 use llvm_codegen::{
-    emit_object,
+    emit_globals, emit_object,
     isel::IselBackend,
     regalloc::{
         allocate_registers, apply_allocation, compute_live_intervals, insert_spill_reloads,
@@ -133,16 +134,66 @@ pub fn compile_ir_to_object(
         ObjectFormat::MachO => "__text",
         _ => ".text",
     };
+    let mut merged_sections = vec![Section {
+        name: text_section_name.to_string(),
+        data: accumulated_text,
+        relocs: accumulated_relocs,
+        debug_rows: vec![],
+    }];
+
+    // Emit global variables (.rodata / .data sections with relocations).
+    if let Some((global_secs, global_syms)) = emit_globals(&ctx, &module, fmt) {
+        // Remap symbol indices inside global_secs.relocs: they currently point
+        // into global_syms (0-based); after merging, they point into
+        // unified_symbols starting at `sym_base`.
+        let sym_base = unified_symbols.len();
+        let sec_base = merged_sections.len();
+
+        for mut sec in global_secs {
+            for reloc in &mut sec.relocs {
+                if reloc.external_name.is_none() {
+                    reloc.symbol += sym_base;
+                }
+            }
+            merged_sections.push(sec);
+        }
+        for mut sym in global_syms {
+            // Adjust section index to be relative to the merged sections vec.
+            sym.section += sec_base;
+            unified_symbols.push(sym);
+        }
+
+        // Resolve external_name relocs in the newly-added sections.
+        for sec in merged_sections.iter_mut().skip(sec_base) {
+            for reloc in &mut sec.relocs {
+                if let Some(ref ext) = reloc.external_name.clone() {
+                    let idx = unified_symbols
+                        .iter()
+                        .position(|s| &s.name == ext)
+                        .unwrap_or_else(|| {
+                            let i = unified_symbols.len();
+                            unified_symbols.push(Symbol {
+                                name: ext.clone(),
+                                section: 0,
+                                offset: 0,
+                                size: 0,
+                                global: true,
+                                undefined: true,
+                            });
+                            i
+                        });
+                    reloc.symbol = idx;
+                    reloc.external_name = None;
+                }
+            }
+        }
+    }
+
     let merged = ObjectFile {
         format: fmt,
         elf_machine,
         coff_machine,
-        sections: vec![Section {
-            name: text_section_name.to_string(),
-            data: accumulated_text,
-            relocs: accumulated_relocs,
-            debug_rows: vec![],
-        }],
+        sections: merged_sections,
         symbols: unified_symbols,
     };
 
