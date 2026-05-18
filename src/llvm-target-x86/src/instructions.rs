@@ -177,6 +177,62 @@ pub const LOCK_OR_MR: MOpcode = MOpcode(0x95);
 /// operands[0]=ptr_preg, operands[1]=val_preg.
 pub const LOCK_XOR_MR: MOpcode = MOpcode(0x96);
 
+// ── SSE2 scalar double (prefix 66 0F) ─────────────────────────────────────
+/// `addsd dst, src`  (66 0F 58 /r)
+pub const ADDSD_RR: MOpcode = MOpcode(0xB0);
+/// `subsd dst, src`  (66 0F 5C /r)
+pub const SUBSD_RR: MOpcode = MOpcode(0xB1);
+/// `mulsd dst, src`  (66 0F 59 /r)
+pub const MULSD_RR: MOpcode = MOpcode(0xB2);
+/// `divsd dst, src`  (66 0F 5E /r)
+pub const DIVSD_RR: MOpcode = MOpcode(0xB3);
+/// `sqrtsd dst, src` (66 0F 51 /r)
+pub const SQRTSD_R: MOpcode = MOpcode(0xB4);
+/// `ucomisd lhs, rhs` (66 0F 2E /r) — sets ZF/PF/CF; used before Jcc for FP branches.
+pub const UCOMISD_RR: MOpcode = MOpcode(0xB5);
+/// `movsd dst, [rbp+disp]` — FP spill reload.  `dst` = VReg, `operands[0]` = `Imm(slot)`.
+pub const MOVSD_LOAD_MR: MOpcode = MOpcode(0xB6);
+/// `movsd [rbp+disp], src` — FP spill store.  `dst` = None, `operands[0]` = `Imm(slot)`, `operands[1]` = VReg/PReg(src).
+pub const MOVSD_STORE_RM: MOpcode = MOpcode(0xB7);
+
+// ── SSE2 scalar single (prefix F3 0F) ─────────────────────────────────────
+/// `addss dst, src`  (F3 0F 58 /r)
+pub const ADDSS_RR: MOpcode = MOpcode(0xC0);
+/// `subss dst, src`  (F3 0F 5C /r)
+pub const SUBSS_RR: MOpcode = MOpcode(0xC1);
+/// `mulss dst, src`  (F3 0F 59 /r)
+pub const MULSS_RR: MOpcode = MOpcode(0xC2);
+/// `divss dst, src`  (F3 0F 5E /r)
+pub const DIVSS_RR: MOpcode = MOpcode(0xC3);
+/// `sqrtss dst, src` (F3 0F 51 /r)
+pub const SQRTSS_R: MOpcode = MOpcode(0xC4);
+/// `ucomiss lhs, rhs` (0F 2E /r) — sets ZF/PF/CF; used before Jcc for FP branches.
+pub const UCOMISS_RR: MOpcode = MOpcode(0xC5);
+/// `movss dst, [rbp+disp]` — FP spill reload (f32).
+pub const MOVSS_LOAD_MR: MOpcode = MOpcode(0xC6);
+/// `movss [rbp+disp], src` — FP spill store (f32).
+pub const MOVSS_STORE_RM: MOpcode = MOpcode(0xC7);
+
+// ── FP ↔ integer conversions ───────────────────────────────────────────────
+/// `cvttsd2si dst, src`  (F2 0F 2C /r) — f64 → i64, truncate toward zero.
+pub const CVTTSD2SI_RR: MOpcode = MOpcode(0xD0);
+/// `cvtsi2sd dst, src`   (F2 0F 2A /r) — i64 → f64.
+pub const CVTSI2SD_RR: MOpcode = MOpcode(0xD1);
+/// `cvttss2si dst, src`  (F3 0F 2C /r) — f32 → i32, truncate toward zero.
+pub const CVTTSS2SI_RR: MOpcode = MOpcode(0xD2);
+/// `cvtsi2ss dst, src`   (F3 0F 2A /r) — i32/i64 → f32.
+pub const CVTSI2SS_RR: MOpcode = MOpcode(0xD3);
+/// `cvtsd2ss dst, src`   (F2 0F 5A /r) — f64 → f32 (FPTrunc).
+pub const CVTSD2SS_RR: MOpcode = MOpcode(0xD4);
+/// `cvtss2sd dst, src`   (F3 0F 5A /r) — f32 → f64 (FPExt).
+pub const CVTSS2SD_RR: MOpcode = MOpcode(0xD5);
+
+// ── FP copy ────────────────────────────────────────────────────────────────
+/// `movapd dst, src` (66 0F 28 /r) — XMM register copy (f64).
+pub const MOVAPD_RR: MOpcode = MOpcode(0xD6);
+/// `movaps dst, src` (0F 28 /r) — XMM register copy (f32).
+pub const MOVAPD_RR_F32: MOpcode = MOpcode(0xD7);
+
 // ── condition codes (used as Imm operands with JCC / SETCC) ────────────────
 /// Public API for `CC_EQ`.
 pub const CC_EQ: i64 = 0; // je  / jz

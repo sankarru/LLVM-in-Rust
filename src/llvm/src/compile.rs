@@ -17,7 +17,7 @@ use llvm_codegen::{
 };
 use llvm_ir_parser::parser::parse;
 use llvm_target_x86::{
-    instructions::{MOV_LOAD_MR, MOV_STORE_RM},
+    instructions::{MOV_LOAD_MR, MOV_STORE_RM, MOVSD_LOAD_MR, MOVSD_STORE_RM},
     X86Backend, X86Emitter,
 };
 use llvm_transforms::{build_pipeline, OptLevel};
@@ -74,7 +74,7 @@ pub fn compile_ir_to_object(
             &mf.allocatable_fp_pregs,
             RegAllocStrategy::LinearScan,
         );
-        insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+        insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOVSD_LOAD_MR, MOVSD_STORE_RM);
         apply_allocation(&mut mf, &result);
 
         let mut emitter = X86Emitter::new(fmt);
