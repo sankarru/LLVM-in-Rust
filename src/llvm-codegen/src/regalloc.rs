@@ -224,6 +224,16 @@ pub fn allocate_registers(
     fp_pregs: &[PReg],
     strategy: RegAllocStrategy,
 ) -> RegAllocResult {
+    // Fast path: no float VRegs present (common until FP backends land).
+    // Avoids the partition + second linear-scan call entirely.
+    let has_float = intervals.iter().any(|iv| iv.vreg.class() == crate::isel::RegClass::Float);
+    if !has_float {
+        return match strategy {
+            RegAllocStrategy::LinearScan => linear_scan(intervals, int_pregs),
+            RegAllocStrategy::GraphColor => graph_color(intervals, int_pregs),
+        };
+    }
+
     // Partition live intervals by register class.
     let (int_intervals, fp_intervals): (Vec<_>, Vec<_>) =
         intervals.iter().cloned().partition(|iv| iv.vreg.class() == crate::isel::RegClass::Int);
