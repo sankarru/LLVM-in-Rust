@@ -2478,11 +2478,17 @@ mod tests {
 
         // Run register allocation.
         let intervals = compute_live_intervals(&mf);
-        let allocatable = mf.allocatable_pregs.clone();
-        let mut result = allocate_registers(&intervals, &allocatable, RegAllocStrategy::LinearScan);
+        let mut result = allocate_registers(
+            &intervals,
+            &mf.allocatable_pregs,
+            &mf.allocatable_fp_pregs,
+            RegAllocStrategy::LinearScan,
+        );
         insert_spill_reloads(
             &mut mf,
             &mut result,
+            crate::instructions::MOV_LOAD_MR,
+            crate::instructions::MOV_STORE_RM,
             crate::instructions::MOV_LOAD_MR,
             crate::instructions::MOV_STORE_RM,
         );
