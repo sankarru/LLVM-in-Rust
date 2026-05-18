@@ -701,53 +701,6 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             }
         }
 
-        // ── non-promotable alloca frame-slot access ───────────────────────
-
-        // LEA_FRAME_MR: lea dst, [rbp - (callee_save_bytes + (slot_idx+1)*8)]
-        // Alloca slot `slot_idx` sits just below the callee-saved register saves.
-        // Encoding: REX.W 8D /r ModRM(mod=10,reg=dst,rm=5) disp32
-        LEA_FRAME_MR => {
-            if let (Some(dst), Some(MOperand::Imm(slot_idx))) = (instr.dst, instr.operands.first()) {
-                let dst_r = PReg(dst.0 as u8);
-                let disp = -((ctx.callee_save_bytes as i32) + (*slot_idx as i32 + 1) * 8);
-                let rex = 0x48 | (if is_extended(dst_r) { 0x04 } else { 0 });
-                ctx.emit(rex);
-                ctx.emit(0x8D); // LEA r64, m
-                // ModRM: mod=10 (disp32), reg=dst_enc, rm=5 (RBP)
-                ctx.emit(0x80 | (reg_enc(dst_r) << 3) | 5);
-                ctx.emit32(disp);
-            } else {
-                ctx.emit(0x90);
-            }
-        }
-
-        // MOV_LOAD_REG_MR: mov dst, [ptr_reg]
-        // 64-bit load through a register-held pointer (no displacement).
-        // Encoding: REX.W 8B /r with mod=00 rm=ptr_reg (handles RSP/RBP edge cases).
-        MOV_LOAD_REG_MR => {
-            if let (Some(dst), Some(ptr)) = (instr.dst, preg_at(instr, 0)) {
-                let dst_r = PReg(dst.0 as u8);
-                rex_mem(ctx, dst_r, ptr);
-                ctx.emit(0x8B); // MOV r64, r/m64
-                emit_mem_modrm(ctx, dst_r, ptr);
-            } else {
-                ctx.emit(0x90);
-            }
-        }
-
-        // MOV_STORE_REG_RM: mov [ptr_reg], src
-        // 64-bit store through a register-held pointer (no displacement).
-        // Encoding: REX.W 89 /r with mod=00 rm=ptr_reg.
-        MOV_STORE_REG_RM => {
-            if let (Some(ptr), Some(src)) = (preg_at(instr, 0), preg_at(instr, 1)) {
-                rex_mem(ctx, src, ptr);
-                ctx.emit(0x89); // MOV r/m64, r64
-                emit_mem_modrm(ctx, src, ptr);
-            } else {
-                ctx.emit(0x90);
-            }
-        }
-
         // ── SIMD reg-reg operations (XMM) ─────────────────────────────────
         PADDD_RR => encode_simd_rr(ctx, instr, Some(0x66), &[0x0F, 0xFE]),
         PSUBD_RR => encode_simd_rr(ctx, instr, Some(0x66), &[0x0F, 0xFA]),

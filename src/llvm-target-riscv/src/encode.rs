@@ -232,19 +232,6 @@ fn encode_instr(instr: &MInstr) -> u32 {
         SW => enc_s(imm_of_op(instr.operands.get(2)), rs2, rs1, 0x2, 0x23),
         SD => enc_s(imm_of_op(instr.operands.get(2)), rs2, rs1, 0x3, 0x23),
 
-        // ── non-promotable alloca frame-slot access ────────────────────────
-        // ADDI_FP_SLOT: addi rd, s0(x8), -(slot_idx+1)*8
-        // s0 is the RISC-V frame pointer (saved ra/s0 in prologue).
-        ADDI_FP_SLOT => {
-            let slot_idx = imm_of_op(instr.operands.first());
-            let imm = -(slot_idx + 1) * 8;
-            enc_i(imm as i32, 8 /* s0/fp */, 0x0, rd, 0x13)
-        }
-        // LD_REG: ld rd, 0(rs1)  — load 64-bit word from pointer reg with offset 0
-        LD_REG => enc_i(0, rs1, 0x3, rd, 0x03),
-        // SD_REG: sd rs2, 0(rs1)  — store 64-bit word through pointer reg
-        SD_REG => enc_s(0, rs2, rs1, 0x3, 0x23),
-
         BEQ => enc_b(imm_of_op(instr.operands.get(2)), rs2, rs1, 0x0, 0x63),
         BNE => enc_b(imm_of_op(instr.operands.get(2)), rs2, rs1, 0x1, 0x63),
         BLT => enc_b(imm_of_op(instr.operands.get(2)), rs2, rs1, 0x4, 0x63),

@@ -206,20 +206,12 @@ pub struct MachineFunction {
     pub callee_saved_pregs: Vec<PReg>,
     /// Frame size in bytes (spill slots only; set by insert_spill_reloads).
     pub frame_size: u32,
-    /// Alloca frame area in bytes (set during lowering for non-promotable allocas).
-    ///
-    /// This space sits directly below the callee-saved register saves and above
-    /// the spill slot area.  The emitter adds `alloca_frame_bytes` to `sub_rsp`
-    /// and shifts spill-slot displacements downward by the same amount.
-    pub alloca_frame_bytes: u32,
     /// Map from spilled VReg → frame slot index (0-based; emitter converts to byte offset).
     pub spill_slots: HashMap<VReg, u32>,
     /// Callee-saved physical registers actually used by this function (populated by apply_allocation).
     pub used_callee_saved: Vec<PReg>,
-    /// Counter for spill frame slot allocation.
+    /// Counter for frame slot allocation.
     next_slot: u32,
-    /// Counter for alloca frame slot allocation (non-promotable allocas).
-    next_alloca_slot: u32,
     /// Source filename used for debug line tables.
     pub debug_source: Option<String>,
     /// First source line observed from IR `!dbg` metadata.
@@ -239,11 +231,9 @@ impl MachineFunction {
             allocatable_fp_pregs: Vec::new(),
             callee_saved_pregs: Vec::new(),
             frame_size: 0,
-            alloca_frame_bytes: 0,
             spill_slots: HashMap::new(),
             used_callee_saved: Vec::new(),
             next_slot: 0,
-            next_alloca_slot: 0,
             debug_source: None,
             debug_line_start: None,
             current_debug_loc: None,
@@ -278,25 +268,6 @@ impl MachineFunction {
         self.spill_slots.insert(vreg, slot);
         // Update frame_size: each slot is 8 bytes.
         self.frame_size = self.next_slot * 8;
-        slot
-    }
-
-    /// Allocate a stack frame slot for a non-promotable alloca during lowering.
-    ///
-    /// Returns an **alloca slot index** (0-based).  Each backend's encoder converts
-    /// the index to a target-specific frame-pointer-relative displacement:
-    /// - x86-64 (grows down from RBP): `-(callee_save_bytes + (idx+1)*8)` from RBP.
-    /// - AArch64 (grows up from X29):  `16 + cs_count*8 + spill_frame_size + idx*8` from X29.
-    /// - RISC-V (grows up from S0):    same pattern as AArch64.
-    ///
-    /// `size_bytes` is rounded up to 8 bytes and added to `alloca_frame_bytes` so
-    /// the emitter knows how much stack space to reserve.
-    pub fn alloc_alloca_slot(&mut self, size_bytes: u32, _align_bytes: u32) -> u32 {
-        let slot = self.next_alloca_slot;
-        self.next_alloca_slot += 1;
-        // Each slot is always 8 bytes (pointer-sized).
-        let slot_size = size_bytes.max(8);
-        self.alloca_frame_bytes += (slot_size + 7) & !7; // round up to 8
         slot
     }
 

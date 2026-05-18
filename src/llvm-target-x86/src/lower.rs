@@ -10,7 +10,6 @@ use crate::{
     regs::{RAX, RCX, RDX, RSP},
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MOperand, MachineFunction, PReg, VReg};
-use llvm_codegen::sizeof_ty;
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, FloatKind, Function, InstrId, InstrKind,
     InstrprofIntrinsic, IntPredicate, Module, TypeData, ValueRef, VpIntrinsic,
@@ -894,30 +893,13 @@ fn lower_instr(
             }
         }
 
-        // ── memory: alloca, load, store ────────────────────────────────────
-        //
-        // mem2reg eliminates most alloca/load/store sequences (pure SSA values).
-        // What remains here are non-promotable allocas (address escapes, non-constant
-        // GEP indices) and loads/stores through pointer-valued arguments or globals.
-        Alloca { alloc_ty, align, .. } => {
+        // ── memory (placeholder NOP — mem2reg removes most alloca/load/store) ──
+        Alloca { .. } | GetElementPtr { .. } => {
             let dst = new_dst!();
-            // Compute the allocation size and alignment from the alloc_ty.
-            let size_bytes = sizeof_ty(ctx, *alloc_ty) as u32;
-            let align_bytes = align.unwrap_or(8);
-            let slot_idx = mf.alloc_alloca_slot(size_bytes, align_bytes);
-            // Materialize the frame-slot address into dst.
-            // LEA_FRAME_MR carries the slot index; the encoder converts it to
-            // [RBP - (callee_save_bytes + alloca_frame_bytes - slot_idx*8)].
-            // Encoding convention: Imm(slot_idx) — encoder computes the displacement.
-            mf.push(mblock, MInstr::new(LEA_FRAME_MR).with_dst(dst).with_imm(slot_idx as i64));
+            mf.push(mblock, MInstr::new(NOP));
+            let _ = dst;
         }
-        GetElementPtr { ptr, .. } => {
-            // Simple GEP: propagate the base pointer VReg (full GEP lowering is out of scope).
-            let dst = new_dst!();
-            let base = res!(*ptr);
-            mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(base));
-        }
-        Load { ty, ptr, .. } => {
+        Load { ty, .. } => {
             let dst = new_dst!();
             if matches!(ctx.get_type(*ty), TypeData::Vector { .. }) && features.simd_enabled() {
                 mf.push(
@@ -925,12 +907,10 @@ fn lower_instr(
                     MInstr::new(MOVDQU_LOAD_MR).with_dst(dst).with_imm(0),
                 );
             } else {
-                // Load through pointer: MOV dst, [ptr_reg].
-                let ptr_vr = res!(*ptr);
-                mf.push(mblock, MInstr::new(MOV_LOAD_REG_MR).with_dst(dst).with_vreg(ptr_vr));
+                mf.push(mblock, MInstr::new(NOP));
             }
         }
-        Store { val, ptr, .. } => {
+        Store { val, .. } => {
             if let Some(ty) = func.type_of_value(*val) {
                 if matches!(ctx.get_type(ty), TypeData::Vector { .. }) && features.simd_enabled() {
                     let src = res!(*val);
@@ -941,10 +921,7 @@ fn lower_instr(
                     return;
                 }
             }
-            // Store through pointer: MOV [ptr_reg], src.
-            let src = res!(*val);
-            let ptr_vr = res!(*ptr);
-            mf.push(mblock, MInstr::new(MOV_STORE_REG_RM).with_vreg(ptr_vr).with_vreg(src));
+            mf.push(mblock, MInstr::new(NOP));
         }
 
         // ── FP arithmetic (not yet supported) ──────────────────────────────

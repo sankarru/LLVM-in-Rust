@@ -490,49 +490,6 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             }
         }
 
-        // ── non-promotable alloca frame-slot access ───────────────────────
-
-        // SUB_FP_IMM: sub xd, x29, #(slot_idx+1)*8  — address below X29
-        // Encoding (SUB immediate, 64-bit): 0xD1000000 | (imm12<<10) | (Rn<<5) | Rd
-        // Rn = 29 (FP), imm12 = (slot_idx+1)*8.
-        SUB_FP_IMM => {
-            if let (Some(dst), Some(MOperand::Imm(slot_idx))) = (instr.dst, instr.operands.first()) {
-                let rd = reg_enc(PReg(dst.0 as u8)) as u32;
-                let imm12 = ((*slot_idx as u32 + 1) * 8) & 0xFFF;
-                ctx.emit4(0xD1000000 | (imm12 << 10) | (29 << 5) | rd);
-            } else {
-                ctx.emit4(0xD503201F); // NOP
-            }
-        }
-
-        // LDR_REG: ldr xd, [xn]  — 64-bit load via pointer register, no offset.
-        // Encoding (unsigned offset = 0): 0xF9400000 | (0 << 10) | (Rn << 5) | Rd
-        LDR_REG => {
-            if let (Some(dst), Some(MOperand::PReg(ptr))) =
-                (instr.dst, instr.operands.first())
-            {
-                let rd = reg_enc(PReg(dst.0 as u8)) as u32;
-                let rn = reg_enc(*ptr) as u32;
-                ctx.emit4(0xF9400000 | (rn << 5) | rd);
-            } else {
-                ctx.emit4(0xD503201F);
-            }
-        }
-
-        // STR_REG: str xs, [xn]  — 64-bit store via pointer register, no offset.
-        // Encoding (unsigned offset = 0): 0xF9000000 | (0 << 10) | (Rn << 5) | Rt
-        STR_REG => {
-            if let (Some(MOperand::PReg(ptr)), Some(src)) =
-                (instr.operands.first(), instr.operands.get(1).and_then(preg))
-            {
-                let rt = reg_enc(src) as u32;
-                let rn = reg_enc(*ptr) as u32;
-                ctx.emit4(0xF9000000 | (rn << 5) | rt);
-            } else {
-                ctx.emit4(0xD503201F);
-            }
-        }
-
         // ── DMB_ISH (dmb ish) — fixed encoding 0xD5033BBF ───────────────
         DMB_ISH => {
             ctx.emit4(0xD5033BBF);
