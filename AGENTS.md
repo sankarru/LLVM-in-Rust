@@ -159,6 +159,17 @@ When:   Formalizing explicit machine-IR -> object-byte assembly APIs, adding
 Skill:  skills/integrated-assembler/SKILL.md
 ```
 
+### fp-memory agent
+Use for Milestone I sub-issues: floating-point lowering and non-promotable memory.
+
+```
+Invoke: $fp-memory
+When:   Implementing SSE2/NEON/RV-FD instruction lowering & encoding, XMM/V-register
+        class support, FP calling convention, or stack-frame alloca/load/store
+        with SP-relative addressing in any backend.
+Skill:  skills/fp-memory/SKILL.md
+```
+
 ### Plan agent
 Use **before** starting a new phase or a non-trivial fix.
 
@@ -194,6 +205,43 @@ When:   The sub-task is independent of the current work and would block
 - Reading a specific known file → use `Read` directly
 - Searching for a specific class or function → use `Grep` directly
 - Simple one-file edits → use `Edit` directly
+
+---
+
+## Milestone Workflow
+
+Milestones (#285, #286, …) are **tracking issues**, not implementation issues.
+Each milestone contains several scoped sub-tasks.  The mandatory workflow is:
+
+```
+Milestone tracking issue
+  └─ Sub-issue A  →  branch fix/issue-A-slug  →  PR  →  merge  →  close A
+  └─ Sub-issue B  →  branch fix/issue-B-slug  →  PR  →  merge  →  close B
+  └─ …
+  └─ When ALL sub-issues are closed → close the milestone tracking issue
+```
+
+### Rules (apply to every milestone, do not repeat in user instructions)
+
+1. **One issue → one PR**.  Never batch unrelated sub-tasks into a single PR.
+   Split them even if they touch the same files.
+2. **Open sub-issues first**, reference them from the milestone tracking issue
+   body (update the checkbox list), then implement.
+3. **Each PR follows the full review/test/issue-fix loop** (see above):
+   self-review → cargo test → open issue(s) for any found problems → fix in
+   same branch → post `gh pr review --comment` → merge.
+4. **Close sub-issues immediately after their PR merges** — either via
+   `closes #N` in the commit message (auto-close) or `gh issue close N`
+   manually if the auto-close did not fire.
+5. **Close the milestone tracking issue** once every sub-issue checkbox is
+   ticked.  Update the Status Snapshot in #93 at that point.
+6. **Branch naming for milestone sub-issues**:
+   `feat/milestone-<letter>-<slug>`  (e.g. `feat/milestone-i-x86-fp`)
+7. **Parallel agents** — independent sub-issues may be implemented by
+   separate agents running in parallel worktrees (`isolation: "worktree"`).
+   Sub-issues that depend on shared infrastructure (e.g., a new register
+   class abstraction) must be sequenced: infrastructure PR first, then
+   dependents.
 
 ---
 
