@@ -137,3 +137,76 @@ pub const LD_REG: MOpcode = MOpcode(0xA1);
 /// `sd rs2, 0(rs1)` — 64-bit store through a register-held pointer (offset 0).
 /// No `dst`. `operands[0]` = PReg (pointer), `operands[1]` = PReg (value).
 pub const SD_REG: MOpcode = MOpcode(0xA2);
+
+// ── F+D extension (scalar FP) ─────────────────────────────────────────────
+
+/// `fadd.d rd, rs1, rs2` — double-precision add (funct7=0x01, funct3=RNE=0x7).
+pub const FADD_D: MOpcode = MOpcode(0xB0);
+/// `fsub.d rd, rs1, rs2` — double-precision subtract (funct7=0x05).
+pub const FSUB_D: MOpcode = MOpcode(0xB1);
+/// `fmul.d rd, rs1, rs2` — double-precision multiply (funct7=0x09).
+pub const FMUL_D: MOpcode = MOpcode(0xB2);
+/// `fdiv.d rd, rs1, rs2` — double-precision divide (funct7=0x0D).
+pub const FDIV_D: MOpcode = MOpcode(0xB3);
+/// `fsqrt.d rd, rs1` — double-precision square root (funct7=0x2D, rs2=0).
+pub const FSQRT_D: MOpcode = MOpcode(0xB4);
+/// `fsgnjn.d rd, rs1, rs2` — negate sign (used for FNeg; funct7=0x21, funct3=0x1, rs2=rs1).
+pub const FNEG_D: MOpcode = MOpcode(0xB5);
+/// `feq.d rd, rs1, rs2` — double FP equal comparison → integer result (funct7=0x51, funct3=0x2).
+pub const FCMP_EQ_D: MOpcode = MOpcode(0xB6);
+/// `flt.d rd, rs1, rs2` — double FP less-than comparison → integer result (funct7=0x51, funct3=0x1).
+pub const FCMP_LT_D: MOpcode = MOpcode(0xB7);
+/// `fle.d rd, rs1, rs2` — double FP less-equal comparison → integer result (funct7=0x51, funct3=0x0).
+pub const FCMP_LE_D: MOpcode = MOpcode(0xB8);
+/// `fcvt.w.d rd, rs1` — double→i32 conversion (funct7=0x61, rs2=0, rounding=RTZ=0x1).
+pub const FCVT_W_D: MOpcode = MOpcode(0xB9);
+/// `fcvt.l.d rd, rs1` — double→i64 conversion (funct7=0x61, rs2=2, rounding=RTZ=0x1).
+pub const FCVT_L_D: MOpcode = MOpcode(0xBA);
+/// `fcvt.d.w rd, rs1` — i32→double conversion (funct7=0x69, rs2=0).
+pub const FCVT_D_W: MOpcode = MOpcode(0xBB);
+/// `fcvt.d.l rd, rs1` — i64→double conversion (funct7=0x69, rs2=2).
+pub const FCVT_D_L: MOpcode = MOpcode(0xBC);
+/// `fld rd, imm(rs1)` — load double from memory (opcode=0x07, funct3=0x3).
+pub const FLD: MOpcode = MOpcode(0xBD);
+/// `fsd rs2, imm(rs1)` — store double to memory (opcode=0x27, funct3=0x3).
+pub const FSD: MOpcode = MOpcode(0xBE);
+/// `fsgnj.d rd, rs1, rs1` — FP register copy via sign-inject (funct7=0x11, funct3=0x0, rs2=rs1).
+pub const FMV_D_D: MOpcode = MOpcode(0xBF);
+
+// ── F+D spill opcodes (re-use FLD/FSD with frame-slot semantics) ───────────
+
+/// FP spill load from stack slot (same encoding as FLD; semantics: dst = mem[fp + slot*8]).
+pub const FP_LOAD_MR: MOpcode = MOpcode(0xC0);
+/// FP spill store to stack slot (same encoding as FSD; semantics: mem[fp + slot*8] = src).
+pub const FP_STORE_RM: MOpcode = MOpcode(0xC1);
+
+// ── Single-precision (F extension) ────────────────────────────────────────
+
+/// `fadd.s rd, rs1, rs2` — single-precision add (funct7=0x00).
+pub const FADD_S: MOpcode = MOpcode(0xD0);
+/// `fsub.s rd, rs1, rs2` — single-precision subtract (funct7=0x04).
+pub const FSUB_S: MOpcode = MOpcode(0xD1);
+/// `fmul.s rd, rs1, rs2` — single-precision multiply (funct7=0x08).
+pub const FMUL_S: MOpcode = MOpcode(0xD2);
+/// `fdiv.s rd, rs1, rs2` — single-precision divide (funct7=0x0C).
+pub const FDIV_S: MOpcode = MOpcode(0xD3);
+/// `fsgnjn.s rd, rs1, rs2` — negate sign single (funct7=0x20, funct3=0x1, rs2=rs1).
+pub const FNEG_S: MOpcode = MOpcode(0xD4);
+/// `feq.s rd, rs1, rs2` — single FP equal (funct7=0x50, funct3=0x2).
+pub const FCMP_EQ_S: MOpcode = MOpcode(0xD5);
+/// `flt.s rd, rs1, rs2` — single FP less-than (funct7=0x50, funct3=0x1).
+pub const FCMP_LT_S: MOpcode = MOpcode(0xD6);
+/// `fle.s rd, rs1, rs2` — single FP less-equal (funct7=0x50, funct3=0x0).
+pub const FCMP_LE_S: MOpcode = MOpcode(0xD7);
+/// `fcvt.w.s rd, rs1` — single→i32 (funct7=0x60, rs2=0, rounding=RTZ).
+pub const FCVT_W_S: MOpcode = MOpcode(0xD8);
+/// `fcvt.l.s rd, rs1` — single→i64 (funct7=0x60, rs2=2, rounding=RTZ).
+pub const FCVT_L_S: MOpcode = MOpcode(0xD9);
+/// `fcvt.s.w rd, rs1` — i32→single (funct7=0x68, rs2=0).
+pub const FCVT_S_W: MOpcode = MOpcode(0xDA);
+/// `fcvt.s.l rd, rs1` — i64→single (funct7=0x68, rs2=2).
+pub const FCVT_S_L: MOpcode = MOpcode(0xDB);
+/// `flw rd, imm(rs1)` — load single from memory (opcode=0x07, funct3=0x2).
+pub const FLW: MOpcode = MOpcode(0xDC);
+/// `fsw rs2, imm(rs1)` — store single to memory (opcode=0x27, funct3=0x2).
+pub const FSW: MOpcode = MOpcode(0xDD);

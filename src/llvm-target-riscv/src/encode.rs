@@ -1,6 +1,6 @@
 //! RV64 encoder and object emission.
 
-use crate::instructions::*;
+use crate::{instructions::*, regs::{fp_enc, is_fp_reg}};
 use llvm_codegen::emit::{DebugLineRow, Emitter, ObjectFormat, Section};
 use llvm_codegen::isel::{MInstr, MOpcode, MOperand, MachineFunction, PReg, VReg};
 
@@ -112,6 +112,31 @@ fn reg_of_op(op: &MOperand) -> Option<u8> {
     match op {
         MOperand::PReg(PReg(r)) => Some(*r & 0x1F),
         MOperand::VReg(VReg(v)) => Some((v & 0x1F) as u8),
+        _ => None,
+    }
+}
+
+/// Extract the 5-bit hardware FP register number from dst VReg (post-regalloc).
+/// After regalloc, FP VRegs have PReg(32..63) baked into the low 8 bits of the VReg.
+fn fp_reg_of_dst(v: VReg) -> u8 {
+    // Post-allocation: v.0 = PReg.0 (8-bit physical reg number stored in u32).
+    // FP regs: PReg(32..63) → fp_enc = PReg.0 - 32.
+    let raw = (v.0 & 0xFF) as u8;
+    if raw >= 32 { raw - 32 } else { raw }
+}
+
+/// Extract the 5-bit hardware FP register number from a PReg operand.
+fn fp_reg_of_op(op: &MOperand) -> Option<u8> {
+    match op {
+        MOperand::PReg(r) if is_fp_reg(*r) => Some(fp_enc(*r)),
+        MOperand::PReg(PReg(r)) => Some((*r) & 0x1F),
+        MOperand::VReg(VReg(v)) => {
+            // Post-regalloc: VReg carries the physical register number.
+            let raw = (*v & 0xFF) as u8;
+            // If it was an FP VReg, the bit pattern in the class-bit was stripped
+            // by apply_allocation, so use raw directly.
+            if raw >= 32 { Some(raw - 32) } else { Some(raw) }
+        }
         _ => None,
     }
 }
@@ -293,6 +318,236 @@ fn encode_instr(instr: &MInstr) -> u32 {
         LD_REG => enc_i(0, rs1, 0x3, rd, 0x03),
         // SD_REG: sd rs2, 0(rs1)  — store 64-bit word through pointer reg
         SD_REG => enc_s(0, rs2, rs1, 0x3, 0x23),
+
+        // ── F+D extension (scalar FP) ──────────────────────────────────────
+        //
+        // FP R-type format: funct7(7) | rs2(5) | rs1(5) | funct3(3) | rd(5) | opcode(7)
+        // opcode = 0x53 for all FP arithmetic.  funct3 = 0b111 (RNE rounding mode).
+        // Register fields use the 5-bit FP register number (0-31).
+        //
+        // After register allocation, `instr.dst` holds VReg(PReg.0 as u32) where
+        // PReg.0 is in 32-63 for FP registers.  `fp_reg_of_dst` converts to 0-31.
+        // Similarly, operands are PReg(32..63) for FP registers.
+
+        // fadd.d rd, rs1, rs2 — funct7=0x01, funct3=RNE=0x7
+        FADD_D => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x01, rs2, rs1, 0x7, rd, 0x53)
+        }
+        // fsub.d — funct7=0x05
+        FSUB_D => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x05, rs2, rs1, 0x7, rd, 0x53)
+        }
+        // fmul.d — funct7=0x09
+        FMUL_D => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x09, rs2, rs1, 0x7, rd, 0x53)
+        }
+        // fdiv.d — funct7=0x0D
+        FDIV_D => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x0D, rs2, rs1, 0x7, rd, 0x53)
+        }
+        // fsqrt.d — funct7=0x2D, rs2=0
+        FSQRT_D => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x2D, 0, rs1, 0x7, rd, 0x53)
+        }
+        // fsgnjn.d rd, rs1, rs1 — fneg: funct7=0x21, funct3=0x1, rs2=rs1
+        FNEG_D => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            // rs2 = rs1 (FSGNJN rd, rs, rs)
+            enc_r(0x21, rs1, rs1, 0x1, rd, 0x53)
+        }
+        // feq.d rd, rs1, rs2 — funct7=0x51, funct3=0x2; result is integer
+        FCMP_EQ_D => {
+            let rd = reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x51, rs2, rs1, 0x2, rd, 0x53)
+        }
+        // flt.d rd, rs1, rs2 — funct7=0x51, funct3=0x1
+        FCMP_LT_D => {
+            let rd = reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x51, rs2, rs1, 0x1, rd, 0x53)
+        }
+        // fle.d rd, rs1, rs2 — funct7=0x51, funct3=0x0
+        FCMP_LE_D => {
+            let rd = reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x51, rs2, rs1, 0x0, rd, 0x53)
+        }
+        // fcvt.w.d rd, rs1 — funct7=0x61, rs2=0, rounding=RTZ=0x1
+        FCVT_W_D => {
+            let rd = reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x61, 0, rs1, 0x1, rd, 0x53)
+        }
+        // fcvt.l.d rd, rs1 — funct7=0x61, rs2=2, rounding=RTZ=0x1
+        FCVT_L_D => {
+            let rd = reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x61, 2, rs1, 0x1, rd, 0x53)
+        }
+        // fcvt.d.w rd, rs1 — funct7=0x69, rs2=0
+        FCVT_D_W => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(reg_of_op).unwrap_or(0);
+            enc_r(0x69, 0, rs1, 0x0, rd, 0x53)
+        }
+        // fcvt.d.l rd, rs1 — funct7=0x69, rs2=2
+        FCVT_D_L => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(reg_of_op).unwrap_or(0);
+            enc_r(0x69, 2, rs1, 0x0, rd, 0x53)
+        }
+        // fsgnj.d rd, rs1, rs1 — FP register copy; funct7=0x11, funct3=0x0, rs2=rs1
+        FMV_D_D => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x11, rs1, rs1, 0x0, rd, 0x53)
+        }
+        // fld rd, imm(rs1) — I-type: opcode=0x07, funct3=0x3
+        FLD => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(reg_of_op).unwrap_or(0);
+            let imm = imm_of_op(instr.operands.get(1));
+            enc_i(imm, rs1, 0x3, rd, 0x07)
+        }
+        // fsd rs2, imm(rs1) — S-type: opcode=0x27, funct3=0x3
+        FSD => {
+            let rs1 = instr.operands.first().and_then(reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            let imm = imm_of_op(instr.operands.get(2));
+            enc_s(imm, rs2, rs1, 0x3, 0x27)
+        }
+        // FP_LOAD_MR: FP spill reload — FLD Fd, slot*8(sp)  (same encoding as FLD)
+        // Layout: dst=VReg(FPReg), operands=[Imm(slot)]
+        // The frame pointer (x8/s0) is used for frame-relative addressing.
+        FP_LOAD_MR => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let slot = imm_of_op(instr.operands.first());
+            let byte_off = slot * 8; // slot index → byte offset
+            // Use x8 (s0/fp) as frame pointer, same as integer spill reloads.
+            enc_i(byte_off, 8, 0x3, rd, 0x07)
+        }
+        // FP_STORE_RM: FP spill save — FSD Fs, slot*8(sp)
+        // Layout: dst=None, operands=[Imm(slot), VReg(src)]
+        FP_STORE_RM => {
+            let slot = imm_of_op(instr.operands.first());
+            let byte_off = slot * 8;
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_s(byte_off, rs2, 8, 0x3, 0x27)
+        }
+
+        // ── Single-precision (F extension) ────────────────────────────────
+        // fadd.s — funct7=0x00
+        FADD_S => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x00, rs2, rs1, 0x7, rd, 0x53)
+        }
+        // fsub.s — funct7=0x04
+        FSUB_S => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x04, rs2, rs1, 0x7, rd, 0x53)
+        }
+        // fmul.s — funct7=0x08
+        FMUL_S => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x08, rs2, rs1, 0x7, rd, 0x53)
+        }
+        // fdiv.s — funct7=0x0C
+        FDIV_S => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x0C, rs2, rs1, 0x7, rd, 0x53)
+        }
+        // fsgnjn.s rd, rs, rs (fneg single) — funct7=0x20, funct3=0x1
+        FNEG_S => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x20, rs1, rs1, 0x1, rd, 0x53)
+        }
+        // feq.s — funct7=0x50, funct3=0x2
+        FCMP_EQ_S => {
+            let rd = reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x50, rs2, rs1, 0x2, rd, 0x53)
+        }
+        // flt.s — funct7=0x50, funct3=0x1
+        FCMP_LT_S => {
+            let rd = reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x50, rs2, rs1, 0x1, rd, 0x53)
+        }
+        // fle.s — funct7=0x50, funct3=0x0
+        FCMP_LE_S => {
+            let rd = reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x50, rs2, rs1, 0x0, rd, 0x53)
+        }
+        // fcvt.w.s — funct7=0x60, rs2=0, rounding=RTZ
+        FCVT_W_S => {
+            let rd = reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x60, 0, rs1, 0x1, rd, 0x53)
+        }
+        // fcvt.l.s — funct7=0x60, rs2=2, rounding=RTZ
+        FCVT_L_S => {
+            let rd = reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(fp_reg_of_op).unwrap_or(0);
+            enc_r(0x60, 2, rs1, 0x1, rd, 0x53)
+        }
+        // fcvt.s.w — funct7=0x68, rs2=0
+        FCVT_S_W => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(reg_of_op).unwrap_or(0);
+            enc_r(0x68, 0, rs1, 0x0, rd, 0x53)
+        }
+        // fcvt.s.l — funct7=0x68, rs2=2
+        FCVT_S_L => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(reg_of_op).unwrap_or(0);
+            enc_r(0x68, 2, rs1, 0x0, rd, 0x53)
+        }
+        // flw rd, imm(rs1) — I-type: opcode=0x07, funct3=0x2
+        FLW => {
+            let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
+            let rs1 = instr.operands.first().and_then(reg_of_op).unwrap_or(0);
+            let imm = imm_of_op(instr.operands.get(1));
+            enc_i(imm, rs1, 0x2, rd, 0x07)
+        }
+        // fsw rs2, imm(rs1) — S-type: opcode=0x27, funct3=0x2
+        FSW => {
+            let rs1 = instr.operands.first().and_then(reg_of_op).unwrap_or(0);
+            let rs2 = instr.operands.get(1).and_then(fp_reg_of_op).unwrap_or(0);
+            let imm = imm_of_op(instr.operands.get(2));
+            enc_s(imm, rs2, rs1, 0x2, 0x27)
+        }
 
         _ => panic!("unsupported RISC-V opcode {:?}", instr.opcode),
     }
@@ -622,6 +877,484 @@ mod tests {
             let mi = MInstr::new(op).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
             let word = encode_instr(&mi);
             assert_eq!(word & 0x7F, 0x2F, "opcode 0x{:X} should have AMO opcode 0x2F in bits[6:0], got 0x{:X}", op.0, word & 0x7F);
+        }
+    }
+
+    // ── F+D extension encoding tests ───────────────────────────────────────
+
+    /// Build an FP R-type instruction with dst=PReg(fd), rs1=PReg(fs1), rs2=PReg(fs2).
+    /// FP PRegs are offset by 32: PReg(32+fd), etc.
+    fn fp_rr(op: llvm_codegen::isel::MOpcode, fd: u8, fs1: u8, fs2: u8) -> MInstr {
+        MInstr::new(op)
+            .with_dst(VReg((32 + fd) as u32))  // post-regalloc: VReg holds PReg number
+            .with_preg(PReg(32 + fs1))
+            .with_preg(PReg(32 + fs2))
+    }
+
+    /// Build a unary FP instruction (one source, one destination).
+    fn fp_r1(op: llvm_codegen::isel::MOpcode, fd: u8, fs1: u8) -> MInstr {
+        MInstr::new(op)
+            .with_dst(VReg((32 + fd) as u32))
+            .with_preg(PReg(32 + fs1))
+    }
+
+    #[test]
+    fn enc_fadd_d_opcode_field() {
+        // fadd.d f3, f1, f2: funct7=0x01, funct3=0x7 (RNE), opcode=0x53
+        let mi = fp_rr(FADD_D, 3, 1, 2);
+        let word = encode_instr(&mi);
+        assert_eq!(word & 0x7F, 0x53, "fadd.d opcode must be 0x53");
+        assert_eq!((word >> 25) & 0x7F, 0x01, "fadd.d funct7 must be 0x01");
+        assert_eq!((word >> 12) & 0x7, 0x7, "fadd.d funct3 must be 0x7 (RNE)");
+        assert_eq!(word, enc_r(0x01, 2, 1, 0x7, 3, 0x53));
+    }
+
+    #[test]
+    fn enc_fsub_d_opcode_field() {
+        let mi = fp_rr(FSUB_D, 4, 5, 6);
+        let word = encode_instr(&mi);
+        assert_eq!(word & 0x7F, 0x53, "fsub.d opcode must be 0x53");
+        assert_eq!((word >> 25) & 0x7F, 0x05, "fsub.d funct7 must be 0x05");
+        assert_eq!(word, enc_r(0x05, 6, 5, 0x7, 4, 0x53));
+    }
+
+    #[test]
+    fn enc_fmul_d_opcode_field() {
+        let mi = fp_rr(FMUL_D, 0, 1, 2);
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x09, "fmul.d funct7 must be 0x09");
+        assert_eq!(word, enc_r(0x09, 2, 1, 0x7, 0, 0x53));
+    }
+
+    #[test]
+    fn enc_fdiv_d_opcode_field() {
+        let mi = fp_rr(FDIV_D, 0, 1, 2);
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x0D, "fdiv.d funct7 must be 0x0D");
+        assert_eq!(word, enc_r(0x0D, 2, 1, 0x7, 0, 0x53));
+    }
+
+    #[test]
+    fn enc_fsqrt_d_opcode_field() {
+        // fsqrt.d f3, f1: rs2 must be 0
+        let mi = fp_r1(FSQRT_D, 3, 1);
+        let word = encode_instr(&mi);
+        assert_eq!(word & 0x7F, 0x53, "fsqrt.d opcode");
+        assert_eq!((word >> 25) & 0x7F, 0x2D, "fsqrt.d funct7 must be 0x2D");
+        assert_eq!((word >> 20) & 0x1F, 0, "fsqrt.d rs2 must be 0");
+        assert_eq!(word, enc_r(0x2D, 0, 1, 0x7, 3, 0x53));
+    }
+
+    #[test]
+    fn enc_fneg_d_uses_fsgnjn_encoding() {
+        // fneg.d is FSGNJN.D rd, rs, rs: funct7=0x21, funct3=0x1, rs2=rs1
+        let mi = MInstr::new(FNEG_D)
+            .with_dst(VReg(32 + 0))  // fd=f0
+            .with_preg(PReg(32 + 1)) // rs1=f1
+            .with_preg(PReg(32 + 1)); // rs2=f1 (same)
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x21, "fneg.d funct7 must be 0x21 (FSGNJN)");
+        assert_eq!((word >> 12) & 0x7, 0x1, "fneg.d funct3 must be 0x1");
+        // rs1 == rs2 == 1
+        assert_eq!((word >> 15) & 0x1F, 1, "rs1 must be f1");
+        assert_eq!((word >> 20) & 0x1F, 1, "rs2 must be f1 (same as rs1)");
+    }
+
+    #[test]
+    fn enc_feq_d_produces_integer_dest() {
+        // feq.d uses integer rd, FP rs1/rs2: funct7=0x51, funct3=0x2
+        let mi = MInstr::new(FCMP_EQ_D)
+            .with_dst(VReg(3))       // integer rd=x3
+            .with_preg(PReg(32 + 0)) // rs1=f0
+            .with_preg(PReg(32 + 1)); // rs2=f1
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x51, "feq.d funct7 must be 0x51");
+        assert_eq!((word >> 12) & 0x7, 0x2, "feq.d funct3 must be 0x2");
+        assert_eq!((word >> 7) & 0x1F, 3, "feq.d integer rd must be 3");
+        assert_eq!(word, enc_r(0x51, 1, 0, 0x2, 3, 0x53));
+    }
+
+    #[test]
+    fn enc_flt_d_opcode_field() {
+        let mi = MInstr::new(FCMP_LT_D)
+            .with_dst(VReg(1))
+            .with_preg(PReg(32 + 2))
+            .with_preg(PReg(32 + 3));
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x51, "flt.d funct7");
+        assert_eq!((word >> 12) & 0x7, 0x1, "flt.d funct3 must be 0x1");
+        assert_eq!(word, enc_r(0x51, 3, 2, 0x1, 1, 0x53));
+    }
+
+    #[test]
+    fn enc_fle_d_opcode_field() {
+        let mi = MInstr::new(FCMP_LE_D)
+            .with_dst(VReg(1))
+            .with_preg(PReg(32 + 4))
+            .with_preg(PReg(32 + 5));
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 12) & 0x7, 0x0, "fle.d funct3 must be 0x0");
+        assert_eq!(word, enc_r(0x51, 5, 4, 0x0, 1, 0x53));
+    }
+
+    #[test]
+    fn enc_fcvt_l_d_funct7_and_rs2() {
+        // fcvt.l.d: funct7=0x61, rs2=2 (L), rounding=RTZ=0x1
+        let mi = MInstr::new(FCVT_L_D)
+            .with_dst(VReg(1))        // integer rd
+            .with_preg(PReg(32 + 0)); // fp rs1
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x61, "fcvt.l.d funct7 must be 0x61");
+        assert_eq!((word >> 20) & 0x1F, 2, "fcvt.l.d rs2 must be 2 (L)");
+        assert_eq!((word >> 12) & 0x7, 0x1, "fcvt.l.d rounding must be RTZ=0x1");
+    }
+
+    #[test]
+    fn enc_fcvt_w_d_funct7_and_rs2() {
+        // fcvt.w.d: funct7=0x61, rs2=0 (W), rounding=RTZ=0x1
+        let mi = MInstr::new(FCVT_W_D)
+            .with_dst(VReg(2))
+            .with_preg(PReg(32 + 1));
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x61, "fcvt.w.d funct7");
+        assert_eq!((word >> 20) & 0x1F, 0, "fcvt.w.d rs2 must be 0 (W)");
+    }
+
+    #[test]
+    fn enc_fcvt_d_l_funct7_and_rs2() {
+        // fcvt.d.l: funct7=0x69, rs2=2
+        let mi = MInstr::new(FCVT_D_L)
+            .with_dst(VReg(32 + 0))  // fp rd
+            .with_preg(PReg(1));      // int rs1
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x69, "fcvt.d.l funct7 must be 0x69");
+        assert_eq!((word >> 20) & 0x1F, 2, "fcvt.d.l rs2 must be 2 (L)");
+        assert_eq!(word & 0x7F, 0x53, "opcode must be 0x53");
+    }
+
+    #[test]
+    fn enc_fcvt_d_w_funct7_and_rs2() {
+        // fcvt.d.w: funct7=0x69, rs2=0
+        let mi = MInstr::new(FCVT_D_W)
+            .with_dst(VReg(32 + 2))
+            .with_preg(PReg(3));
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x69, "fcvt.d.w funct7 must be 0x69");
+        assert_eq!((word >> 20) & 0x1F, 0, "fcvt.d.w rs2 must be 0 (W)");
+    }
+
+    #[test]
+    fn enc_fmv_d_d_uses_fsgnj_encoding() {
+        // fsgnj.d rd, rs, rs: funct7=0x11, funct3=0x0, rs2=rs1
+        let mi = MInstr::new(FMV_D_D)
+            .with_dst(VReg(32 + 5))
+            .with_preg(PReg(32 + 6));
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x11, "fmv.d funct7 must be 0x11 (FSGNJ)");
+        assert_eq!((word >> 12) & 0x7, 0x0, "fmv.d funct3 must be 0x0");
+        // Both rs1 and rs2 must be the same source register (f6=6)
+        assert_eq!((word >> 15) & 0x1F, 6, "fmv.d rs1 must be f6");
+        assert_eq!((word >> 20) & 0x1F, 6, "fmv.d rs2 must be f6 (copy idiom)");
+    }
+
+    #[test]
+    fn enc_fld_i_type_opcode_and_funct3() {
+        // fld f1, 8(x2): opcode=0x07, funct3=0x3
+        let mi = MInstr::new(FLD)
+            .with_dst(VReg(32 + 1)) // fd=f1
+            .with_preg(PReg(2))      // rs1=x2
+            .with_imm(8);
+        let word = encode_instr(&mi);
+        assert_eq!(word & 0x7F, 0x07, "fld opcode must be 0x07");
+        assert_eq!((word >> 12) & 0x7, 0x3, "fld funct3 must be 0x3");
+        assert_eq!((word >> 20) & 0xFFF, 8, "fld imm must be 8");
+        assert_eq!((word >> 7) & 0x1F, 1, "fld rd must be f1=1");
+        assert_eq!((word >> 15) & 0x1F, 2, "fld rs1 must be x2");
+        assert_eq!(word, enc_i(8, 2, 0x3, 1, 0x07));
+    }
+
+    #[test]
+    fn enc_fsd_s_type_opcode_and_funct3() {
+        // fsd f2, 16(x3): opcode=0x27, funct3=0x3
+        let mi = MInstr::new(FSD)
+            .with_preg(PReg(3))       // rs1=x3 (base)
+            .with_preg(PReg(32 + 2))  // rs2=f2 (source)
+            .with_imm(16);
+        let word = encode_instr(&mi);
+        assert_eq!(word & 0x7F, 0x27, "fsd opcode must be 0x27");
+        assert_eq!((word >> 12) & 0x7, 0x3, "fsd funct3 must be 0x3");
+        // Verify it matches enc_s
+        assert_eq!(word, enc_s(16, 2, 3, 0x3, 0x27));
+    }
+
+    #[test]
+    fn enc_fp_arith_all_have_opcode_53() {
+        // All FP arithmetic instructions must have opcode 0x53.
+        let fp_arith_ops = [
+            FADD_D, FSUB_D, FMUL_D, FDIV_D, FSQRT_D, FNEG_D,
+            FCMP_EQ_D, FCMP_LT_D, FCMP_LE_D,
+            FADD_S, FSUB_S, FMUL_S, FDIV_S, FNEG_S,
+            FCMP_EQ_S, FCMP_LT_S, FCMP_LE_S,
+        ];
+        for &op in &fp_arith_ops {
+            // Build a generic instruction: for compare ops dst is int, for arith dst is fp.
+            let mi = if matches!(op, FCMP_EQ_D | FCMP_LT_D | FCMP_LE_D | FCMP_EQ_S | FCMP_LT_S | FCMP_LE_S) {
+                MInstr::new(op)
+                    .with_dst(VReg(1))
+                    .with_preg(PReg(32))
+                    .with_preg(PReg(33))
+            } else if matches!(op, FSQRT_D) {
+                MInstr::new(op).with_dst(VReg(32)).with_preg(PReg(33))
+            } else if matches!(op, FNEG_D | FNEG_S) {
+                MInstr::new(op).with_dst(VReg(32)).with_preg(PReg(33)).with_preg(PReg(33))
+            } else {
+                MInstr::new(op).with_dst(VReg(32)).with_preg(PReg(33)).with_preg(PReg(34))
+            };
+            let word = encode_instr(&mi);
+            assert_eq!(word & 0x7F, 0x53, "FP op {:?} must have opcode 0x53", op);
+        }
+    }
+
+    #[test]
+    fn enc_fadd_s_funct7_is_zero() {
+        // fadd.s: funct7=0x00
+        let mi = fp_rr(FADD_S, 0, 1, 2);
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x00, "fadd.s funct7 must be 0x00");
+    }
+
+    #[test]
+    fn enc_fcvt_s_l_funct7_and_rs2() {
+        // fcvt.s.l: funct7=0x68, rs2=2
+        let mi = MInstr::new(FCVT_S_L)
+            .with_dst(VReg(32 + 0))
+            .with_preg(PReg(1));
+        let word = encode_instr(&mi);
+        assert_eq!((word >> 25) & 0x7F, 0x68, "fcvt.s.l funct7 must be 0x68");
+        assert_eq!((word >> 20) & 0x1F, 2, "fcvt.s.l rs2 must be 2");
+    }
+
+    // ── IR-level lowering tests ────────────────────────────────────────────
+
+    #[test]
+    fn lower_fadd_double_emits_fadd_d() {
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::isel::IselBackend;
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define double @f(double %a, double %b) {
+entry:
+  %r = fadd double %a, %b
+  ret double %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has_fadd = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FADD_D);
+        assert!(has_fadd, "fadd double must lower to FADD_D");
+    }
+
+    #[test]
+    fn lower_fsub_double_emits_fsub_d() {
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::isel::IselBackend;
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define double @f(double %a, double %b) {
+entry:
+  %r = fsub double %a, %b
+  ret double %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FSUB_D);
+        assert!(has, "fsub double must lower to FSUB_D");
+    }
+
+    #[test]
+    fn lower_fmul_double_emits_fmul_d() {
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::isel::IselBackend;
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define double @f(double %a, double %b) {
+entry:
+  %r = fmul double %a, %b
+  ret double %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FMUL_D);
+        assert!(has, "fmul double must lower to FMUL_D");
+    }
+
+    #[test]
+    fn lower_fdiv_double_emits_fdiv_d() {
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::isel::IselBackend;
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define double @f(double %a, double %b) {
+entry:
+  %r = fdiv double %a, %b
+  ret double %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FDIV_D);
+        assert!(has, "fdiv double must lower to FDIV_D");
+    }
+
+    #[test]
+    fn lower_fneg_double_emits_fneg_d() {
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::isel::IselBackend;
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define double @f(double %a) {
+entry:
+  %r = fneg double %a
+  ret double %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FNEG_D);
+        assert!(has, "fneg double must lower to FNEG_D");
+    }
+
+    #[test]
+    fn lower_fcmp_oeq_double_emits_fcmp_eq_d() {
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::isel::IselBackend;
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define i1 @f(double %a, double %b) {
+entry:
+  %r = fcmp oeq double %a, %b
+  ret i1 %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FCMP_EQ_D);
+        assert!(has, "fcmp oeq double must lower to FCMP_EQ_D");
+    }
+
+    #[test]
+    fn lower_fcmp_olt_double_emits_fcmp_lt_d() {
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::isel::IselBackend;
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define i1 @f(double %a, double %b) {
+entry:
+  %r = fcmp olt double %a, %b
+  ret i1 %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FCMP_LT_D);
+        assert!(has, "fcmp olt double must lower to FCMP_LT_D");
+    }
+
+    #[test]
+    fn lower_sitofp_emits_fcvt_d_l() {
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::isel::IselBackend;
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define double @f(i64 %a) {
+entry:
+  %r = sitofp i64 %a to double
+  ret double %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FCVT_D_L);
+        assert!(has, "sitofp i64 to double must lower to FCVT_D_L");
+    }
+
+    #[test]
+    fn lower_fptosi_emits_fcvt_l_d() {
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::isel::IselBackend;
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define i64 @f(double %a) {
+entry:
+  %r = fptosi double %a to i64
+  ret i64 %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FCVT_L_D);
+        assert!(has, "fptosi double to i64 must lower to FCVT_L_D");
+    }
+
+    #[test]
+    fn lower_fadd_float_emits_fadd_s() {
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::isel::IselBackend;
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define float @f(float %a, float %b) {
+entry:
+  %r = fadd float %a, %b
+  ret float %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FADD_S);
+        assert!(has, "fadd float must lower to FADD_S");
+    }
+
+    #[test]
+    fn fp_vreg_allocation_uses_fp_pool() {
+        // Verify that after lowering a double function, float VRegs are allocated
+        // to FP PRegs (PReg 32-63), not integer PRegs.
+        use crate::lower::RiscVBackend;
+        use llvm_codegen::{
+            isel::IselBackend,
+            regalloc::{allocate_registers, compute_live_intervals, RegAllocStrategy},
+        };
+        use llvm_ir_parser::parser::parse;
+        let src = r#"define double @f(double %a, double %b) {
+entry:
+  %r = fadd double %a, %b
+  ret double %r
+}"#;
+        let (ctx, module) = parse(src).expect("parse");
+        let func = &module.functions[0];
+        let mut be = RiscVBackend;
+        let mf = be.lower_function(&ctx, &module, func);
+
+        let intervals = compute_live_intervals(&mf);
+        let result = allocate_registers(
+            &intervals,
+            &mf.allocatable_pregs,
+            &mf.allocatable_fp_pregs,
+            RegAllocStrategy::LinearScan,
+        );
+
+        // Any Float-class VRegs must be assigned to the FP pool (PReg >= 32).
+        use llvm_codegen::isel::RegClass;
+        for (vr, &pr) in &result.vreg_to_preg {
+            if vr.class() == RegClass::Float {
+                assert!(
+                    pr.0 >= 32,
+                    "float VReg {:?} was assigned to int PReg {:?}",
+                    vr,
+                    pr
+                );
+            }
         }
     }
 }
