@@ -134,6 +134,44 @@ pub const LDXR: MOpcode = MOpcode(0x87);
 /// Layout: `dst` = status (0=success), `operands` = [PReg(ptr), PReg(val)].
 pub const STXR: MOpcode = MOpcode(0x88);
 
+// ── Scalar FP arithmetic (NEON/VFP D-register path) ─────────────────────
+//
+// Double-precision (ftype=0b01) encodings.  Single-precision (ftype=0b00)
+// can be added later — the only difference is the ftype field at bits[23:22].
+
+/// `fadd Dd, Dn, Dm` — double-precision FP add.
+pub const FADD_RR: MOpcode = MOpcode(0xA0);
+/// `fsub Dd, Dn, Dm` — double-precision FP subtract.
+pub const FSUB_RR: MOpcode = MOpcode(0xA1);
+/// `fmul Dd, Dn, Dm` — double-precision FP multiply.
+pub const FMUL_RR: MOpcode = MOpcode(0xA2);
+/// `fdiv Dd, Dn, Dm` — double-precision FP divide.
+pub const FDIV_RR: MOpcode = MOpcode(0xA3);
+/// `fneg Dd, Dn` — double-precision FP negate.
+pub const FNEG_R: MOpcode = MOpcode(0xA4);
+/// `fsqrt Dd, Dn` — double-precision FP square-root.
+pub const FSQRT_R: MOpcode = MOpcode(0xA5);
+/// `fcmpe Dn, Dm` — compare (sets NZCV flags; no destination register).
+pub const FCMP_RR: MOpcode = MOpcode(0xA6);
+/// `fmov Dd, Dn` — D-register to D-register copy.
+pub const FMOV_RR: MOpcode = MOpcode(0xA7);
+/// `fcvtzs Xd, Dn` — convert double to signed integer (truncate toward zero).
+pub const FCVTZS_RR: MOpcode = MOpcode(0xA8);
+/// `scvtf Dd, Xn` — convert signed integer to double.
+pub const SCVTF_RR: MOpcode = MOpcode(0xA9);
+/// `ucvtf Dd, Xn` — convert unsigned integer to double.
+pub const UCVTF_RR: MOpcode = MOpcode(0xAA);
+/// Scalar FP load: `ldr Dn, [Xn]` (base-register, no offset).
+pub const LDR_FP_SCALAR: MOpcode = MOpcode(0xAB);
+/// Scalar FP store: `str Dn, [Xn]` (base-register, no offset).
+pub const STR_FP_SCALAR: MOpcode = MOpcode(0xAC);
+/// FP spill reload: `ldur Dn, [x29, #-disp]` — load D-register from frame slot.
+/// Layout: `dst` = float VReg, `operands[0]` = `Imm(slot)`.
+pub const MOVSD_LOAD_MR: MOpcode = MOpcode(0xAD);
+/// FP spill store: `stur Dn, [x29, #-disp]` — store D-register to frame slot.
+/// Layout: `dst` = None, `operands[0]` = `Imm(slot)`, `operands[1]` = PReg/VReg(src).
+pub const MOVSD_STORE_RM: MOpcode = MOpcode(0xAE);
+
 // ── condition codes (used as Imm operands with B_COND / CSET) ────────────
 //
 // These map to AArch64 condition codes as defined in the ISA.

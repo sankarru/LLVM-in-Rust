@@ -7,7 +7,7 @@
 //! Each AArch64 instruction is exactly 4 bytes.  Branches are patched in a
 //! second pass once all block offsets are known.
 
-use crate::{instructions::*, regs::reg_enc};
+use crate::{instructions::*, regs::{fp_enc, is_fp_reg, reg_enc}};
 use llvm_codegen::{
     emit::{DebugLineRow, Emitter, ObjectFormat, Reloc, Section},
     isel::{MInstr, MOperand, MachineFunction, PReg},
@@ -636,6 +636,175 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             }
         }
 
+        // ── Scalar FP arithmetic (NEON/VFP double-precision) ─────────────
+        //
+        // All FP instructions use D-register encodings.  The 5-bit register
+        // field Rd/Rn/Rm encodes the D-register number (0–31), extracted via
+        // `fp_enc(r)` = `r.0 - 32`.
+        //
+        // Encoding helper: after regalloc, `instr.dst` holds `VReg(pr.0 as u32)`.
+        // For D-registers, `pr.0` is in 32–63, so `fp_enc` = `pr.0 - 32` gives
+        // the correct 0–31 field.
+
+        // FADD Dd, Dn, Dm — 0x1E602800 | (Rm<<16) | (Rn<<5) | Rd
+        FADD_RR => {
+            encode_fp_rrr3(ctx, instr, 0x1E602800);
+        }
+
+        // FSUB Dd, Dn, Dm — 0x1E603800 | (Rm<<16) | (Rn<<5) | Rd
+        FSUB_RR => {
+            encode_fp_rrr3(ctx, instr, 0x1E603800);
+        }
+
+        // FMUL Dd, Dn, Dm — 0x1E600800 | (Rm<<16) | (Rn<<5) | Rd
+        FMUL_RR => {
+            encode_fp_rrr3(ctx, instr, 0x1E600800);
+        }
+
+        // FDIV Dd, Dn, Dm — 0x1E601800 | (Rm<<16) | (Rn<<5) | Rd
+        FDIV_RR => {
+            encode_fp_rrr3(ctx, instr, 0x1E601800);
+        }
+
+        // FNEG Dd, Dn — 0x1E614000 | (Rn<<5) | Rd
+        FNEG_R => {
+            let (rd, rn) = fp_dst_src(instr);
+            ctx.emit4(0x1E614000 | (rn << 5) | rd);
+        }
+
+        // FSQRT Dd, Dn — 0x1E61C000 | (Rn<<5) | Rd
+        FSQRT_R => {
+            let (rd, rn) = fp_dst_src(instr);
+            ctx.emit4(0x1E61C000 | (rn << 5) | rd);
+        }
+
+        // FCMPE Dn, Dm — 0x1E602010 | (Rm<<16) | (Rn<<5)
+        // Note: no destination register (sets NZCV flags).
+        FCMP_RR => {
+            if let (Some(rn_preg), Some(rm_preg)) = fp_two_src_pregs(instr) {
+                let rn = fp_enc(rn_preg) as u32;
+                let rm = fp_enc(rm_preg) as u32;
+                ctx.emit4(0x1E602010 | (rm << 16) | (rn << 5));
+            } else {
+                ctx.emit4(0xD503201F);
+            }
+        }
+
+        // FMOV Dd, Dn — 0x1E604000 | (Rn<<5) | Rd  (D→D copy)
+        FMOV_RR => {
+            // FMOV_RR is used both for D→D copies and for ABI mov (FP arg/ret).
+            // After regalloc dst may be None (ABI-fixed dst), and operands[0]
+            // may be a PReg (the ABI-fixed src).  Handle both shapes:
+            //
+            // Shape A (normal copy): dst=VReg, operands=[VReg/PReg(src)]
+            // Shape B (ABI return):  dst=None,  operands=[PReg(fixed_dst), VReg/PReg(src)]
+            if instr.dst.is_some() {
+                let (rd, rn) = fp_dst_src(instr);
+                ctx.emit4(0x1E604000 | (rn << 5) | rd);
+            } else if let (Some(MOperand::PReg(dst_pr)), Some(src)) =
+                (instr.operands.first(), instr.operands.get(1))
+            {
+                let rd = fp_enc(*dst_pr) as u32;
+                let rn = match src {
+                    MOperand::PReg(r) if is_fp_reg(*r) => fp_enc(*r) as u32,
+                    MOperand::PReg(r) => reg_enc(*r) as u32,
+                    _ => 0,
+                };
+                ctx.emit4(0x1E604000 | (rn << 5) | rd);
+            } else {
+                ctx.emit4(0xD503201F);
+            }
+        }
+
+        // FCVTZS Xd, Dn — 0x9E780000 | (Rn<<5) | Rd
+        // Converts double-precision FP to signed 64-bit integer (truncation).
+        FCVTZS_RR => {
+            if let (Some(dst), Some(src_preg)) = (instr.dst, fp_first_src_preg(instr)) {
+                let rd = (dst.0 & 0x1F) as u32;
+                let rn = fp_enc(src_preg) as u32;
+                ctx.emit4(0x9E780000 | (rn << 5) | rd);
+            } else {
+                ctx.emit4(0xD503201F);
+            }
+        }
+
+        // SCVTF Dd, Xn — 0x9E620000 | (Rn<<5) | Rd
+        // Converts signed 64-bit integer to double-precision FP.
+        SCVTF_RR => {
+            if let (Some(dst), Some(src_preg)) = (instr.dst, int_first_src_preg(instr)) {
+                let rd = (dst.0 & 0x1F) as u32;
+                let rn = reg_enc(src_preg) as u32;
+                ctx.emit4(0x9E620000 | (rn << 5) | rd);
+            } else {
+                ctx.emit4(0xD503201F);
+            }
+        }
+
+        // UCVTF Dd, Xn — 0x9E630000 | (Rn<<5) | Rd
+        // Converts unsigned 64-bit integer to double-precision FP.
+        UCVTF_RR => {
+            if let (Some(dst), Some(src_preg)) = (instr.dst, int_first_src_preg(instr)) {
+                let rd = (dst.0 & 0x1F) as u32;
+                let rn = reg_enc(src_preg) as u32;
+                ctx.emit4(0x9E630000 | (rn << 5) | rd);
+            } else {
+                ctx.emit4(0xD503201F);
+            }
+        }
+
+        // LDR_FP_SCALAR Dn, [Xn] — 0xFD400000 | (Rn<<5) | Rt
+        LDR_FP_SCALAR => {
+            if let (Some(dst), Some(base_preg)) = (instr.dst, int_first_src_preg(instr)) {
+                let rt = (dst.0 & 0x1F) as u32;
+                let rn = reg_enc(base_preg) as u32;
+                ctx.emit4(0xFD400000 | (rn << 5) | rt);
+            } else {
+                ctx.emit4(0xD503201F);
+            }
+        }
+
+        // STR_FP_SCALAR Dn, [Xn] — 0xFD000000 | (Rn<<5) | Rt
+        STR_FP_SCALAR => {
+            if let (Some(base_preg), Some(src_preg)) =
+                (int_first_src_preg(instr), fp_second_src_preg(instr))
+            {
+                let rt = fp_enc(src_preg) as u32;
+                let rn = reg_enc(base_preg) as u32;
+                ctx.emit4(0xFD000000 | (rn << 5) | rt);
+            } else {
+                ctx.emit4(0xD503201F);
+            }
+        }
+
+        // MOVSD_LOAD_MR: FP spill reload — LDR Dn, [x29, #offset]
+        // Unsigned-scaled offset encoding for D-registers: 0xFD400000 | (imm12<<10) | (Rn<<5) | Rt
+        // imm12 = 2 + cs_save_count + slot
+        MOVSD_LOAD_MR => {
+            if let (Some(dst), Some(MOperand::Imm(slot))) = (instr.dst, instr.operands.first()) {
+                let rt = (dst.0 & 0x1F) as u32;
+                let imm12 = (2 + ctx.cs_save_count + *slot as u32) & 0xFFF;
+                // LDR (FP&SIMD, unsigned offset, 64-bit): 0xFD400000 | (imm12<<10) | (Rn<<5) | Rt
+                ctx.emit4(0xFD400000 | (imm12 << 10) | (29 << 5) | rt);
+            } else {
+                ctx.emit4(0xD503201F);
+            }
+        }
+
+        // MOVSD_STORE_RM: FP spill store — STR Dn, [x29, #offset]
+        // Unsigned-scaled offset encoding: 0xFD000000 | (imm12<<10) | (Rn<<5) | Rt
+        MOVSD_STORE_RM => {
+            if let (Some(MOperand::Imm(slot)), Some(src)) =
+                (instr.operands.first(), instr.operands.get(1).and_then(preg))
+            {
+                let rt = fp_enc(src) as u32;
+                let imm12 = (2 + ctx.cs_save_count + *slot as u32) & 0xFFF;
+                // STR (FP&SIMD, unsigned offset, 64-bit): 0xFD000000 | (imm12<<10) | (Rn<<5) | Rt
+                ctx.emit4(0xFD000000 | (imm12 << 10) | (29 << 5) | rt);
+            } else {
+                ctx.emit4(0xD503201F);
+            }
+        }
+
         // ── unsupported: emit NOP ─────────────────────────────────────────
         _ => {
             ctx.emit4(0xD503201F);
@@ -688,6 +857,88 @@ fn get_dst_src(instr: &MInstr) -> (Option<PReg>, Option<PReg>) {
         }
     });
     (dst, src)
+}
+
+/// Encode a 3-register FP instruction with the form: `opcode | (Rm<<16) | (Rn<<5) | Rd`.
+/// Uses `fp_enc` (i.e. `r.0 - 32`) for all three D-register operands.
+fn encode_fp_rrr3(ctx: &mut EncodeCtx, instr: &MInstr, base: u32) {
+    let rd = instr
+        .dst
+        .map(|v| fp_enc(PReg(v.0 as u8)) as u32)
+        .unwrap_or(0);
+    let rn = instr
+        .operands
+        .first()
+        .and_then(|op| if let MOperand::PReg(r) = op { Some(*r) } else { None })
+        .map(|r| fp_enc(r) as u32)
+        .unwrap_or(0);
+    let rm = instr
+        .operands
+        .get(1)
+        .and_then(|op| if let MOperand::PReg(r) = op { Some(*r) } else { None })
+        .map(|r| fp_enc(r) as u32)
+        .unwrap_or(0);
+    ctx.emit4(base | (rm << 16) | (rn << 5) | rd);
+}
+
+/// Extract (dst_fp_hw, src_fp_hw) as u32 hardware register numbers for a
+/// unary FP instruction (dst + one FP source operand).
+fn fp_dst_src(instr: &MInstr) -> (u32, u32) {
+    let rd = instr
+        .dst
+        .map(|v| fp_enc(PReg(v.0 as u8)) as u32)
+        .unwrap_or(0);
+    let rn = instr
+        .operands
+        .iter()
+        .find_map(|op| if let MOperand::PReg(r) = op { Some(fp_enc(*r) as u32) } else { None })
+        .unwrap_or(0);
+    (rd, rn)
+}
+
+/// Extract the two source FP PRegs from an instruction that has no dst
+/// (e.g. `FCMPE Dn, Dm`).
+fn fp_two_src_pregs(instr: &MInstr) -> (Option<PReg>, Option<PReg>) {
+    let mut it = instr.operands.iter().filter_map(|op| {
+        if let MOperand::PReg(r) = op { Some(*r) } else { None }
+    });
+    (it.next(), it.next())
+}
+
+/// Extract the first FP-register source PReg from an instruction's operands.
+fn fp_first_src_preg(instr: &MInstr) -> Option<PReg> {
+    instr.operands.iter().find_map(|op| {
+        if let MOperand::PReg(r) = op {
+            if is_fp_reg(*r) { Some(*r) } else { None }
+        } else {
+            None
+        }
+    })
+}
+
+/// Extract the second FP-register source PReg from an instruction's operands.
+fn fp_second_src_preg(instr: &MInstr) -> Option<PReg> {
+    let mut count = 0usize;
+    instr.operands.iter().find_map(|op| {
+        if let MOperand::PReg(r) = op {
+            if is_fp_reg(*r) {
+                count += 1;
+                if count == 2 { return Some(*r); }
+            }
+        }
+        None
+    })
+}
+
+/// Extract the first integer-register source PReg from an instruction's operands.
+fn int_first_src_preg(instr: &MInstr) -> Option<PReg> {
+    instr.operands.iter().find_map(|op| {
+        if let MOperand::PReg(r) = op {
+            if !is_fp_reg(*r) { Some(*r) } else { None }
+        } else {
+            None
+        }
+    })
 }
 
 /// Extract two PReg operands from `instr.operands`.
@@ -1443,5 +1694,299 @@ mod tests {
             word, expected,
             "SWPAL X1, X0, [X2] must encode as 0x{expected:08X}"
         );
+    }
+
+    // ── scalar FP encoding tests ──────────────────────────────────────────
+
+    /// Build a helper for FP instructions: D0=PReg(32), D1=PReg(33), D2=PReg(34).
+    fn fp_mi(opcode: llvm_codegen::isel::MOpcode, rd: PReg, rn: PReg, rm: PReg) -> MInstr {
+        MInstr {
+            opcode,
+            dst: Some(VReg(rd.0 as u32)),
+            operands: vec![MOperand::PReg(rn), MOperand::PReg(rm)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        }
+    }
+
+    fn fp_unary_mi(opcode: llvm_codegen::isel::MOpcode, rd: PReg, rn: PReg) -> MInstr {
+        MInstr {
+            opcode,
+            dst: Some(VReg(rd.0 as u32)),
+            operands: vec![MOperand::PReg(rn)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        }
+    }
+
+    #[test]
+    fn fadd_d0_d1_d2_encodes_correctly() {
+        // FADD D0, D1, D2 — 0x1E602800 | (Rm=D2=2 <<16) | (Rn=D1=1 <<5) | Rd=D0=0
+        use crate::regs::{D0, D1, D2};
+        let mi = fp_mi(FADD_RR, D0, D1, D2);
+        let mf = single_block_mf("fadd_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0x1E602800u32 | (2 << 16) | (1 << 5) | 0;
+        assert_eq!(word, expected, "FADD D0, D1, D2 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fsub_d0_d1_d2_encodes_correctly() {
+        // FSUB D0, D1, D2 — 0x1E603800 | (Rm=2<<16) | (Rn=1<<5) | Rd=0
+        use crate::regs::{D0, D1, D2};
+        let mi = fp_mi(FSUB_RR, D0, D1, D2);
+        let mf = single_block_mf("fsub_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0x1E603800u32 | (2 << 16) | (1 << 5) | 0;
+        assert_eq!(word, expected, "FSUB D0, D1, D2 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fmul_d0_d1_d2_encodes_correctly() {
+        // FMUL D0, D1, D2 — 0x1E600800 | (Rm=2<<16) | (Rn=1<<5) | Rd=0
+        use crate::regs::{D0, D1, D2};
+        let mi = fp_mi(FMUL_RR, D0, D1, D2);
+        let mf = single_block_mf("fmul_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0x1E600800u32 | (2 << 16) | (1 << 5) | 0;
+        assert_eq!(word, expected, "FMUL D0, D1, D2 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fdiv_d0_d1_d2_encodes_correctly() {
+        // FDIV D0, D1, D2 — 0x1E601800 | (Rm=2<<16) | (Rn=1<<5) | Rd=0
+        use crate::regs::{D0, D1, D2};
+        let mi = fp_mi(FDIV_RR, D0, D1, D2);
+        let mf = single_block_mf("fdiv_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0x1E601800u32 | (2 << 16) | (1 << 5) | 0;
+        assert_eq!(word, expected, "FDIV D0, D1, D2 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fneg_d0_d1_encodes_correctly() {
+        // FNEG D0, D1 — 0x1E614000 | (Rn=D1=1<<5) | Rd=D0=0
+        use crate::regs::{D0, D1};
+        let mi = fp_unary_mi(FNEG_R, D0, D1);
+        let mf = single_block_mf("fneg_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0x1E614000u32 | (1 << 5) | 0;
+        assert_eq!(word, expected, "FNEG D0, D1 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fsqrt_d0_d1_encodes_correctly() {
+        // FSQRT D0, D1 — 0x1E61C000 | (Rn=1<<5) | Rd=0
+        use crate::regs::{D0, D1};
+        let mi = fp_unary_mi(FSQRT_R, D0, D1);
+        let mf = single_block_mf("fsqrt_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0x1E61C000u32 | (1 << 5) | 0;
+        assert_eq!(word, expected, "FSQRT D0, D1 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fcmpe_d1_d2_encodes_correctly() {
+        // FCMPE D1, D2 — 0x1E602010 | (Rm=D2=2<<16) | (Rn=D1=1<<5)
+        use crate::regs::{D1, D2};
+        let mi = MInstr {
+            opcode: FCMP_RR,
+            dst: None, // FCMPE has no destination (sets NZCV flags)
+            operands: vec![MOperand::PReg(D1), MOperand::PReg(D2)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("fcmpe_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0x1E602010u32 | (2 << 16) | (1 << 5);
+        assert_eq!(word, expected, "FCMPE D1, D2 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fmov_rr_d0_d1_encodes_correctly() {
+        // FMOV D0, D1 — 0x1E604000 | (Rn=D1=1<<5) | Rd=D0=0
+        use crate::regs::{D0, D1};
+        let mi = fp_unary_mi(FMOV_RR, D0, D1);
+        let mf = single_block_mf("fmov_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0x1E604000u32 | (1 << 5) | 0;
+        assert_eq!(word, expected, "FMOV D0, D1 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fcvtzs_x0_d0_encodes_correctly() {
+        // FCVTZS X0, D0 — 0x9E780000 | (Rn=D0=0<<5) | Rd=X0=0
+        // D0 = PReg(32); fp_enc(D0) = 32-32 = 0
+        use crate::regs::{D0, X0};
+        let mi = MInstr {
+            opcode: FCVTZS_RR,
+            dst: Some(VReg(X0.0 as u32)), // integer destination
+            operands: vec![MOperand::PReg(D0)], // FP source
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("fcvtzs_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        // Rd = X0 = reg 0 (low 5 bits of X0.0 = 0); Rn = fp_enc(D0) = 0
+        let expected = 0x9E780000u32 | (0 << 5) | 0;
+        assert_eq!(word, expected, "FCVTZS X0, D0 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fcvtzs_x1_d2_encodes_correctly() {
+        // FCVTZS X1, D2 — D2 = PReg(34), fp_enc(D2) = 2; X1 = reg 1
+        // 0x9E780000 | (2<<5) | 1 = 0x9E780041
+        use crate::regs::{D2, X1};
+        let mi = MInstr {
+            opcode: FCVTZS_RR,
+            dst: Some(VReg(X1.0 as u32)),
+            operands: vec![MOperand::PReg(D2)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("fcvtzs_fn2", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0x9E780000u32 | (2 << 5) | 1;
+        assert_eq!(word, expected, "FCVTZS X1, D2 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn scvtf_d0_x1_encodes_correctly() {
+        // SCVTF D0, X1 — 0x9E620000 | (Rn=X1=1<<5) | Rd=D0=0
+        // D0 = PReg(32), fp_enc(D0) = 0; after regalloc dst.0 = 32 → dst.0 & 0x1F = 0
+        use crate::regs::{D0, X1};
+        let mi = MInstr {
+            opcode: SCVTF_RR,
+            dst: Some(VReg(D0.0 as u32)), // FP destination
+            operands: vec![MOperand::PReg(X1)], // integer source
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("scvtf_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        // rd = dst.0 & 0x1F = 32 & 0x1F = 0; rn = reg_enc(X1) = 1
+        let expected = 0x9E620000u32 | (1 << 5) | 0;
+        assert_eq!(word, expected, "SCVTF D0, X1 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn movsd_load_mr_slot0_encodes_correctly() {
+        // MOVSD_LOAD_MR D0, [x29, #16] (slot 0 → imm12 = 2+0 = 2)
+        // LDR D0, [x29, #16]: 0xFD400000 | (imm12=2<<10) | (29<<5) | rt=0
+        use crate::regs::D0;
+        let mi = MInstr {
+            opcode: MOVSD_LOAD_MR,
+            dst: Some(VReg(D0.0 as u32)), // D0 = PReg(32) → hw reg 0
+            operands: vec![MOperand::Imm(0)], // slot 0
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("movsd_load_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        // rt = D0.0 & 0x1F = 32 & 0x1F = 0; imm12 = 2 + 0 + 0 = 2
+        let expected = 0xFD400000u32 | (2 << 10) | (29 << 5) | 0;
+        assert_eq!(word, expected, "MOVSD_LOAD_MR D0, [x29, #16] should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn movsd_store_rm_slot0_encodes_correctly() {
+        // MOVSD_STORE_RM [x29, #16], D1 (slot 0 → imm12 = 2)
+        // STR D1, [x29, #16]: 0xFD000000 | (imm12=2<<10) | (29<<5) | rt=1
+        use crate::regs::D1;
+        let mi = MInstr {
+            opcode: MOVSD_STORE_RM,
+            dst: None, // no destination
+            operands: vec![MOperand::Imm(0), MOperand::PReg(D1)], // slot 0, src
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("movsd_store_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        // rt = fp_enc(D1) = 1; imm12 = 2 + 0 + 0 = 2
+        let expected = 0xFD000000u32 | (2 << 10) | (29 << 5) | 1;
+        assert_eq!(word, expected, "MOVSD_STORE_RM [x29, #16], D1 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fadd_with_high_dreg_d16_d17_d18_encodes_correctly() {
+        // FADD D16, D17, D18 — D-regs in the second half (16–23 range)
+        // D16=PReg(48), D17=PReg(49), D18=PReg(50)
+        // fp_enc(D16)=16, fp_enc(D17)=17, fp_enc(D18)=18
+        // 0x1E602800 | (18<<16) | (17<<5) | 16
+        use crate::regs::{D16, D17, D18};
+        let mi = fp_mi(FADD_RR, D16, D17, D18);
+        let mf = single_block_mf("fadd_high_fn", vec![mi]);
+        let mut e = AArch64Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
+        let expected = 0x1E602800u32 | (18 << 16) | (17 << 5) | 16;
+        assert_eq!(word, expected, "FADD D16, D17, D18 should encode as 0x{expected:08X}");
+    }
+
+    #[test]
+    fn fp_lower_fadd_produces_fadd_rr_opcode() {
+        // End-to-end lowering test: an FAdd IR instruction must produce FADD_RR opcode.
+        use crate::lower::AArch64Backend;
+        use llvm_ir::{Builder, Context, FloatKind, Linkage, Module};
+        use llvm_codegen::isel::IselBackend;
+
+        let mut ctx = Context::new();
+        let f64_ty = ctx.mk_float(FloatKind::Double);
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "fadd_fn",
+            f64_ty,
+            vec![f64_ty, f64_ty],
+            vec!["a".into(), "b".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let a = b.get_arg(0);
+        let bv = b.get_arg(1);
+        let sum = b.build_fadd("sum", a, bv);
+        b.build_ret(sum);
+
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        let has_fadd = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FADD_RR));
+        assert!(has_fadd, "FAdd IR must lower to FADD_RR opcode");
     }
 }

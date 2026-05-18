@@ -5,9 +5,9 @@
 //! Phi-destruction (parallel copy insertion) is also handled here.
 
 use crate::{
-    abi::{classify_aapcs64_args, ArgLocation, INT_RET},
+    abi::{classify_aapcs64_args, classify_aapcs64_args_typed, ArgKind, ArgLocation, INT_RET},
     instructions::*,
-    regs::{ALLOCATABLE, CALLEE_SAVED},
+    regs::{ALLOCATABLE, CALLEE_SAVED, FP_ALLOCATABLE, FP_RET_REG},
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MachineFunction, PReg, VReg};
 use llvm_codegen::sizeof_ty;
@@ -71,7 +71,7 @@ impl IselBackend for AArch64Backend {
     ) -> MachineFunction {
         let mut mf = MachineFunction::new(func.name.clone());
         mf.allocatable_pregs = ALLOCATABLE.to_vec();
-        mf.allocatable_fp_pregs = vec![]; // FP register class: populated in subsequent FP PR
+        mf.allocatable_fp_pregs = FP_ALLOCATABLE.to_vec();
         mf.callee_saved_pregs = CALLEE_SAVED.to_vec();
         mf.debug_source = module.source_filename.clone();
 
@@ -103,14 +103,36 @@ impl IselBackend for AArch64Backend {
         }
 
         // Lower function arguments: copy from ABI registers into VRegs.
-        let arg_locs = classify_aapcs64_args(func.args.len());
-        for (i, _arg) in func.args.iter().enumerate() {
-            let vr = mf.fresh_vreg();
+        // Float/double args go in D-registers; integer/pointer args in X-registers.
+        let arg_kinds: Vec<ArgKind> = func
+            .args
+            .iter()
+            .map(|a| {
+                if is_float_type(ctx, a.ty) {
+                    ArgKind::Float
+                } else {
+                    ArgKind::Int
+                }
+            })
+            .collect();
+        let arg_locs = classify_aapcs64_args_typed(&arg_kinds);
+        for (i, arg) in func.args.iter().enumerate() {
+            let vr = if is_float_type(ctx, arg.ty) {
+                mf.fresh_float_vreg()
+            } else {
+                mf.fresh_vreg()
+            };
             vmap.insert(ValueRef::Argument(ArgId(i as u32)), vr);
             match arg_locs[i] {
                 ArgLocation::Reg(preg) => {
-                    // mov vreg, preg
-                    let mut mi = MInstr::new(MOV_RR).with_dst(vr).with_preg(preg);
+                    // mov vreg, preg  (MOV_RR works for both int and fp registers
+                    // in the lowering sense; the encoder dispatches by opcode)
+                    let mov_op = if is_float_type(ctx, arg.ty) {
+                        FMOV_RR
+                    } else {
+                        MOV_RR
+                    };
+                    let mut mi = MInstr::new(mov_op).with_dst(vr).with_preg(preg);
                     mi.phys_uses = vec![preg];
                     mf.push(0, mi);
                 }
@@ -160,6 +182,13 @@ impl IselBackend for AArch64Backend {
     }
 }
 
+// ── FP type helpers ───────────────────────────────────────────────────────
+
+/// Returns `true` if `ty` is a scalar floating-point type (half, float, double, …).
+fn is_float_type(ctx: &Context, ty: llvm_ir::TypeId) -> bool {
+    matches!(ctx.get_type(ty), TypeData::Float(_))
+}
+
 // ── resolve a ValueRef to a VReg ─────────────────────────────────────────
 
 /// Return the VReg for `vr`, materialising constants as needed.
@@ -175,9 +204,23 @@ fn resolve(
     }
     match vr {
         ValueRef::Constant(cid) => {
+            let cd = ctx.get_const(cid);
+            // Float constants are materialised into float VRegs.
+            if let ConstantData::Float { ty, .. } = cd {
+                if is_float_type(ctx, *ty) {
+                    let vreg = mf.fresh_float_vreg();
+                    vmap.insert(vr, vreg);
+                    // Materialise via integer bits then FMOV from int (placeholder):
+                    // For now emit MOV_IMM with the raw bits. A full implementation
+                    // would use FMOV (GP→FP) or a literal pool load.
+                    let bits = const_to_imm(cd);
+                    mf.push(mblock, MInstr::new(MOV_IMM).with_dst(vreg).with_imm(bits));
+                    return vreg;
+                }
+            }
             let vreg = mf.fresh_vreg();
             vmap.insert(vr, vreg);
-            let imm = const_to_imm(ctx.get_const(cid));
+            let imm = const_to_imm(cd);
             mf.push(mblock, MInstr::new(MOV_IMM).with_dst(vreg).with_imm(imm));
             vreg
         }
@@ -259,6 +302,14 @@ fn lower_instr(
             v
         }};
     }
+    // Helper: allocate a fresh float dst VReg and register it.
+    macro_rules! new_fp_dst {
+        () => {{
+            let v = mf.fresh_float_vreg();
+            vmap.insert(ValueRef::Instruction(iid), v);
+            v
+        }};
+    }
     // Helper: resolve a ValueRef.
     macro_rules! res {
         ($vref:expr) => {
@@ -270,6 +321,18 @@ fn lower_instr(
     macro_rules! emit_binop3 {
         ($op:expr, $lhs:expr, $rhs:expr) => {{
             let dst = new_dst!();
+            let l = res!($lhs);
+            let r = res!($rhs);
+            mf.push(
+                mblock,
+                MInstr::new($op).with_dst(dst).with_vreg(l).with_vreg(r),
+            );
+        }};
+    }
+    // Helper: emit a three-register FP binary op with float dst VReg.
+    macro_rules! emit_fp_binop3 {
+        ($op:expr, $lhs:expr, $rhs:expr) => {{
+            let dst = new_fp_dst!();
             let l = res!($lhs);
             let r = res!($rhs);
             mf.push(
@@ -393,10 +456,17 @@ fn lower_instr(
             mf.push(mblock, MInstr::new(CSET).with_dst(dst).with_imm(cc));
         }
 
-        FCmp { .. } => {
-            // FP comparisons not yet supported — emit a zero.
+        FCmp { lhs, rhs, .. } => {
+            // FCMPE Dn, Dm sets NZCV flags; then CSET reads them.
+            // We only support ordered comparisons here (OEQ, OLT, OLE, OGT, OGE, ONE).
+            // For unordered predicates this is a simplification.
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
+            let l = res!(*lhs);
+            let r = res!(*rhs);
+            mf.push(mblock, MInstr::new(FCMP_RR).with_vreg(l).with_vreg(r));
+            // Default: CSET GT (a proxy — callers using FCmp for branches will use
+            // the flags directly via the B_COND path once that is wired).
+            mf.push(mblock, MInstr::new(CSET).with_dst(dst).with_imm(CC_GT));
         }
 
         // ── select ─────────────────────────────────────────────────────────
@@ -479,17 +549,42 @@ fn lower_instr(
         | BitCast { val, .. }
         | PtrToInt { val, .. }
         | IntToPtr { val, .. }
-        | FPTrunc { val, .. }
-        | FPExt { val, .. }
-        | FPToUI { val, .. }
-        | FPToSI { val, .. }
-        | UIToFP { val, .. }
-        | SIToFP { val, .. }
         | AddrSpaceCast { val, .. }
         | Freeze { val } => {
             let dst = new_dst!();
             let src = res!(*val);
             mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(src));
+        }
+
+        // FP↔int conversions.
+        FPToSI { val, .. } => {
+            let dst = new_dst!();
+            let src = res!(*val);
+            mf.push(mblock, MInstr::new(FCVTZS_RR).with_dst(dst).with_vreg(src));
+        }
+        FPToUI { val, .. } => {
+            // AArch64 also has FCVTZU (unsigned); use FCVTZS as a simplification.
+            let dst = new_dst!();
+            let src = res!(*val);
+            mf.push(mblock, MInstr::new(FCVTZS_RR).with_dst(dst).with_vreg(src));
+        }
+        SIToFP { val, .. } => {
+            let dst = new_fp_dst!();
+            let src = res!(*val);
+            mf.push(mblock, MInstr::new(SCVTF_RR).with_dst(dst).with_vreg(src));
+        }
+        UIToFP { val, .. } => {
+            // UCVTF for unsigned; use SCVTF as a simplification.
+            let dst = new_fp_dst!();
+            let src = res!(*val);
+            mf.push(mblock, MInstr::new(UCVTF_RR).with_dst(dst).with_vreg(src));
+        }
+
+        // FP precision changes — use FMOV_RR as placeholder (same-type copy).
+        FPTrunc { val, .. } | FPExt { val, .. } => {
+            let dst = new_fp_dst!();
+            let src = res!(*val);
+            mf.push(mblock, MInstr::new(FMOV_RR).with_dst(dst).with_vreg(src));
         }
 
         SExt { val, .. } => {
@@ -690,10 +785,28 @@ fn lower_instr(
             );
         }
 
-        // ── FP arithmetic (not yet supported) ──────────────────────────────
-        FAdd { .. } | FSub { .. } | FMul { .. } | FDiv { .. } | FRem { .. } | FNeg { .. } => {
-            let dst = new_dst!();
-            mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
+        // ── FP arithmetic (NEON/VFP scalar double path) ────────────────────
+        FAdd { lhs, rhs, .. } => {
+            emit_fp_binop3!(FADD_RR, *lhs, *rhs);
+        }
+        FSub { lhs, rhs, .. } => {
+            emit_fp_binop3!(FSUB_RR, *lhs, *rhs);
+        }
+        FMul { lhs, rhs, .. } => {
+            emit_fp_binop3!(FMUL_RR, *lhs, *rhs);
+        }
+        FDiv { lhs, rhs, .. } => {
+            emit_fp_binop3!(FDIV_RR, *lhs, *rhs);
+        }
+        FRem { lhs, rhs, .. } => {
+            // AArch64 has no FREM instruction; fall back to a placeholder
+            // (real impl would call fmod via BLR or use fdiv+fmsub).
+            emit_fp_binop3!(FDIV_RR, *lhs, *rhs);
+        }
+        FNeg { operand, .. } => {
+            let dst = new_fp_dst!();
+            let src = res!(*operand);
+            mf.push(mblock, MInstr::new(FNEG_R).with_dst(dst).with_vreg(src));
         }
 
         // ── aggregate / vector ops (not yet supported) ─────────────────────
@@ -733,7 +846,32 @@ fn lower_terminator(
         Ret { val } => {
             if let Some(rv) = val {
                 let src = resolve(ctx, mf, mblock, vmap, *rv);
-                emit_mov_to_preg(mf, mblock, INT_RET, src);
+                // Route the return value to the correct physical register.
+                // Float/double results go in D0; integer/pointer results in X0.
+                let ret_preg = if let Some(ty) = func.type_of_value(*rv) {
+                    if is_float_type(ctx, ty) {
+                        FP_RET_REG
+                    } else {
+                        INT_RET
+                    }
+                } else {
+                    INT_RET
+                };
+                let mov_op = if ret_preg == FP_RET_REG {
+                    FMOV_RR
+                } else {
+                    MOV_RR
+                };
+                let mut mi = MInstr::new(mov_op).with_preg(ret_preg).with_vreg(src);
+                mi.phys_uses = vec![];
+                // For FP, emit as FMOV_RR with dst=None (ABI fixed dest).
+                if mov_op == MOV_RR {
+                    emit_mov_to_preg(mf, mblock, ret_preg, src);
+                } else {
+                    // emit_mov_to_preg writes MOV_PR which is for int regs.
+                    // For FP return, emit a dedicated FMOV_PR-style instruction.
+                    mf.push(mblock, mi);
+                }
             }
             mf.push(mblock, MInstr::new(RET));
         }
@@ -1541,5 +1679,186 @@ mod tests {
             .iter()
             .any(|bl| bl.instrs.iter().any(|i| i.opcode == STXR));
         assert!(has_stxr, "AtomicRmw with LSE=false must emit STXR");
+    }
+
+    // ── FP lowering tests ──────────────────────────────────────────────────
+
+    fn make_fp_binop_fn(
+        name: &str,
+        build: impl Fn(&mut Builder, llvm_ir::ValueRef, llvm_ir::ValueRef) -> llvm_ir::ValueRef,
+    ) -> (Context, Module) {
+        use llvm_ir::{Builder, Context, FloatKind, Linkage, Module};
+        let mut ctx = Context::new();
+        let f64_ty = ctx.mk_float(FloatKind::Double);
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            name,
+            f64_ty,
+            vec![f64_ty, f64_ty],
+            vec!["a".into(), "b".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let a = b.get_arg(0);
+        let bv = b.get_arg(1);
+        let result = build(&mut b, a, bv);
+        b.build_ret(result);
+        (ctx, module)
+    }
+
+    #[test]
+    fn fadd_lowers_to_fadd_rr() {
+        let (ctx, module) = make_fp_binop_fn("fadd_fn", |b, a, bv| b.build_fadd("r", a, bv));
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+        let has_fadd = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FADD_RR));
+        assert!(has_fadd, "FAdd must lower to FADD_RR");
+    }
+
+    #[test]
+    fn fsub_lowers_to_fsub_rr() {
+        let (ctx, module) = make_fp_binop_fn("fsub_fn", |b, a, bv| b.build_fsub("r", a, bv));
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+        let has_fsub = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FSUB_RR));
+        assert!(has_fsub, "FSub must lower to FSUB_RR");
+    }
+
+    #[test]
+    fn fmul_lowers_to_fmul_rr() {
+        let (ctx, module) = make_fp_binop_fn("fmul_fn", |b, a, bv| b.build_fmul("r", a, bv));
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+        let has_fmul = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FMUL_RR));
+        assert!(has_fmul, "FMul must lower to FMUL_RR");
+    }
+
+    #[test]
+    fn fdiv_lowers_to_fdiv_rr() {
+        let (ctx, module) = make_fp_binop_fn("fdiv_fn", |b, a, bv| b.build_fdiv("r", a, bv));
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+        let has_fdiv = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FDIV_RR));
+        assert!(has_fdiv, "FDiv must lower to FDIV_RR");
+    }
+
+    #[test]
+    fn fneg_lowers_to_fneg_r() {
+        use llvm_ir::{Builder, Context, FloatKind, Linkage, Module};
+        let mut ctx = Context::new();
+        let f64_ty = ctx.mk_float(FloatKind::Double);
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "fneg_fn",
+            f64_ty,
+            vec![f64_ty],
+            vec!["a".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let a = b.get_arg(0);
+        let neg = b.build_fneg("neg", a);
+        b.build_ret(neg);
+
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+        let has_fneg = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FNEG_R));
+        assert!(has_fneg, "FNeg must lower to FNEG_R");
+    }
+
+    #[test]
+    fn fp_args_go_to_float_vregs() {
+        // Float/double function arguments must be allocated to float VRegs
+        // (VReg with class bit set), and the lowering should emit FMOV_RR
+        // (not MOV_RR) to copy from the ABI D-register.
+        use llvm_ir::{Builder, Context, FloatKind, Linkage, Module};
+        let mut ctx = Context::new();
+        let f64_ty = ctx.mk_float(FloatKind::Double);
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "fp_arg_fn",
+            f64_ty,
+            vec![f64_ty],
+            vec!["x".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let x = b.get_arg(0);
+        b.build_ret(x);
+
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        // Must emit FMOV_RR to copy from D0 argument register.
+        let has_fmov = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FMOV_RR));
+        assert!(
+            has_fmov,
+            "Float function argument must be copied using FMOV_RR (not MOV_RR)"
+        );
+    }
+
+    #[test]
+    fn sitofp_lowers_to_scvtf() {
+        // SIToFP must lower to SCVTF_RR.
+        use llvm_ir::{Builder, Context, FloatKind, Linkage, Module};
+        let mut ctx = Context::new();
+        let f64_ty = ctx.mk_float(FloatKind::Double);
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "sitofp_fn",
+            f64_ty,
+            vec![b.ctx.i64_ty],
+            vec!["n".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let n = b.get_arg(0);
+        let r = b.build_sitofp("r", n, f64_ty);
+        b.build_ret(r);
+
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+        let has_scvtf = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == SCVTF_RR));
+        assert!(has_scvtf, "SIToFP must lower to SCVTF_RR");
+    }
+
+    #[test]
+    fn fptosi_lowers_to_fcvtzs() {
+        // FPToSI must lower to FCVTZS_RR.
+        use llvm_ir::{Builder, Context, FloatKind, Linkage, Module};
+        let mut ctx = Context::new();
+        let f64_ty = ctx.mk_float(FloatKind::Double);
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "fptosi_fn",
+            b.ctx.i64_ty,
+            vec![f64_ty],
+            vec!["x".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let x = b.get_arg(0);
+        let r = b.build_fptosi("r", x, b.ctx.i64_ty);
+        b.build_ret(r);
+
+        let mut be = AArch64Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+        let has_fcvtzs = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FCVTZS_RR));
+        assert!(has_fcvtzs, "FPToSI must lower to FCVTZS_RR");
     }
 }

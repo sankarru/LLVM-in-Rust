@@ -98,7 +98,112 @@ pub fn reg_enc(r: PReg) -> u8 {
 /// Whether a register is in the "upper" range (X16+).  Some instruction
 /// variants or compact encodings have restrictions on these.
 pub fn is_extended(r: PReg) -> bool {
-    r.0 >= 16
+    r.0 >= 16 && r.0 < 32
+}
+
+// ── Floating-point / SIMD D-registers (D0–D31) ───────────────────────────
+//
+// AArch64 has 32 floating-point/SIMD registers V0–V31 (128-bit each).
+// When used as scalar double-precision, they are named D0–D31 (64-bit view).
+// We encode them as PReg(32)–PReg(63) so they live in a separate numeric
+// range from the integer registers (PReg(0)–PReg(31)).
+
+/// Public API for `D0`.
+pub const D0: PReg = PReg(32);
+/// Public API for `D1`.
+pub const D1: PReg = PReg(33);
+/// Public API for `D2`.
+pub const D2: PReg = PReg(34);
+/// Public API for `D3`.
+pub const D3: PReg = PReg(35);
+/// Public API for `D4`.
+pub const D4: PReg = PReg(36);
+/// Public API for `D5`.
+pub const D5: PReg = PReg(37);
+/// Public API for `D6`.
+pub const D6: PReg = PReg(38);
+/// Public API for `D7`.
+pub const D7: PReg = PReg(39);
+/// Public API for `D8`.
+pub const D8: PReg = PReg(40);
+/// Public API for `D9`.
+pub const D9: PReg = PReg(41);
+/// Public API for `D10`.
+pub const D10: PReg = PReg(42);
+/// Public API for `D11`.
+pub const D11: PReg = PReg(43);
+/// Public API for `D12`.
+pub const D12: PReg = PReg(44);
+/// Public API for `D13`.
+pub const D13: PReg = PReg(45);
+/// Public API for `D14`.
+pub const D14: PReg = PReg(46);
+/// Public API for `D15`.
+pub const D15: PReg = PReg(47);
+/// Public API for `D16`.
+pub const D16: PReg = PReg(48);
+/// Public API for `D17`.
+pub const D17: PReg = PReg(49);
+/// Public API for `D18`.
+pub const D18: PReg = PReg(50);
+/// Public API for `D19`.
+pub const D19: PReg = PReg(51);
+/// Public API for `D20`.
+pub const D20: PReg = PReg(52);
+/// Public API for `D21`.
+pub const D21: PReg = PReg(53);
+/// Public API for `D22`.
+pub const D22: PReg = PReg(54);
+/// Public API for `D23`.
+pub const D23: PReg = PReg(55);
+/// Public API for `D24`.
+pub const D24: PReg = PReg(56);
+/// Public API for `D25`.
+pub const D25: PReg = PReg(57);
+/// Public API for `D26`.
+pub const D26: PReg = PReg(58);
+/// Public API for `D27`.
+pub const D27: PReg = PReg(59);
+/// Public API for `D28`.
+pub const D28: PReg = PReg(60);
+/// Public API for `D29`.
+pub const D29: PReg = PReg(61);
+/// Public API for `D30`.
+pub const D30: PReg = PReg(62);
+/// Public API for `D31`.
+pub const D31: PReg = PReg(63);
+
+/// FP/SIMD registers available for allocation (caller-saved: D0–D7, D16–D23).
+///
+/// AAPCS64: D8–D15 are callee-saved; D24–D31 are callee-saved.
+/// D0–D7 and D16–D23 are caller-saved (allocate freely).
+pub const FP_ALLOCATABLE: &[PReg] = &[
+    D0, D1, D2, D3, D4, D5, D6, D7,
+    D16, D17, D18, D19, D20, D21, D22, D23,
+];
+
+/// FP/SIMD callee-saved registers (D8–D15, AAPCS64).
+pub const FP_CALLEE_SAVED: &[PReg] = &[D8, D9, D10, D11, D12, D13, D14, D15];
+
+/// FP argument / return registers (D0–D7).
+pub const FP_ARG_REGS: &[PReg] = &[D0, D1, D2, D3, D4, D5, D6, D7];
+
+/// FP return register.
+pub const FP_RET_REG: PReg = D0;
+
+/// Returns `true` if `r` is a floating-point / SIMD D-register (PReg ≥ 32).
+#[inline]
+pub fn is_fp_reg(r: PReg) -> bool {
+    r.0 >= 32
+}
+
+/// 5-bit hardware register number for a D-register: `r.0 - 32`.
+///
+/// Panics in debug builds if `r` is not a D-register.
+#[inline]
+pub fn fp_enc(r: PReg) -> u8 {
+    debug_assert!(is_fp_reg(r), "fp_enc called on non-FP register {:?}", r);
+    r.0 - 32
 }
 
 /// Human-readable register name.
@@ -184,5 +289,62 @@ mod tests {
                 reg_name(*r)
             );
         }
+    }
+
+    // ── FP / D-register tests ─────────────────────────────────────────────
+
+    #[test]
+    fn d0_is_preg_32() {
+        assert_eq!(D0, PReg(32));
+    }
+
+    #[test]
+    fn d31_is_preg_63() {
+        assert_eq!(D31, PReg(63));
+    }
+
+    #[test]
+    fn is_fp_reg_distinguishes_int_and_fp() {
+        assert!(!is_fp_reg(X0));
+        assert!(!is_fp_reg(XZR));
+        assert!(is_fp_reg(D0));
+        assert!(is_fp_reg(D15));
+        assert!(is_fp_reg(D31));
+    }
+
+    #[test]
+    fn fp_enc_returns_correct_hw_number() {
+        assert_eq!(fp_enc(D0), 0);
+        assert_eq!(fp_enc(D7), 7);
+        assert_eq!(fp_enc(D16), 16);
+        assert_eq!(fp_enc(D31), 31);
+    }
+
+    #[test]
+    fn fp_allocatable_contains_caller_saved_only() {
+        // D8–D15 are callee-saved and must NOT be in FP_ALLOCATABLE.
+        for r in FP_CALLEE_SAVED {
+            assert!(
+                !FP_ALLOCATABLE.contains(r),
+                "{r:?} is callee-saved but appears in FP_ALLOCATABLE"
+            );
+        }
+        // D0–D7 and D16–D23 must be in FP_ALLOCATABLE.
+        for r in &[D0, D1, D7, D16, D23] {
+            assert!(
+                FP_ALLOCATABLE.contains(r),
+                "{r:?} should be in FP_ALLOCATABLE"
+            );
+        }
+    }
+
+    #[test]
+    fn fp_arg_regs_are_d0_through_d7() {
+        assert_eq!(FP_ARG_REGS, &[D0, D1, D2, D3, D4, D5, D6, D7]);
+    }
+
+    #[test]
+    fn fp_ret_reg_is_d0() {
+        assert_eq!(FP_RET_REG, D0);
     }
 }
