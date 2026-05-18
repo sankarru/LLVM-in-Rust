@@ -249,7 +249,7 @@ mod tests {
     fn strategy_dispatch_uses_graph_color() {
         let intervals = vec![iv(0, 0, 6), iv(1, 1, 7), iv(2, 2, 8)];
         let regs = vec![PReg(0), PReg(1)];
-        let r = allocate_registers(&intervals, &regs, RegAllocStrategy::GraphColor);
+        let r = allocate_registers(&intervals, &regs, &[], RegAllocStrategy::GraphColor);
         assert_eq!(r.spilled.len(), 1);
     }
 
@@ -257,7 +257,7 @@ mod tests {
     fn strategy_dispatch_linear_scan_default() {
         let intervals = vec![iv(0, 0, 4), iv(1, 2, 6)];
         let regs = vec![PReg(0)];
-        let a = allocate_registers(&intervals, &regs, RegAllocStrategy::default());
+        let a = allocate_registers(&intervals, &regs, &[], RegAllocStrategy::default());
         let b = linear_scan(&intervals, &regs);
         assert_eq!(a.spilled, b.spilled);
         assert_eq!(a.vreg_to_preg, b.vreg_to_preg);

@@ -931,10 +931,11 @@ mod tests {
         let mut result = allocate_registers(
             &intervals,
             &mf.allocatable_pregs,
+            &mf.allocatable_fp_pregs,
             RegAllocStrategy::LinearScan,
         );
         assert!(!result.spilled.is_empty(), "must have spills");
-        insert_spill_reloads(&mut mf, &mut result, LDR_FP, STR_FP);
+        insert_spill_reloads(&mut mf, &mut result, LDR_FP, STR_FP, LDR_FP, STR_FP);
         apply_allocation(&mut mf, &result);
 
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);

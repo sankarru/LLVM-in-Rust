@@ -28,6 +28,7 @@ impl IselBackend for RiscVBackend {
     ) -> MachineFunction {
         let mut mf = MachineFunction::new(func.name.clone());
         mf.allocatable_pregs = ALLOCATABLE.to_vec();
+        mf.allocatable_fp_pregs = vec![]; // FP register class: populated in subsequent FP PR
         mf.callee_saved_pregs = CALLEE_SAVED.to_vec();
         mf.debug_source = module.source_filename.clone();
 

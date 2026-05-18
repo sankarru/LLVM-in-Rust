@@ -101,6 +101,7 @@ impl IselBackend for X86Backend {
         let cc = CallingConvention::from_target_triple(module.target_triple.as_deref());
         let mut mf = MachineFunction::new(func.name.clone());
         mf.allocatable_pregs = cc.allocatable_pregs().to_vec();
+        mf.allocatable_fp_pregs = vec![]; // FP register class: populated in subsequent FP PR
         mf.callee_saved_pregs = cc.callee_saved_pregs().to_vec();
         mf.debug_source = module.source_filename.clone();
 
@@ -2309,11 +2310,14 @@ mod tests {
         let mut result = allocate_registers(
             &intervals,
             &mf.allocatable_pregs,
+            &mf.allocatable_fp_pregs,
             RegAllocStrategy::LinearScan,
         );
         insert_spill_reloads(
             &mut mf,
             &mut result,
+            crate::instructions::MOV_LOAD_MR,
+            crate::instructions::MOV_STORE_RM,
             crate::instructions::MOV_LOAD_MR,
             crate::instructions::MOV_STORE_RM,
         );

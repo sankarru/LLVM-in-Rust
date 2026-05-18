@@ -81,9 +81,10 @@ fn emit_dbg_elf_obj_from_ir(src: &str, out: &Path) -> ObjectFile {
     let mut result = allocate_registers(
         &intervals,
         &mf.allocatable_pregs,
+        &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
+    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
     apply_allocation(&mut mf, &result);
     let mut emitter = X86Emitter::new(ObjectFormat::Elf);
     let obj = emit_object(&mf, &mut emitter);
@@ -117,9 +118,10 @@ fn emit_dbg_elf_obj_from_ir(src: &str, out: &Path) -> ObjectFile {
     let mut result = allocate_registers(
         &intervals,
         &mf.allocatable_pregs,
+        &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, LDR_FP, STR_FP);
+    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, LDR_FP, STR_FP, LDR_FP, STR_FP);
     apply_allocation(&mut mf, &result);
     let mut emitter = AArch64Emitter::new(ObjectFormat::Elf);
     let obj = emit_object(&mf, &mut emitter);

@@ -22,8 +22,8 @@ fn compile_x86(src: &str) -> Vec<llvm_codegen::isel::MInstr> {
     let mut backend = X86Backend::default();
     let mut mf = backend.lower_function(&ctx, &module, func);
     let intervals = compute_live_intervals(&mf);
-    let mut result = allocate_registers(&intervals, &mf.allocatable_pregs, RegAllocStrategy::LinearScan);
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
+    let mut result = allocate_registers(&intervals, &mf.allocatable_pregs, &mf.allocatable_fp_pregs, RegAllocStrategy::LinearScan);
+    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
     apply_allocation(&mut mf, &result);
     mf.blocks.iter().flat_map(|b| b.instrs.iter().cloned()).collect()
 }
@@ -35,8 +35,8 @@ fn compile_x86_object(src: &str) -> Vec<u8> {
     let mut backend = X86Backend::default();
     let mut mf = backend.lower_function(&ctx, &module, func);
     let intervals = compute_live_intervals(&mf);
-    let mut result = allocate_registers(&intervals, &mf.allocatable_pregs, RegAllocStrategy::LinearScan);
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM);
+    let mut result = allocate_registers(&intervals, &mf.allocatable_pregs, &mf.allocatable_fp_pregs, RegAllocStrategy::LinearScan);
+    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
     apply_allocation(&mut mf, &result);
     let mut emitter = X86Emitter::new(ObjectFormat::Elf);
     emit_object(&mf, &mut emitter).to_bytes()

@@ -53,6 +53,7 @@ fn sample_ll_emits_riscv_elf_objdump_accepts() {
         let result = allocate_registers(
             &intervals,
             &mf.allocatable_pregs,
+            &mf.allocatable_fp_pregs,
             RegAllocStrategy::LinearScan,
         );
         apply_allocation(&mut mf, &result);

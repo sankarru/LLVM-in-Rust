@@ -8,9 +8,63 @@ use std::collections::HashMap;
 
 // ── indices ────────────────────────────────────────────────────────────────
 
+/// Register class: integer or floating-point.
+///
+/// The allocator maintains separate physical-register pools for each class.
+/// Integer VRegs are assigned to integer PReg pools (GPRs); Float VRegs are
+/// assigned to FP PReg pools (XMM, V, F registers depending on the target).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RegClass {
+    /// General-purpose integer register.
+    Int,
+    /// Floating-point / SIMD register.
+    Float,
+}
+
 /// Virtual register (unlimited supply, created during instruction selection).
+///
+/// The top bit of the inner `u32` encodes the register class:
+/// - bit 31 = 0 → `RegClass::Int`  (id lives in bits 30:0)
+/// - bit 31 = 1 → `RegClass::Float` (id lives in bits 30:0)
+///
+/// Existing code that constructs `VReg(raw)` directly continues to work —
+/// those VRegs have bit 31 = 0 and are therefore `Int`-class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct VReg(pub u32);
+
+impl VReg {
+    const CLASS_BIT: u32 = 0x8000_0000;
+
+    /// Construct an integer-class VReg with the given id.
+    #[inline]
+    pub fn new_int(id: u32) -> Self {
+        debug_assert!(id & Self::CLASS_BIT == 0, "VReg id must fit in 31 bits");
+        VReg(id)
+    }
+
+    /// Construct a float-class VReg with the given id.
+    #[inline]
+    pub fn new_float(id: u32) -> Self {
+        debug_assert!(id & Self::CLASS_BIT == 0, "VReg id must fit in 31 bits");
+        VReg(id | Self::CLASS_BIT)
+    }
+
+    /// Return the register class encoded in this VReg.
+    #[inline]
+    pub fn class(self) -> RegClass {
+        if self.0 & Self::CLASS_BIT != 0 {
+            RegClass::Float
+        } else {
+            RegClass::Int
+        }
+    }
+
+    /// Return the numeric id (bits 30:0), independent of class.
+    #[inline]
+    pub fn id(self) -> u32 {
+        self.0 & !Self::CLASS_BIT
+    }
+}
 
 /// Physical register (target-specific numbering).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -141,8 +195,13 @@ pub struct MachineFunction {
     pub blocks: Vec<MachineBlock>,
     /// Counter for allocating fresh virtual registers.
     pub(crate) next_vreg: u32,
-    /// Physical registers available for allocation (set by the target).
+    /// Physical registers available for integer allocation (set by the target).
     pub allocatable_pregs: Vec<PReg>,
+    /// Physical registers available for FP/SIMD allocation (set by the target).
+    ///
+    /// Backends that do not yet implement FP lowering leave this empty; the
+    /// allocator gracefully spills all Float-class VRegs in that case.
+    pub allocatable_fp_pregs: Vec<PReg>,
     /// Callee-saved physical registers (set by the target).
     pub callee_saved_pregs: Vec<PReg>,
     /// Frame size in bytes (spill slots only; set by insert_spill_reloads).
@@ -169,6 +228,7 @@ impl MachineFunction {
             blocks: Vec::new(),
             next_vreg: 0,
             allocatable_pregs: Vec::new(),
+            allocatable_fp_pregs: Vec::new(),
             callee_saved_pregs: Vec::new(),
             frame_size: 0,
             spill_slots: HashMap::new(),
@@ -180,11 +240,18 @@ impl MachineFunction {
         }
     }
 
-    /// Allocate a fresh virtual register.
+    /// Allocate a fresh integer-class virtual register.
     pub fn fresh_vreg(&mut self) -> VReg {
         let id = self.next_vreg;
         self.next_vreg += 1;
-        VReg(id)
+        VReg::new_int(id)
+    }
+
+    /// Allocate a fresh float-class virtual register.
+    pub fn fresh_float_vreg(&mut self) -> VReg {
+        let id = self.next_vreg;
+        self.next_vreg += 1;
+        VReg::new_float(id)
     }
 
     /// Allocate a fresh frame slot for a spilled VReg and return its index.
