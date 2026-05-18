@@ -18,6 +18,7 @@ use llvm_target_x86::{
     instructions::{MOV_LOAD_MR, MOV_STORE_RM},
     X86Backend, X86Emitter,
 };
+use llvm_transforms::{mem2reg::Mem2Reg, pass::FunctionPass};
 
 #[derive(Debug)]
 struct KernelMetrics {
@@ -89,13 +90,18 @@ fn count_opcode(mf: &MachineFunction, opcode: MOpcode) -> usize {
 
 fn compile_kernel(path: &Path, emit_dir: &Path) -> Result<KernelMetrics, String> {
     let source = fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let (ctx, module) = parse(&source).map_err(|e| format!("parse {}: {e}", path.display()))?;
-    let func = module
+    let (mut ctx, mut module) = parse(&source).map_err(|e| format!("parse {}: {e}", path.display()))?;
+    let func_idx = module
         .functions
         .iter()
-        .find(|f| f.name == "main" && !f.is_declaration)
+        .position(|f| f.name == "main" && !f.is_declaration)
         .ok_or_else(|| format!("{} has no @main definition", path.display()))?;
 
+    // Promote alloca/load/store to SSA before lowering so that code-quality
+    // metrics reflect post-optimization code rather than alloca-pattern lowering.
+    Mem2Reg.run_on_function(&mut ctx, &mut module.functions[func_idx]);
+
+    let func = &module.functions[func_idx];
     let mut backend = X86Backend::default();
     let mut mf = backend.lower_function(&ctx, &module, func);
     let intervals = compute_live_intervals(&mf);
