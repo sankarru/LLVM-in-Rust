@@ -141,6 +141,17 @@ pub const MOVDQU_STORE_RM: MOpcode = MOpcode(0x8A);
 /// Public API for `MOVAPS_LOAD_MR`.
 pub const MOVAPS_LOAD_MR: MOpcode = MOpcode(0x8B);
 
+// ── non-promotable memory: frame-slot + register-indirect ─────────────────
+/// `lea dst, [rbp - (slot+1)*8]` — materialize a non-promotable alloca address.
+/// `dst` = VReg, `operands[0]` = `Imm(slot_idx)`.
+pub const LEA_FRAME_MR: MOpcode = MOpcode(0xA0);
+/// `mov dst, [ptr_reg]` — 64-bit load through a register-held pointer.
+/// `dst` = VReg, `operands[0]` = PReg/VReg (pointer register).
+pub const MOV_LOAD_REG_MR: MOpcode = MOpcode(0xA1);
+/// `mov [ptr_reg], src` — 64-bit store through a register-held pointer.
+/// No `dst`. `operands[0]` = PReg/VReg (pointer), `operands[1]` = PReg/VReg (value).
+pub const MOV_STORE_REG_RM: MOpcode = MOpcode(0xA2);
+
 // ── atomic memory operations ───────────────────────────────────────────────
 /// `mfence` — full memory barrier (0F AE F0).
 pub const MFENCE: MOpcode = MOpcode(0x90);

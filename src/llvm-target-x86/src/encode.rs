@@ -37,16 +37,17 @@ impl Emitter for X86Emitter {
         let mut debug_rows: Vec<DebugLineRow> = Vec::new();
 
         let n_callee = mf.used_callee_saved.len();
-        let needs_frame = mf.frame_size > 0 || n_callee > 0;
+        let needs_frame = mf.frame_size > 0 || n_callee > 0 || mf.alloca_frame_bytes > 0;
 
         // Compute the `sub rsp` amount so that RSP is 16-byte aligned after the
         // prologue.  After `push rbp` (1 push) and n_callee additional pushes,
         // the stack has moved by (1 + n_callee) * 8 bytes from the entry RSP
         // (which is 8 mod 16 because the call already pushed the return address).
         // We need: (1 + n_callee) * 8 + sub_rsp ≡ 0 (mod 16).
+        // `raw` includes both spill slots and alloca frame slots.
         let sub_rsp: usize = if needs_frame {
             let needs_align8 = n_callee % 2 == 1; // odd n_callee → need sub_rsp ≡ 8 (mod 16)
-            let raw = mf.frame_size as usize;
+            let raw = (mf.frame_size + mf.alloca_frame_bytes) as usize;
             if needs_align8 {
                 let r = raw % 16;
                 match r.cmp(&8) {
@@ -62,6 +63,7 @@ impl Emitter for X86Emitter {
         };
 
         ctx.callee_save_bytes = (n_callee * 8) as u32;
+        ctx.alloca_frame_bytes = mf.alloca_frame_bytes;
 
         // Emit prologue.
         if needs_frame {
@@ -206,8 +208,12 @@ struct EncodeCtx {
     block_offsets: HashMap<usize, usize>,
     relocs: Vec<Reloc>,
     /// Bytes below RBP consumed by callee-saved pushes (n_callee * 8).
-    /// Used to compute the correct RBP-relative displacement for spill slots.
+    /// Used to compute the correct RBP-relative displacement for spill and alloca slots.
     callee_save_bytes: u32,
+    /// Bytes reserved for non-promotable alloca slots, placed directly below the
+    /// callee-saved area.  Spill slots are placed below the alloca area, so their
+    /// displacement formula includes this extra offset.
+    alloca_frame_bytes: u32,
 }
 
 impl EncodeCtx {
@@ -662,12 +668,16 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
         }
 
         // ── MOV_LOAD_MR: mov dst, [rbp + disp] — spill reload ────────────
-        // Spill slot `n` sits at [RBP - callee_save_bytes - (n+1)*8].
+        // Spill slot `n` sits at [RBP - callee_save_bytes - alloca_frame_bytes - (n+1)*8].
+        // Alloca slots occupy [callee_save_bytes, callee_save_bytes + alloca_frame_bytes),
+        // and spill slots are placed below that.
         // Encoding: REX.W [REX.R if dst extended] 0x8B ModRM(10, dst, RBP=5) disp32
         MOV_LOAD_MR => {
             if let (Some(dst), Some(MOperand::Imm(slot))) = (instr.dst, instr.operands.first()) {
                 let dst_r = PReg(dst.0 as u8);
-                let disp = -((ctx.callee_save_bytes as i32) + (*slot as i32 + 1) * 8);
+                let disp = -((ctx.callee_save_bytes as i32)
+                    + (ctx.alloca_frame_bytes as i32)
+                    + (*slot as i32 + 1) * 8);
                 // REX.W + (REX.R if dst extended)
                 let rex = 0x48 | (if is_extended(dst_r) { 0x04 } else { 0 });
                 ctx.emit(rex);
@@ -690,7 +700,9 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
                     _ => None,
                 }),
             ) {
-                let disp = -((ctx.callee_save_bytes as i32) + (*slot as i32 + 1) * 8);
+                let disp = -((ctx.callee_save_bytes as i32)
+                    + (ctx.alloca_frame_bytes as i32)
+                    + (*slot as i32 + 1) * 8);
                 let rex = 0x48 | (if is_extended(src) { 0x04 } else { 0 });
                 ctx.emit(rex);
                 ctx.emit(0x89); // MOV r/m64, r64
@@ -871,6 +883,52 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
                 maybe_rex(ctx, true, r, r);
                 ctx.emit(0x31);
                 ctx.emit(modrm_rr(r, r));
+            } else {
+                ctx.emit(0x90);
+            }
+        }
+
+        // ── LEA_FRAME_MR: lea dst, [rbp - (callee_save_bytes + (slot_idx+1)*8)] ─
+        // Alloca slot `slot_idx` sits directly below the callee-saved register saves.
+        // Layout: RBP - callee_save_bytes - (slot_idx+1)*8
+        // Encoding: REX.W 8D /r ModRM(mod=10, reg=dst, rm=5=RBP) disp32
+        LEA_FRAME_MR => {
+            if let (Some(dst), Some(MOperand::Imm(slot_idx))) = (instr.dst, instr.operands.first()) {
+                let dst_r = PReg(dst.0 as u8);
+                let disp = -((ctx.callee_save_bytes as i32) + (*slot_idx as i32 + 1) * 8);
+                let rex = 0x48 | (if is_extended(dst_r) { 0x04 } else { 0 });
+                ctx.emit(rex);
+                ctx.emit(0x8D); // LEA r64, m
+                // ModRM: mod=10 (disp32), reg=dst_enc, rm=5 (RBP)
+                ctx.emit(0x80 | (reg_enc(dst_r) << 3) | 5);
+                ctx.emit32(disp);
+            } else {
+                ctx.emit(0x90);
+            }
+        }
+
+        // ── MOV_LOAD_REG_MR: mov dst, [ptr_reg] ──────────────────────────
+        // 64-bit load through a register-held pointer (no displacement).
+        // Encoding: REX.W 8B /r with mod=00 rm=ptr_reg (RBP/RSP edge cases handled).
+        MOV_LOAD_REG_MR => {
+            if let (Some(dst), Some(ptr)) = (instr.dst, preg_at(instr, 0)) {
+                let dst_r = PReg(dst.0 as u8);
+                rex_mem(ctx, dst_r, ptr);
+                ctx.emit(0x8B); // MOV r64, r/m64
+                emit_mem_modrm(ctx, dst_r, ptr);
+            } else {
+                ctx.emit(0x90);
+            }
+        }
+
+        // ── MOV_STORE_REG_RM: mov [ptr_reg], src ─────────────────────────
+        // 64-bit store through a register-held pointer (no displacement).
+        // Encoding: REX.W 89 /r with mod=00 rm=ptr_reg.
+        MOV_STORE_REG_RM => {
+            if let (Some(ptr), Some(src)) = (preg_at(instr, 0), preg_at(instr, 1)) {
+                rex_mem(ctx, src, ptr);
+                ctx.emit(0x89); // MOV r/m64, r64
+                emit_mem_modrm(ctx, src, ptr);
             } else {
                 ctx.emit(0x90);
             }
@@ -1840,5 +1898,188 @@ mod tests {
         assert_eq!(sec.data[2], 0x21, "AND opcode");
         assert_eq!(sec.data[3], 0x75, "ModRM(01 110 101): mod=01 reg=RSI rm=RBP");
         assert_eq!(sec.data[4], 0x00, "disp8=0 for mod=01 RBP base");
+    }
+
+    // ── non-promotable alloca frame-slot encoding tests ───────────────────────
+
+    #[test]
+    fn lea_frame_mr_slot0_rax() {
+        // LEA_FRAME_MR: lea rax, [rbp - 8]  (slot 0, no callee-saved regs)
+        // disp = -(callee_save_bytes + (slot_idx+1)*8) = -(0 + 8) = -8
+        // Encoding: REX.W(0x48) + LEA(0x8D) + ModRM(mod=10, reg=RAX=0, rm=RBP=5 → 0x85)
+        //           + disp32(-8) = F8 FF FF FF
+        let mi = MInstr {
+            opcode: LEA_FRAME_MR,
+            dst: Some(VReg(RAX.0 as u32)),
+            operands: vec![MOperand::Imm(0)], // slot_idx = 0
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("lea_frame_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        assert_eq!(sec.data[0], 0x48, "REX.W prefix");
+        assert_eq!(sec.data[1], 0x8D, "LEA opcode");
+        assert_eq!(sec.data[2], 0x85, "ModRM(mod=10, reg=RAX=0, rm=RBP=5)");
+        assert_eq!(&sec.data[3..7], &[0xF8, 0xFF, 0xFF, 0xFF], "disp32 = -8");
+    }
+
+    #[test]
+    fn lea_frame_mr_slot1_rax() {
+        // LEA_FRAME_MR: lea rax, [rbp - 16]  (slot 1, no callee-saved regs)
+        // disp = -(0 + (1+1)*8) = -16 = 0xFFFFFFF0
+        let mi = MInstr {
+            opcode: LEA_FRAME_MR,
+            dst: Some(VReg(RAX.0 as u32)),
+            operands: vec![MOperand::Imm(1)], // slot_idx = 1
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("lea_frame_slot1_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        assert_eq!(sec.data[0], 0x48, "REX.W prefix");
+        assert_eq!(sec.data[1], 0x8D, "LEA opcode");
+        assert_eq!(sec.data[2], 0x85, "ModRM(mod=10, reg=RAX=0, rm=RBP=5)");
+        assert_eq!(&sec.data[3..7], &[0xF0, 0xFF, 0xFF, 0xFF], "disp32 = -16");
+    }
+
+    #[test]
+    fn mov_load_reg_mr_through_rdi_into_rax() {
+        // MOV_LOAD_REG_MR: mov rax, [rdi]  — load from pointer in RDI into RAX
+        // Encoding: REX.W(0x48) + 0x8B + ModRM(mod=00, reg=RAX=0, rm=RDI=7 → 0x07)
+        let mi = MInstr {
+            opcode: MOV_LOAD_REG_MR,
+            dst: Some(VReg(RAX.0 as u32)),
+            operands: vec![MOperand::PReg(RDI)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("load_reg_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        // REX.W=0x48, MOV r64,r/m64=0x8B, ModRM(mod=00, reg=RAX=0, rm=RDI=7)=0x07
+        assert_eq!(sec.data[0], 0x48, "REX.W prefix");
+        assert_eq!(sec.data[1], 0x8B, "MOV r64, r/m64 opcode");
+        assert_eq!(sec.data[2], 0x07, "ModRM(mod=00, reg=RAX=0, rm=RDI=7)");
+    }
+
+    #[test]
+    fn mov_store_reg_rm_through_rdi_from_rsi() {
+        // MOV_STORE_REG_RM: mov [rdi], rsi  — store RSI through pointer in RDI
+        // Encoding: REX.W(0x48) + 0x89 + ModRM(mod=00, reg=RSI=6, rm=RDI=7 → 0x37)
+        let mi = MInstr {
+            opcode: MOV_STORE_REG_RM,
+            dst: None,
+            operands: vec![MOperand::PReg(RDI), MOperand::PReg(RSI)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mf = single_block_mf("store_reg_fn", vec![mi]);
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+        // REX.W=0x48, MOV r/m64,r64=0x89, ModRM(mod=00, reg=RSI=6, rm=RDI=7)=0x37
+        assert_eq!(sec.data[0], 0x48, "REX.W prefix");
+        assert_eq!(sec.data[1], 0x89, "MOV r/m64, r64 opcode");
+        assert_eq!(sec.data[2], 0x37, "ModRM(mod=00, reg=RSI=6, rm=RDI=7)");
+    }
+
+    #[test]
+    fn lea_frame_mr_shifts_spill_slots_when_alloca_bytes_nonzero() {
+        // When alloca_frame_bytes > 0, spill slots (MOV_LOAD_MR) must be shifted
+        // below the alloca area.  Alloca slot 0: [rbp-8], spill slot 0: [rbp-16].
+        use crate::instructions::{LEA_FRAME_MR, MOV_LOAD_MR};
+        let lea_mi = MInstr {
+            opcode: LEA_FRAME_MR,
+            dst: Some(VReg(RAX.0 as u32)),
+            operands: vec![MOperand::Imm(0)],
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let load_mi = MInstr {
+            opcode: MOV_LOAD_MR,
+            dst: Some(VReg(RAX.0 as u32)),
+            operands: vec![MOperand::Imm(0)], // spill slot 0
+            phys_uses: vec![],
+            clobbers: vec![],
+            debug_loc: None,
+        };
+        let mut mf = MachineFunction::new("shift_fn".into());
+        let b = mf.add_block("entry");
+        mf.push(b, lea_mi);
+        mf.push(b, load_mi);
+        // Simulate one alloca slot (8 bytes) having been allocated during lowering.
+        mf.alloca_frame_bytes = 8;
+
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+
+        // The function has alloca_frame_bytes=8 and no callee-saved regs, so
+        // needs_frame=true. Prologue: push rbp(55) + mov rbp,rsp(48 89 E5) + sub rsp,16(48 83 EC 10).
+        // After prologue (7 bytes), LEA_FRAME_MR(slot=0) at offset 7:
+        //   disp = -(0 + (0+1)*8) = -8 → [F8 FF FF FF]
+        // MOV_LOAD_MR(slot=0) at offset 14:
+        //   disp = -(0 + 8 + (0+1)*8) = -16 → [F0 FF FF FF]
+
+        // Find LEA in output by opcode bytes (48 8D 85 ...)
+        let pos = sec
+            .data
+            .windows(2)
+            .position(|w| w == [0x8D, 0x85])
+            .expect("LEA (8D 85) not found");
+        let lea_disp = i32::from_le_bytes([
+            sec.data[pos + 2],
+            sec.data[pos + 3],
+            sec.data[pos + 4],
+            sec.data[pos + 5],
+        ]);
+        assert_eq!(lea_disp, -8, "alloca slot 0 displacement should be -8");
+
+        // Find MOV_LOAD (8B 85) in output
+        let pos2 = sec
+            .data
+            .windows(2)
+            .position(|w| w == [0x8B, 0x85])
+            .expect("MOV_LOAD (8B 85) not found");
+        let load_disp = i32::from_le_bytes([
+            sec.data[pos2 + 2],
+            sec.data[pos2 + 3],
+            sec.data[pos2 + 4],
+            sec.data[pos2 + 5],
+        ]);
+        assert_eq!(
+            load_disp, -16,
+            "spill slot 0 must be shifted below alloca area"
+        );
+    }
+
+    #[test]
+    fn alloca_frame_bytes_included_in_sub_rsp() {
+        // When alloca_frame_bytes > 0 and frame_size = 0, the SUB RSP must still
+        // reserve space.  A single 8-byte alloca slot should produce sub rsp, 16
+        // (aligned to 16 bytes: 8 bytes raw, rounded up to 16 for alignment).
+        let mi = MInstr::new(NOP); // placeholder instruction
+        let mut mf = MachineFunction::new("alloca_sub_fn".into());
+        mf.alloca_frame_bytes = 8; // one 8-byte alloca slot
+        let b = mf.add_block("entry");
+        mf.push(b, mi);
+
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let sec = e.emit_function(&mf);
+
+        // Prologue: push rbp (55), mov rbp,rsp (48 89 E5), sub rsp, N (48 83 EC N).
+        // N = aligned((0+8), 16) = 16.
+        assert_eq!(sec.data[0], 0x55, "push rbp");
+        assert_eq!(&sec.data[1..4], &[0x48, 0x89, 0xE5], "mov rbp, rsp");
+        // sub rsp, 16: 0x48 0x83 0xEC 0x10
+        assert_eq!(sec.data[4], 0x48, "REX.W for sub rsp");
+        assert_eq!(sec.data[5], 0x83, "sub r/m64, imm8 opcode");
+        assert_eq!(sec.data[6], 0xEC, "ModRM /5 RSP");
+        assert_eq!(sec.data[7], 16, "sub rsp, 16 (aligned alloca space)");
     }
 }

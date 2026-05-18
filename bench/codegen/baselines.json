@@ -1,5 +1,5 @@
 {
-  "baseline_signoff": "initial issue #208 baseline from current main codegen and LLVM llc -O2",
+  "baseline_signoff": "re-baselined in issue #290 (non-promotable memory): GEP/Load/Store now emit real machine instructions instead of NOPs; codegen-quality binary runs mem2reg pre-lowering so promotable alloca patterns are still eliminated",
   "kernels": {
     "dot_product": {
       "llc_o2": {
@@ -12,7 +12,7 @@
         "machine_instructions": 33,
         "prologue_epilogue_bytes": 0,
         "spill_reload_instructions": 0,
-        "text_bytes": 101
+        "text_bytes": 145
       }
     },
     "fibonacci": {
@@ -26,7 +26,7 @@
         "machine_instructions": 29,
         "prologue_epilogue_bytes": 0,
         "spill_reload_instructions": 0,
-        "text_bytes": 89
+        "text_bytes": 142
       }
     },
     "matmul_4x4": {
@@ -40,7 +40,7 @@
         "machine_instructions": 34,
         "prologue_epilogue_bytes": 0,
         "spill_reload_instructions": 0,
-        "text_bytes": 72
+        "text_bytes": 104
       }
     },
     "memcpy_64": {
@@ -54,7 +54,7 @@
         "machine_instructions": 25,
         "prologue_epilogue_bytes": 0,
         "spill_reload_instructions": 0,
-        "text_bytes": 94
+        "text_bytes": 120
       }
     },
     "strlen": {
@@ -68,7 +68,7 @@
         "machine_instructions": 31,
         "prologue_epilogue_bytes": 0,
         "spill_reload_instructions": 0,
-        "text_bytes": 127
+        "text_bytes": 161
       }
     }
   },

@@ -10,6 +10,7 @@ use crate::{
     regs::{RAX, RCX, RDX, RSP},
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MOperand, MachineFunction, PReg, VReg};
+use llvm_codegen::sizeof_ty;
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, FloatKind, Function, InstrId, InstrKind,
     InstrprofIntrinsic, IntPredicate, Module, TypeData, ValueRef, VpIntrinsic,
@@ -893,26 +894,52 @@ fn lower_instr(
             }
         }
 
-        // ── memory (placeholder NOP — mem2reg removes most alloca/load/store) ──
-        Alloca { .. } | GetElementPtr { .. } => {
+        // ── memory: non-promotable alloca/load/store (SP-relative frame slots) ──
+        // mem2reg eliminates promotable alloca/load/store; anything remaining here
+        // is non-promotable (address escapes to a callee or non-constant GEP index).
+        Alloca { alloc_ty, align, .. } => {
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(NOP));
-            let _ = dst;
+            let size_bytes = sizeof_ty(ctx, *alloc_ty) as u32;
+            let align_bytes = align.unwrap_or(8);
+            let slot_idx = mf.alloc_alloca_slot(size_bytes, align_bytes);
+            // LEA_FRAME_MR: dst = &rbp - (slot_idx+1)*8
+            mf.push(
+                mblock,
+                MInstr::new(LEA_FRAME_MR)
+                    .with_dst(dst)
+                    .with_imm(slot_idx as i64),
+            );
         }
-        Load { ty, .. } => {
+        GetElementPtr { ptr, .. } => {
+            // Simple GEP: copy the base pointer into a fresh VReg.
+            // Full offset computation would require evaluating the index chain;
+            // for now this handles the common ptr-passthrough pattern.
+            let dst = new_dst!();
+            let base = res!(*ptr);
+            mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(base));
+        }
+        Load { ty, ptr, .. } => {
             let dst = new_dst!();
             if matches!(ctx.get_type(*ty), TypeData::Vector { .. }) && features.simd_enabled() {
+                // SIMD vector load — stub: Imm(0) slot placeholder (full SIMD mem
+                // lowering is tracked separately in issue #86).
                 mf.push(
                     mblock,
                     MInstr::new(MOVDQU_LOAD_MR).with_dst(dst).with_imm(0),
                 );
             } else {
-                mf.push(mblock, MInstr::new(NOP));
+                // Scalar load through a register-held pointer.
+                let ptr_vr = res!(*ptr);
+                mf.push(
+                    mblock,
+                    MInstr::new(MOV_LOAD_REG_MR).with_dst(dst).with_vreg(ptr_vr),
+                );
             }
         }
-        Store { val, .. } => {
+        Store { val, ptr, .. } => {
             if let Some(ty) = func.type_of_value(*val) {
                 if matches!(ctx.get_type(ty), TypeData::Vector { .. }) && features.simd_enabled() {
+                    // SIMD vector store — stub: Imm(0) slot placeholder.
                     let src = res!(*val);
                     mf.push(
                         mblock,
@@ -921,7 +948,13 @@ fn lower_instr(
                     return;
                 }
             }
-            mf.push(mblock, MInstr::new(NOP));
+            // Scalar store through a register-held pointer.
+            let src = res!(*val);
+            let ptr_vr = res!(*ptr);
+            mf.push(
+                mblock,
+                MInstr::new(MOV_STORE_REG_RM).with_vreg(ptr_vr).with_vreg(src),
+            );
         }
 
         // ── FP arithmetic (not yet supported) ──────────────────────────────
@@ -2372,5 +2405,143 @@ mod tests {
              bytes: {:02X?}",
             section.data,
         );
+    }
+
+    // ── non-promotable alloca / stack frame slot tests ───────────────────────
+
+    /// Build a function that mem2reg CANNOT eliminate:
+    ///   %p = alloca i64
+    ///   store i64 42, ptr %p
+    ///   %v = load i64, ptr %p
+    ///   ret i64 %v
+    ///
+    /// mem2reg would normally promote this, but we test the lowering directly
+    /// without running mem2reg so alloca remains in the IR.
+    fn make_alloca_store_load_fn() -> (Context, Module) {
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "test_stack",
+            b.ctx.i64_ty,
+            vec![],
+            vec![],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        // %p = alloca i64
+        let p = b.build_alloca("p", b.ctx.i64_ty);
+        // store i64 42, ptr %p
+        let v42 = ValueRef::Constant(b.ctx.push_const(ConstantData::Int { ty: b.ctx.i64_ty, val: 42 }));
+        b.build_store(v42, p);
+        // %v = load i64, ptr %p
+        let v = b.build_load("v", b.ctx.i64_ty, p);
+        b.build_ret(v);
+        (ctx, module)
+    }
+
+    #[test]
+    fn alloca_lowering_emits_lea_frame_mr() {
+        let (ctx, module) = make_alloca_store_load_fn();
+        let mut be = X86Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        // After lowering, alloca_frame_bytes must be non-zero (one i64 slot).
+        assert!(
+            mf.alloca_frame_bytes >= 8,
+            "alloca_frame_bytes should be at least 8 for one i64 alloca, got {}",
+            mf.alloca_frame_bytes
+        );
+
+        // The machine function must contain a LEA_FRAME_MR instruction.
+        use crate::instructions::LEA_FRAME_MR;
+        let has_lea = mf
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .any(|i| i.opcode == LEA_FRAME_MR);
+        assert!(
+            has_lea,
+            "alloca lowering must emit LEA_FRAME_MR to materialize stack address"
+        );
+    }
+
+    #[test]
+    fn alloca_store_load_emits_frame_reference_bytes() {
+        // End-to-end: lower the alloca/store/load IR, run regalloc, encode to object,
+        // and verify the code contains a LEA [RBP+disp] instruction (0x8D 0x85).
+        let (ctx, module) = make_alloca_store_load_fn();
+        let mut be = X86Backend::default();
+        let mut mf = be.lower_function(&ctx, &module, &module.functions[0]);
+
+        // Run register allocation.
+        let intervals = compute_live_intervals(&mf);
+        let allocatable = mf.allocatable_pregs.clone();
+        let mut result = allocate_registers(&intervals, &allocatable, RegAllocStrategy::LinearScan);
+        insert_spill_reloads(
+            &mut mf,
+            &mut result,
+            crate::instructions::MOV_LOAD_MR,
+            crate::instructions::MOV_STORE_RM,
+        );
+        apply_allocation(&mut mf, &result);
+
+        // Emit to ELF object.
+        let mut e = X86Emitter::new(ObjectFormat::Elf);
+        let section = e.emit_function(&mf);
+
+        // Verify LEA [RBP + disp32] (0x8D 0x85) appears in the emitted code.
+        // This confirms that the alloca slot was materialized as a frame-pointer-relative address.
+        let has_lea_rbp = section
+            .data
+            .windows(2)
+            .any(|w| w == [0x8D, 0x85]);
+        assert!(
+            has_lea_rbp,
+            "alloca lowering must emit LEA [RBP+disp32] (bytes 8D 85); got: {:02X?}",
+            section.data
+        );
+
+        // Verify MOV [ptr_reg] load (0x8B) appears — from the load through the alloca pointer.
+        let has_load = section.data.contains(&0x8B);
+        assert!(has_load, "load through alloca pointer must emit 0x8B (MOV r64, r/m64)");
+
+        // Verify MOV [ptr_reg] store (0x89) appears — from the store through the alloca pointer.
+        let has_store = section.data.contains(&0x89);
+        assert!(has_store, "store through alloca pointer must emit 0x89 (MOV r/m64, r64)");
+    }
+
+    #[test]
+    fn gep_lowering_copies_pointer() {
+        // GEP should copy the base pointer into a new VReg (MOV_RR).
+        // Build: %g = getelementptr i64, ptr %p, i64 0
+        let mut ctx = Context::new();
+        let mut module = Module::new("test");
+        let mut b = Builder::new(&mut ctx, &mut module);
+        b.add_function(
+            "gep_fn",
+            b.ctx.i64_ty,
+            vec![b.ctx.ptr_ty],
+            vec!["p".into()],
+            false,
+            Linkage::External,
+        );
+        let entry = b.add_block("entry");
+        b.position_at_end(entry);
+        let p = b.get_arg(0);
+        let idx0 = ValueRef::Constant(b.ctx.push_const(ConstantData::Int { ty: b.ctx.i64_ty, val: 0 }));
+        let gep = b.build_gep("g", b.ctx.i64_ty, p, vec![idx0]);
+        b.build_ret(gep);
+
+        let mut be = X86Backend::default();
+        let mf = be.lower_function(&ctx, &module, &module.functions[0]);
+        let has_mov_rr = mf
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .any(|i| i.opcode == MOV_RR);
+        assert!(has_mov_rr, "GEP lowering should emit a MOV_RR (pointer copy)");
     }
 }

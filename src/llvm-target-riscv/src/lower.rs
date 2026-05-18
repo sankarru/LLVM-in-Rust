@@ -6,6 +6,7 @@ use crate::{
     regs::{ALLOCATABLE, CALLEE_SAVED, X0},
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MachineFunction, PReg, VReg};
+use llvm_codegen::sizeof_ty;
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, InstrprofIntrinsic,
     IntPredicate, Module, RmwOp, TypeData, ValueRef,
@@ -409,12 +410,45 @@ fn lower_instr(
             mf.push(mblock, MInstr::new(opcode).with_dst(dst).with_vreg(ptr_vr).with_vreg(val_vr));
         }
 
-        Store { .. } => {
-            mf.push(mblock, MInstr::new(NOP));
-        }
-        Alloca { .. } | Load { .. } | GetElementPtr { .. } => {
+        // ── memory: non-promotable alloca/load/store (FP-relative frame slots) ──
+        // mem2reg eliminates promotable alloca/load/store; what remains here is
+        // non-promotable (address escapes or non-constant GEP index).
+        Alloca { alloc_ty, align, .. } => {
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
+            let size_bytes = sizeof_ty(ctx, *alloc_ty) as u32;
+            let align_bytes = align.unwrap_or(8);
+            let slot_idx = mf.alloc_alloca_slot(size_bytes, align_bytes);
+            // ADDI_FP_SLOT: dst = s0 + -(slot_idx+1)*8
+            mf.push(
+                mblock,
+                MInstr::new(ADDI_FP_SLOT)
+                    .with_dst(dst)
+                    .with_imm(slot_idx as i64),
+            );
+        }
+        GetElementPtr { ptr, .. } => {
+            // Simple GEP: copy the base pointer into a fresh VReg.
+            let dst = new_dst!();
+            let base = res!(*ptr);
+            mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(base));
+        }
+        Load { ptr, .. } => {
+            let dst = new_dst!();
+            // LD_REG: ld dst, 0(ptr_reg)
+            let ptr_vr = res!(*ptr);
+            mf.push(
+                mblock,
+                MInstr::new(LD_REG).with_dst(dst).with_vreg(ptr_vr),
+            );
+        }
+        Store { val, ptr, .. } => {
+            // SD_REG: sd src, 0(ptr_reg)
+            let src = res!(*val);
+            let ptr_vr = res!(*ptr);
+            mf.push(
+                mblock,
+                MInstr::new(SD_REG).with_vreg(ptr_vr).with_vreg(src),
+            );
         }
 
         FAdd { .. } | FSub { .. } | FMul { .. } | FDiv { .. } | FRem { .. } | FNeg { .. } => {

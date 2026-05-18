@@ -91,6 +91,17 @@ pub const NOP: MOpcode = MOpcode(0x70);
 /// Raw inline assembly bytes emitted verbatim after minimal template decoding.
 pub const INLINE_ASM: MOpcode = MOpcode(0x71);
 
+// ── non-promotable alloca frame-slot access ────────────────────────────────
+/// `sub xd, x29, #(slot_idx+1)*8` — materialize a non-promotable alloca address.
+/// X29 is the frame pointer (FP). `dst` = VReg, `operands[0]` = `Imm(slot_idx)`.
+pub const SUB_FP_IMM: MOpcode = MOpcode(0x72);
+/// `ldr xd, [xn]` — 64-bit load through a register-held pointer, no offset.
+/// `dst` = VReg, `operands[0]` = PReg (pointer register after regalloc).
+pub const LDR_REG: MOpcode = MOpcode(0x73);
+/// `str xs, [xn]` — 64-bit store through a register-held pointer, no offset.
+/// No `dst`. `operands[0]` = PReg (pointer), `operands[1]` = PReg (value).
+pub const STR_REG: MOpcode = MOpcode(0x74);
+
 // ── Atomics (ARMv8.1 LSE path) ──────────────────────────────────────────────
 
 /// `dmb ish` — full system data memory barrier (0xD5033BBF).

@@ -16,7 +16,7 @@ use llvm_target_x86::{
     instructions::{MOV_LOAD_MR, MOV_STORE_RM},
     X86Backend, X86Emitter,
 };
-use llvm_transforms::{build_pipeline, pass::PassManager, DeadCodeElim, Mem2Reg, OptLevel};
+use llvm_transforms::{build_pipeline, pass::{FunctionPass, PassManager}, DeadCodeElim, Mem2Reg, OptLevel};
 
 const FIXTURE: &str = include_str!("../fixtures/sample.ll");
 
@@ -136,14 +136,22 @@ fn bench_dce(c: &mut Criterion) {
 }
 
 fn bench_codegen_x86(c: &mut Criterion) {
-    let (ctx, module) = parsed_module();
+    let (mut ctx, mut module) = parsed_module();
+    // Promote alloca/load/store before benchmarking codegen; the fixture uses
+    // alloca patterns that mem2reg eliminates in a real pipeline.
+    for func in &mut module.functions {
+        Mem2Reg.run_on_function(&mut ctx, func);
+    }
     c.bench_function("pipeline/codegen_x86", |b| {
         b.iter(|| codegen_module(black_box(&ctx), black_box(&module)))
     });
 }
 
 fn bench_codegen_x86_integrated_assembler(c: &mut Criterion) {
-    let (ctx, module) = parsed_module();
+    let (mut ctx, mut module) = parsed_module();
+    for func in &mut module.functions {
+        Mem2Reg.run_on_function(&mut ctx, func);
+    }
     c.bench_function("pipeline/codegen_x86_integrated_assembler", |b| {
         b.iter(|| codegen_module_integrated_assembler(black_box(&ctx), black_box(&module)))
     });
