@@ -527,6 +527,18 @@ fn roundtrip_fixture_51_cast_chain() {
 fn roundtrip_fixture_52_phi_back_edge() {
     roundtrip_and_validate("52", include_str!("fixtures/52_phi_back_edge.ll"));
 }
+#[test]
+fn roundtrip_fixture_53_fp_scalar_ops() {
+    roundtrip_and_validate("53", include_str!("fixtures/53_fp_scalar_ops.ll"));
+}
+#[test]
+fn roundtrip_fixture_54_fp_compare() {
+    roundtrip_and_validate("54", include_str!("fixtures/54_fp_compare.ll"));
+}
+#[test]
+fn roundtrip_fixture_55_fp_conversions() {
+    roundtrip_and_validate("55", include_str!("fixtures/55_fp_conversions.ll"));
+}
 
 // ── Part 2 helpers ────────────────────────────────────────────────────────────
 
@@ -876,6 +888,9 @@ fn check_regression_hashes() {
         ("49_all_icmp_br", include_str!("fixtures/49_all_icmp_br.ll")),
         ("50_bitwise_shifts", include_str!("fixtures/50_bitwise_shifts.ll")),
         ("51_cast_chain", include_str!("fixtures/51_cast_chain.ll")),
+        ("53_fp_scalar_ops", include_str!("fixtures/53_fp_scalar_ops.ll")),
+        ("54_fp_compare", include_str!("fixtures/54_fp_compare.ll")),
+        ("55_fp_conversions", include_str!("fixtures/55_fp_conversions.ll")),
     ];
 
     for (name, src) in fixtures {

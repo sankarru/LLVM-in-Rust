@@ -10,7 +10,7 @@
 
 use crate::{
     instructions::*,
-    regs::{is_extended, reg_enc},
+    regs::{is_extended, is_fp_reg, reg_enc, xmm_enc},
 };
 use llvm_codegen::{
     emit::{DebugLineRow, Emitter, ObjectFormat, Reloc, RelocKind, Section},
@@ -934,11 +934,216 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             }
         }
 
+        // ── SSE2 scalar double: 66 0F <op> /r ─────────────────────────────
+        ADDSD_RR  => emit_sse2_rr(ctx, instr, 0x66, 0x58),
+        SUBSD_RR  => emit_sse2_rr(ctx, instr, 0x66, 0x5C),
+        MULSD_RR  => emit_sse2_rr(ctx, instr, 0x66, 0x59),
+        DIVSD_RR  => emit_sse2_rr(ctx, instr, 0x66, 0x5E),
+        SQRTSD_R  => emit_sse2_rr(ctx, instr, 0x66, 0x51),
+        UCOMISD_RR => emit_sse2_cmp(ctx, instr, 0x66, 0x2E),
+        MOVAPD_RR | MOVAPD_RR_F32 => emit_sse2_rr(ctx, instr, 0x66, 0x28),
+
+        // ── SSE2 scalar single: F3 0F <op> /r ─────────────────────────────
+        ADDSS_RR  => emit_sse2_rr(ctx, instr, 0xF3, 0x58),
+        SUBSS_RR  => emit_sse2_rr(ctx, instr, 0xF3, 0x5C),
+        MULSS_RR  => emit_sse2_rr(ctx, instr, 0xF3, 0x59),
+        DIVSS_RR  => emit_sse2_rr(ctx, instr, 0xF3, 0x5E),
+        SQRTSS_R  => emit_sse2_rr(ctx, instr, 0xF3, 0x51),
+        UCOMISS_RR => emit_sse2_cmp(ctx, instr, 0x00, 0x2E), // no mandatory prefix for SSE UCOMISS
+        MOVSS_LOAD_MR  => emit_sse2_spill_load(ctx, instr, 0xF3, 0x10),
+        MOVSS_STORE_RM => emit_sse2_spill_store(ctx, instr, 0xF3, 0x11),
+
+        // ── FP spill load/store: F2 0F 10/11 [rbp+disp32] ─────────────────
+        MOVSD_LOAD_MR  => emit_sse2_spill_load(ctx, instr, 0xF2, 0x10),
+        MOVSD_STORE_RM => emit_sse2_spill_store(ctx, instr, 0xF2, 0x11),
+
+        // ── FP ↔ int conversions ──────────────────────────────────────────
+        CVTTSD2SI_RR => emit_cvt_xmm_to_gpr(ctx, instr, 0xF2, 0x2C),
+        CVTSI2SD_RR  => emit_cvt_gpr_to_xmm(ctx, instr, 0xF2, 0x2A),
+        CVTTSS2SI_RR => emit_cvt_xmm_to_gpr(ctx, instr, 0xF3, 0x2C),
+        CVTSI2SS_RR  => emit_cvt_gpr_to_xmm(ctx, instr, 0xF3, 0x2A),
+        CVTSD2SS_RR  => emit_sse2_rr(ctx, instr, 0xF2, 0x5A),
+        CVTSS2SD_RR  => emit_sse2_rr(ctx, instr, 0xF3, 0x5A),
+
         // ── unsupported: emit NOP ─────────────────────────────────────────
         _ => {
             ctx.emit(0x90);
         }
     }
+}
+
+// ── SSE2 encoding helpers ────────────────────────────────────────────────
+
+/// Emit a REX byte for XMM ← XMM operations when extended registers are used.
+/// REX.R = dst XMM8-15; REX.B = src XMM8-15.  No REX.W for SSE2 scalar ops.
+fn xmm_rex(ctx: &mut EncodeCtx, dst_enc: u8, src_enc: u8) {
+    let rex = 0x40u8
+        | (if dst_enc >= 8 { 0x04 } else { 0 })
+        | (if src_enc >= 8 { 0x01 } else { 0 });
+    if rex != 0x40 {
+        ctx.emit(rex);
+    }
+}
+
+/// ModRM byte for XMM-XMM: mod=11, reg=dst_enc&7, rm=src_enc&7.
+fn xmm_modrm(dst_enc: u8, src_enc: u8) -> u8 {
+    0xC0 | ((dst_enc & 7) << 3) | (src_enc & 7)
+}
+
+/// Emit an SSE2 reg-reg instruction: [mandatory_prefix] [REX] 0F <op> /r.
+/// `mandatory_prefix` = 0x66 (SD), 0xF3 (SS), 0xF2 (SD with F2 prefix).
+/// Handles both XMM←XMM and the dst-is-VReg path after regalloc (both operands
+/// decoded as PReg post-allocation).
+fn emit_sse2_rr(ctx: &mut EncodeCtx, instr: &MInstr, prefix: u8, op: u8) {
+    let (dst, src) = get_xmm_dst_src(instr);
+    if let (Some(d), Some(s)) = (dst, src) {
+        if prefix != 0x00 {
+            ctx.emit(prefix);
+        }
+        xmm_rex(ctx, xmm_enc(d), xmm_enc(s));
+        ctx.emit(0x0F);
+        ctx.emit(op);
+        ctx.emit(xmm_modrm(xmm_enc(d), xmm_enc(s)));
+    } else {
+        ctx.emit(0x90);
+    }
+}
+
+/// Emit UCOMISD/UCOMISS (no destination; two source XMM registers).
+/// Layout: [prefix] [REX] 0F 2E /r  where reg=lhs, rm=rhs.
+fn emit_sse2_cmp(ctx: &mut EncodeCtx, instr: &MInstr, prefix: u8, op: u8) {
+    let (lhs, rhs) = get_two_xmm(instr);
+    if let (Some(l), Some(r)) = (lhs, rhs) {
+        if prefix != 0x00 {
+            ctx.emit(prefix);
+        }
+        xmm_rex(ctx, xmm_enc(l), xmm_enc(r));
+        ctx.emit(0x0F);
+        ctx.emit(op);
+        ctx.emit(xmm_modrm(xmm_enc(l), xmm_enc(r)));
+    } else {
+        ctx.emit(0x90);
+    }
+}
+
+/// Emit a spill-reload MOVSD/MOVSS: [prefix] [REX] 0F 10 dst, [rbp+disp32].
+fn emit_sse2_spill_load(ctx: &mut EncodeCtx, instr: &MInstr, prefix: u8, op: u8) {
+    if let (Some(dst), Some(MOperand::Imm(slot))) = (instr.dst, instr.operands.first()) {
+        let dst_r = PReg(dst.0 as u8);
+        let dst_enc = xmm_enc(dst_r);
+        let disp = -((ctx.callee_save_bytes as i32) + (*slot as i32 + 1) * 8);
+        ctx.emit(prefix);
+        if dst_enc >= 8 {
+            ctx.emit(0x44); // REX.R
+        }
+        ctx.emit(0x0F);
+        ctx.emit(op);
+        // ModRM: mod=10 (disp32), reg=dst_enc&7, rm=5 (RBP)
+        ctx.emit(0x80 | ((dst_enc & 7) << 3) | 5);
+        ctx.emit32(disp);
+    } else {
+        ctx.emit(0x90);
+    }
+}
+
+/// Emit a spill-store MOVSD/MOVSS: [prefix] [REX] 0F 11 src, [rbp+disp32].
+fn emit_sse2_spill_store(ctx: &mut EncodeCtx, instr: &MInstr, prefix: u8, op: u8) {
+    if let (Some(MOperand::Imm(slot)), Some(src)) = (
+        instr.operands.first(),
+        instr.operands.get(1).and_then(|o| match o {
+            MOperand::PReg(r) => Some(*r),
+            _ => None,
+        }),
+    ) {
+        let src_enc = xmm_enc(src);
+        let disp = -((ctx.callee_save_bytes as i32) + (*slot as i32 + 1) * 8);
+        ctx.emit(prefix);
+        if src_enc >= 8 {
+            ctx.emit(0x44); // REX.R (src goes in reg field of ModRM)
+        }
+        ctx.emit(0x0F);
+        ctx.emit(op);
+        // ModRM: mod=10 (disp32), reg=src_enc&7, rm=5 (RBP)
+        ctx.emit(0x80 | ((src_enc & 7) << 3) | 5);
+        ctx.emit32(disp);
+    } else {
+        ctx.emit(0x90);
+    }
+}
+
+/// Emit CVTTSD2SI / CVTTSS2SI: [prefix] REX.W 0F 2C /r  (XMM → GPR).
+fn emit_cvt_xmm_to_gpr(ctx: &mut EncodeCtx, instr: &MInstr, prefix: u8, op: u8) {
+    if let (Some(dst_vr), Some(src)) = (instr.dst, get_xmm_src(instr)) {
+        let dst = PReg(dst_vr.0 as u8);
+        let src_enc = xmm_enc(src);
+        ctx.emit(prefix);
+        // REX.W always for 64-bit GPR dst; REX.R if dst GPR is R8-R15; REX.B if src XMM8-15.
+        let rex = 0x48
+            | (if is_extended(dst) { 0x04 } else { 0 })
+            | (if src_enc >= 8 { 0x01 } else { 0 });
+        ctx.emit(rex);
+        ctx.emit(0x0F);
+        ctx.emit(op);
+        ctx.emit(0xC0 | (reg_enc(dst) << 3) | (src_enc & 7));
+    } else {
+        ctx.emit(0x90);
+    }
+}
+
+/// Emit CVTSI2SD / CVTSI2SS: [prefix] REX.W 0F 2A /r  (GPR → XMM).
+fn emit_cvt_gpr_to_xmm(ctx: &mut EncodeCtx, instr: &MInstr, prefix: u8, op: u8) {
+    if let (Some(dst_vr), Some(src)) = (instr.dst, get_gpr_src(instr)) {
+        let dst = PReg(dst_vr.0 as u8);
+        let dst_enc = xmm_enc(dst);
+        ctx.emit(prefix);
+        // REX.W for 64-bit GPR src; REX.R if dst XMM8-15; REX.B if src GPR is R8-R15.
+        let rex = 0x48
+            | (if dst_enc >= 8 { 0x04 } else { 0 })
+            | (if is_extended(src) { 0x01 } else { 0 });
+        ctx.emit(rex);
+        ctx.emit(0x0F);
+        ctx.emit(op);
+        ctx.emit(0xC0 | ((dst_enc & 7) << 3) | reg_enc(src));
+    } else {
+        ctx.emit(0x90);
+    }
+}
+
+/// Extract (dst_xmm, src_xmm) from an SSE2 binary instruction post-allocation.
+/// dst lives in instr.dst (VReg whose id = PReg number after apply_allocation).
+/// src is in the first PReg operand.
+fn get_xmm_dst_src(instr: &MInstr) -> (Option<PReg>, Option<PReg>) {
+    let dst = instr.dst.map(|v| PReg(v.0 as u8)).filter(|r| is_fp_reg(*r));
+    let src = instr.operands.iter().find_map(|op| match op {
+        MOperand::PReg(r) if is_fp_reg(*r) => Some(*r),
+        _ => None,
+    });
+    (dst, src)
+}
+
+/// Extract two XMM PReg operands (for UCOMISD/UCOMISS which have no dst).
+fn get_two_xmm(instr: &MInstr) -> (Option<PReg>, Option<PReg>) {
+    let mut it = instr.operands.iter().filter_map(|op| match op {
+        MOperand::PReg(r) if is_fp_reg(*r) => Some(*r),
+        _ => None,
+    });
+    (it.next(), it.next())
+}
+
+/// Extract the source XMM PReg from a unary XMM instruction.
+fn get_xmm_src(instr: &MInstr) -> Option<PReg> {
+    instr.operands.iter().find_map(|op| match op {
+        MOperand::PReg(r) if is_fp_reg(*r) => Some(*r),
+        _ => None,
+    })
+}
+
+/// Extract the source GPR PReg from a CVT instruction (XMM ← GPR).
+fn get_gpr_src(instr: &MInstr) -> Option<PReg> {
+    instr.operands.iter().find_map(|op| match op {
+        MOperand::PReg(r) if !is_fp_reg(*r) => Some(*r),
+        _ => None,
+    })
 }
 
 // ── encoding helpers ─────────────────────────────────────────────────────
