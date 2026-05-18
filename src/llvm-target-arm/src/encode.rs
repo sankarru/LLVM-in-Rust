@@ -33,24 +33,28 @@ impl Emitter for AArch64Emitter {
         let mut debug_rows: Vec<DebugLineRow> = Vec::new();
 
         // Determine whether we need a frame (x29/x30 save + sub-sp).
-        // Needed when there are spill slots OR when callee-saved regs were used.
+        // Needed when there are spill slots, callee-saved regs, or non-promotable allocas.
         let n_cs = mf.used_callee_saved.len();
-        let needs_frame = mf.frame_size > 0 || n_cs > 0;
+        let needs_frame = mf.frame_size > 0 || n_cs > 0 || mf.alloca_frame_bytes > 0;
 
         // Frame layout (x29 = new SP after pre-index):
         //   [x29 +  0] saved x29
         //   [x29 +  8] saved x30 (LR)
-        //   [x29 + 16]                    ← callee-saved regs start
+        //   [x29 + 16]                                     ← callee-saved regs start
         //   [x29 + 16 + i*8]  saved X(19+i) for i in 0..n_cs
-        //   [x29 + 16 + n_cs*8 + slot*8]  spill slots
+        //   [x29 + 16 + n_cs*8 + j*8]  alloca slot j  (j in 0..alloca_slot_count)
+        //   [x29 + 16 + n_cs*8 + alloca_frame_bytes + slot*8]  spill slots
         let cs_save_size = n_cs * 8;
+        let alloca_slots = ((mf.alloca_frame_bytes + 7) / 8) as usize;
         let frame_alloc = if needs_frame {
-            ((16 + cs_save_size + mf.frame_size as usize) + 15) & !15
+            ((16 + cs_save_size + mf.alloca_frame_bytes as usize + mf.frame_size as usize) + 15)
+                & !15
         } else {
             0
         };
 
         ctx.cs_save_count = n_cs as u32;
+        ctx.alloca_slot_count = alloca_slots as u32;
 
         // Emit prologue.
         if needs_frame {
@@ -169,9 +173,13 @@ struct EncodeCtx {
     block_offsets: HashMap<usize, usize>,
     relocs: Vec<Reloc>,
     /// Number of callee-saved registers (X19–X28) saved in the prologue.
-    /// Used by LDR_FP/STR_FP to compute the x29-relative slot offset:
-    /// spill slot n lives at [x29 + 16 + cs_save_count*8 + n*8].
+    /// Used by LDR_FP/STR_FP/SUB_FP_IMM to compute the x29-relative slot offset:
+    /// alloca slot n lives at [x29 + (2 + cs_save_count + n)*8],
+    /// spill slot n lives at [x29 + (2 + cs_save_count + alloca_slots + n)*8].
     cs_save_count: u32,
+    /// Number of alloca slots (= alloca_frame_bytes / 8, rounded up).
+    /// Spill-slot encoders shift their offsets by this count.
+    alloca_slot_count: u32,
 }
 
 impl EncodeCtx {
@@ -463,27 +471,28 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             ctx.emit4(0xD503201F);
         }
 
-        // ── LDR_FP: ldr xd, [x29, #(16 + cs_save_count*8 + slot*8)] ────
+        // ── LDR_FP: ldr xd, [x29, #(16 + cs_save_count*8 + alloca_frame_bytes + slot*8)] ─
         // Unsigned offset form: 0xF9400000 | (imm12 << 10) | (Rn << 5) | Rt
-        // imm12 = (16 + cs_save_count*8 + slot*8) / 8 = 2 + cs_save_count + slot.
+        // imm12 = (16 + cs_save_count*8 + alloca_frame_bytes + slot*8) / 8
+        //       = 2 + cs_save_count + alloca_slot_count + slot.
         LDR_FP => {
             if let (Some(dst), Some(MOperand::Imm(slot))) = (instr.dst, instr.operands.first()) {
                 let rd = reg_enc(PReg(dst.0 as u8)) as u32;
-                let imm12 = (2 + ctx.cs_save_count + *slot as u32) & 0xFFF;
+                let imm12 = (2 + ctx.cs_save_count + ctx.alloca_slot_count + *slot as u32) & 0xFFF;
                 ctx.emit4(0xF9400000 | (imm12 << 10) | (29 << 5) | rd);
             } else {
                 ctx.emit4(0xD503201F);
             }
         }
 
-        // ── STR_FP: str xs, [x29, #(16 + cs_save_count*8 + slot*8)] ────
+        // ── STR_FP: str xs, [x29, #(16 + cs_save_count*8 + alloca_frame_bytes + slot*8)] ─
         // Unsigned offset form: 0xF9000000 | (imm12 << 10) | (Rn << 5) | Rt
         STR_FP => {
             if let (Some(MOperand::Imm(slot)), Some(src)) =
                 (instr.operands.first(), instr.operands.get(1).and_then(preg))
             {
                 let rt = reg_enc(src) as u32;
-                let imm12 = (2 + ctx.cs_save_count + *slot as u32) & 0xFFF;
+                let imm12 = (2 + ctx.cs_save_count + ctx.alloca_slot_count + *slot as u32) & 0xFFF;
                 ctx.emit4(0xF9000000 | (imm12 << 10) | (29 << 5) | rt);
             } else {
                 ctx.emit4(0xD503201F);
@@ -573,6 +582,58 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             let rt = preg_enc_op(instr.operands.get(1)).unwrap_or(31);
             let rs = instr.dst.map(|v| v.0 & 0x1F).unwrap_or(31);
             ctx.emit4(0xC8007C00 | (rs << 16) | (rn << 5) | rt);
+        }
+
+        // ── non-promotable alloca frame-slot access ───────────────────────
+
+        // SUB_FP_IMM: materialize address of alloca slot as [x29 + (2+cs+slot)*8].
+        // Despite the name (inherited from the issue), we ADD the offset since alloca
+        // slots sit above X29 in the positive-offset zone (same as spill slots).
+        // Encoding (ADD immediate, 64-bit): 0x91000000 | (imm12<<10) | (Rn<<5) | Rd
+        // Rn = 29 (FP), imm12 = (2 + cs_save_count + slot_idx) * 8.
+        SUB_FP_IMM => {
+            if let (Some(dst), Some(MOperand::Imm(slot_idx))) = (instr.dst, instr.operands.first()) {
+                let rd = reg_enc(PReg(dst.0 as u8)) as u32;
+                let byte_off = ((2 + ctx.cs_save_count + *slot_idx as u32) * 8) & 0xFFF;
+                ctx.emit4(0x91000000 | (byte_off << 10) | (29 << 5) | rd);
+            } else {
+                ctx.emit4(0xD503201F); // NOP
+            }
+        }
+
+        // LDR_REG: ldr xd, [xn]  — 64-bit load via pointer register, no offset.
+        // Encoding (unsigned offset = 0): 0xF9400000 | (0 << 10) | (Rn << 5) | Rd
+        LDR_REG => {
+            if let (Some(dst), Some(ptr)) =
+                (instr.dst, instr.operands.first().and_then(|op| match op {
+                    MOperand::PReg(r) => Some(*r),
+                    _ => None,
+                }))
+            {
+                let rd = reg_enc(PReg(dst.0 as u8)) as u32;
+                let rn = reg_enc(ptr) as u32;
+                ctx.emit4(0xF9400000 | (rn << 5) | rd);
+            } else {
+                ctx.emit4(0xD503201F);
+            }
+        }
+
+        // STR_REG: str xs, [xn]  — 64-bit store via pointer register, no offset.
+        // Encoding (unsigned offset = 0): 0xF9000000 | (0 << 10) | (Rn << 5) | Rt
+        STR_REG => {
+            if let (Some(ptr), Some(src)) = (
+                instr.operands.first().and_then(|op| match op {
+                    MOperand::PReg(r) => Some(*r),
+                    _ => None,
+                }),
+                instr.operands.get(1).and_then(preg),
+            ) {
+                let rt = reg_enc(src) as u32;
+                let rn = reg_enc(ptr) as u32;
+                ctx.emit4(0xF9000000 | (rn << 5) | rt);
+            } else {
+                ctx.emit4(0xD503201F);
+            }
         }
 
         // ── unsupported: emit NOP ─────────────────────────────────────────

@@ -281,6 +281,19 @@ fn encode_instr(instr: &MInstr) -> u32 {
         AMOAND_D  => enc_amo(0b01100, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
         AMOOR_D   => enc_amo(0b01000, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
 
+        // ── non-promotable alloca frame-slot access ────────────────────────
+        // ADDI_FP_SLOT: addi rd, s0(x8), -(slot_idx+1)*8
+        // s0 is the RISC-V frame pointer (saved s0/ra in prologue).
+        ADDI_FP_SLOT => {
+            let slot_idx = imm_of_op(instr.operands.first());
+            let imm = -(slot_idx + 1) * 8;
+            enc_i(imm, 8 /* s0/fp */, 0x0, rd, 0x13)
+        }
+        // LD_REG: ld rd, 0(rs1)  — load 64-bit word from pointer reg with offset 0
+        LD_REG => enc_i(0, rs1, 0x3, rd, 0x03),
+        // SD_REG: sd rs2, 0(rs1)  — store 64-bit word through pointer reg
+        SD_REG => enc_s(0, rs2, rs1, 0x3, 0x23),
+
         _ => panic!("unsupported RISC-V opcode {:?}", instr.opcode),
     }
 }

@@ -159,6 +159,12 @@ pub struct MachineFunction {
     pub debug_line_start: Option<u32>,
     /// Debug location automatically attached by [`MachineFunction::push`].
     pub current_debug_loc: Option<DebugLoc>,
+    /// Total bytes reserved in the stack frame for non-promotable alloca slots.
+    /// Each slot is 8 bytes (aligned up). Placed between callee-saved regs and
+    /// spill slots in the frame layout.
+    pub alloca_frame_bytes: u32,
+    /// Counter for alloca slot allocation (0-based slot index).
+    next_alloca_slot: u32,
 }
 
 impl MachineFunction {
@@ -177,6 +183,8 @@ impl MachineFunction {
             debug_source: None,
             debug_line_start: None,
             current_debug_loc: None,
+            alloca_frame_bytes: 0,
+            next_alloca_slot: 0,
         }
     }
 
@@ -201,6 +209,22 @@ impl MachineFunction {
         self.spill_slots.insert(vreg, slot);
         // Update frame_size: each slot is 8 bytes.
         self.frame_size = self.next_slot * 8;
+        slot
+    }
+
+    /// Allocate a frame slot for a non-promotable alloca and return its 0-based
+    /// slot index. Each slot is at least 8 bytes (rounded up to 8-byte alignment).
+    ///
+    /// The caller (target backend) converts a slot index to its target-specific
+    /// frame displacement at emit time:
+    /// - x86-64: `-(callee_save_bytes + (slot+1)*8)` from RBP
+    /// - AArch64: `X29 - (slot+1)*8` (subtracts from frame pointer)
+    /// - RISC-V:  `s0 - (slot+1)*8` (addi rd, s0, -(slot+1)*8)
+    pub fn alloc_alloca_slot(&mut self, size_bytes: u32, _align_bytes: u32) -> u32 {
+        let slot = self.next_alloca_slot;
+        self.next_alloca_slot += 1;
+        let slot_size = size_bytes.max(8);
+        self.alloca_frame_bytes += (slot_size + 7) & !7;
         slot
     }
 

@@ -126,3 +126,14 @@ pub const AMOXOR_D: MOpcode = MOpcode(0x90);
 pub const AMOAND_D: MOpcode = MOpcode(0x91);
 /// `amoor.d rd, rs2, (rs1)`.
 pub const AMOOR_D: MOpcode = MOpcode(0x92);
+
+// ── non-promotable alloca frame-slot access ────────────────────────────────
+/// `addi rd, s0, -(slot_idx+1)*8`  — materialize a non-promotable alloca address.
+/// s0 (x8) is the RISC-V frame pointer. `dst` = VReg, `operands[0]` = `Imm(slot_idx)`.
+pub const ADDI_FP_SLOT: MOpcode = MOpcode(0xA0);
+/// `ld rd, 0(rs1)` — 64-bit load through a register-held pointer (offset 0).
+/// `dst` = VReg, `operands[0]` = PReg (pointer register after regalloc).
+pub const LD_REG: MOpcode = MOpcode(0xA1);
+/// `sd rs2, 0(rs1)` — 64-bit store through a register-held pointer (offset 0).
+/// No `dst`. `operands[0]` = PReg (pointer), `operands[1]` = PReg (value).
+pub const SD_REG: MOpcode = MOpcode(0xA2);
