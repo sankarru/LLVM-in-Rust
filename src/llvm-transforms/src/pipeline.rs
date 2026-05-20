@@ -5,7 +5,7 @@
 
 use crate::{
     pass::PassManager, CfgSimplify, ConstProp, ConstantFold, DeadArgElim, DeadCodeElim, Gvn,
-    Inliner, Ipcp, JumpThreading, Licm, LoopUnroll, Mem2Reg, Sroa, TailCallOpt,
+    Inliner, Ipcp, JumpThreading, Licm, LoopUnroll, Mem2Reg, SlpVectorizer, Sroa, TailCallOpt,
 };
 
 /// Optimization level preset.
@@ -69,6 +69,8 @@ pub fn build_pipeline(level: OptLevel) -> PassManager {
             pm.add_function_pass(ConstantFold);
             pm.add_function_pass(ConstProp);
             pm.add_function_pass(DeadCodeElim);
+            // SLP auto-vectorization: pack sequential scalar FP chains into vector ops.
+            pm.add_function_pass(SlpVectorizer::default());
             pm.add_function_pass(CfgSimplify::default());
         }
         OptLevel::O3 => {
@@ -100,6 +102,8 @@ pub fn build_pipeline(level: OptLevel) -> PassManager {
             pm.add_function_pass(ConstantFold);
             pm.add_function_pass(ConstProp);
             pm.add_function_pass(DeadCodeElim);
+            // SLP auto-vectorization.
+            pm.add_function_pass(SlpVectorizer::default());
             pm.add_function_pass(CfgSimplify::default());
         }
     }
