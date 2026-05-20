@@ -17,6 +17,8 @@ pub mod gvn;
 pub mod inline_pass;
 /// Public API for `ipcp`.
 pub mod ipcp;
+/// Public API for `licm`.
+pub mod licm;
 /// Public API for `loop_unroll`.
 pub mod loop_unroll;
 /// Public API for `jump_threading`.
@@ -51,6 +53,8 @@ pub use gvn::Gvn;
 pub use inline_pass::Inliner;
 /// Public API for `re-export`.
 pub use ipcp::Ipcp;
+/// Public API for `re-export`.
+pub use licm::Licm;
 /// Public API for `re-export`.
 pub use loop_unroll::LoopUnroll;
 /// Public API for `re-export`.

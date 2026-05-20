@@ -5,7 +5,7 @@
 
 use crate::{
     pass::PassManager, CfgSimplify, ConstProp, ConstantFold, DeadArgElim, DeadCodeElim, Gvn,
-    Inliner, Ipcp, JumpThreading, LoopUnroll, Mem2Reg, Sroa, TailCallOpt,
+    Inliner, Ipcp, JumpThreading, Licm, LoopUnroll, Mem2Reg, Sroa, TailCallOpt,
 };
 
 /// Optimization level preset.
@@ -57,6 +57,7 @@ pub fn build_pipeline(level: OptLevel) -> PassManager {
             pm.add_function_pass(Mem2Reg);
             pm.add_module_pass(Inliner::default());
             pm.add_function_pass(Gvn);
+            pm.add_function_pass(Licm);
             pm.add_function_pass(LoopUnroll::default());
             pm.add_function_pass(ConstantFold);
             pm.add_function_pass(ConstProp);
@@ -81,6 +82,7 @@ pub fn build_pipeline(level: OptLevel) -> PassManager {
                 hot_loop_bonus: 100,
             });
             pm.add_function_pass(Gvn);
+            pm.add_function_pass(Licm);
             pm.add_function_pass(LoopUnroll {
                 factor: 8,
                 max_trip_count: 16,
