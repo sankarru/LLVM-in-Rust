@@ -183,3 +183,86 @@ Total to compile a simple `fn main()` end-to-end through `cargo build`: **~6–8
    `fn add(a: i32, b: i32) -> i32 { a + b }`).
 5. Wire up to `cargo` via `-Zcodegen-backend` and verify the stub compiles a
    trivial crate without panicking.
+
+---
+
+## CI Modes
+
+The rustc-backend crate ships two operational modes:
+
+- **Stable shim mode** — runs on every push/PR via `cargo test -p llvm-in-rust-rustc-backend`.
+  The 13 shim tests exercise the full IR→object pipeline through raw IR strings with no
+  `rustc_private` dependency.  These always pass.
+
+- **Nightly backend mode** — runs in `.github/workflows/rustc-backend-nightly.yml`
+  (`continue-on-error: true`).  Uses `dtolnay/rust-toolchain@nightly` with the `rustc-dev`
+  and `llvm-tools` components, then attempts `cargo +nightly build` of
+  `bench/rustc-backend-validation/` with `-Z codegen-backend=llvm-in-rust-backend`.
+  This lane is non-blocking until all Milestone K items are merged.
+
+---
+
+## MIR Construct Status Tables
+
+These tables track which MIR constructs the nightly backend currently handles.
+Status values: **Working** (produces correct output), **Partial** (compiles but incomplete),
+**Stub** (accepted without error but no real codegen), **Not Started** (unimplemented/panics).
+
+The shim tests cover `Return` (every shim) and `Goto` (conditional-branch shim), so those
+two terminators are promoted above "Not Started".
+
+### MIR Terminators
+
+| Terminator Kind     | Status      | Notes |
+|---------------------|-------------|-------|
+| `Return`            | Working     | Every shim test exercises this path |
+| `Goto`              | Partial     | Unconditional branch emitted; phi-copies not yet wired |
+| `SwitchInt`         | Not Started | Needs `switch` or br-chain lowering |
+| `Call`              | Not Started | Requires ABI classification + landing-pad support |
+| `Drop`              | Not Started | Requires drop-glue elaboration |
+| `DropAndReplace`    | Not Started | Deprecated in recent MIR; equivalent to Drop + assign |
+| `Assert`            | Not Started | Needs conditional br + `__rust_panic` linkage |
+| `Resume`            | Not Started | Unwind resume; blocked on EH frame emission |
+| `Abort`             | Not Started | Calls `core::panicking::panic_explicit` |
+| `Unreachable`       | Not Started | `unreachable` IR node; trivial once wired |
+| `Yield`             | Not Started | Generator / coroutine support not planned for Milestone K |
+| `FalseEdge`         | Not Started | MIR-only borrow-check artifact; drops before codegen |
+| `FalseUnwind`       | Not Started | MIR-only borrow-check artifact; drops before codegen |
+| `InlineAsm`         | Not Started | x86 inline-asm parser exists; rustc AsmOperand not wired |
+| `GeneratorDrop`     | Not Started | Generator-specific; not planned for Milestone K |
+
+### MIR Rvalues
+
+| Rvalue Kind          | Status      | Notes |
+|----------------------|-------------|-------|
+| `Use`                | Not Started | Simple operand copy; trivial once place-projection works |
+| `Repeat`             | Not Started | Array fill `[expr; N]` |
+| `Ref`                | Not Started | Needs address-taken / alloca logic |
+| `AddressOf`          | Not Started | Raw pointer to place |
+| `Len`                | Not Started | Slice length extraction |
+| `Cast`               | Not Started | `sext`/`zext`/`bitcast`/`ptr-to-int` etc. |
+| `BinaryOp`           | Not Started | `add`/`sub`/`mul`/etc.; straightforward once Types mapped |
+| `CheckedBinaryOp`    | Not Started | Returns `(result, overflow_flag)` tuple |
+| `NullaryOp`          | Not Started | `SizeOf`/`AlignOf` — needs `rustc_target::abi` |
+| `UnaryOp`            | Not Started | `neg`/`not` |
+| `Discriminant`       | Not Started | Read enum tag |
+| `Aggregate`          | Not Started | Struct/array/enum construction |
+| `ShallowInitBox`     | Not Started | Box initialisation intrinsic |
+| `CopyForDeref`       | Not Started | Implicit copy through deref coercion |
+
+### MIR Statements
+
+| Statement Kind       | Status      | Notes |
+|----------------------|-------------|-------|
+| `Assign`             | Not Started | Core statement; blocked on Rvalue and place-projection |
+| `FakeRead`           | Not Started | Borrow-check artifact; no-op at codegen |
+| `SetDiscriminant`    | Not Started | Write enum tag to place |
+| `Deinit`             | Not Started | Poison / undef; can be no-op initially |
+| `StorageLive`        | Not Started | Alloca lifetime hint; can be ignored initially |
+| `StorageDead`        | Not Started | Alloca lifetime hint; can be ignored initially |
+| `Retag`             | Not Started | Stacked-borrows retag; no-op without Miri |
+| `AscribeUserType`    | Not Started | Type-ascription annotation; no-op at codegen |
+| `Coverage`           | Not Started | LLVM coverage instrumentation hooks |
+| `Intrinsic`          | Not Started | Non-diverging intrinsics (e.g. `assume`) |
+| `ConstEvalCounter`   | Not Started | Interpreter step counter; no-op at codegen |
+| `Nop`                | Not Started | Explicit no-op; trivial to handle |

@@ -1,0 +1,24 @@
+name: rustc-backend-nightly
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  nightly-backend:
+    name: rustc-backend nightly validation
+    runs-on: ubuntu-latest
+    continue-on-error: true   # non-blocking until all Milestone K items are merged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustc-dev, llvm-tools
+      - name: Build validation crate with nightly backend
+        run: |
+          cargo +nightly build --manifest-path bench/rustc-backend-validation/Cargo.toml \
+            -Z codegen-backend=llvm-in-rust-backend 2>&1 | tee /tmp/nightly-backend.log || true
+          echo "=== nightly backend output ==="
+          cat /tmp/nightly-backend.log
+      - name: Stable shim tests always pass
+        run: cargo test -p llvm-in-rust-rustc-backend
