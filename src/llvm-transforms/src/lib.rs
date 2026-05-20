@@ -29,6 +29,8 @@ pub mod mem2reg;
 pub mod pass;
 /// Public API for `pipeline`.
 pub mod pipeline;
+/// Public API for `slp`.
+pub mod slp;
 /// Public API for `sroa`.
 pub mod sroa;
 /// Public API for `tailcall`.
@@ -65,6 +67,8 @@ pub use mem2reg::Mem2Reg;
 pub use pass::{FunctionPass, ModulePass, PassManager};
 /// Public API for `re-export`.
 pub use pipeline::{build_pipeline, OptLevel};
+/// Public API for `re-export`.
+pub use slp::SlpVectorizer;
 /// Public API for `re-export`.
 pub use sroa::Sroa;
 /// Public API for `re-export`.
