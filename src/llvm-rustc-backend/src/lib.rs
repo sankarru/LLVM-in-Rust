@@ -34,6 +34,7 @@
 //! stages are already implemented by the sibling crates.
 
 pub mod shim;
+pub mod unwind;
 
 #[cfg(feature = "rustc-backend")]
 pub mod codegen_backend;
