@@ -34,6 +34,7 @@
 //! stages are already implemented by the sibling crates.
 
 pub mod aggregate;
+pub mod drop_glue;
 pub mod place;
 pub mod shim;
 
