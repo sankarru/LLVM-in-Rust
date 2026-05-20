@@ -730,6 +730,15 @@ pub enum InstrKind {
     },
     /// `Unreachable` variant.
     Unreachable,
+    /// Re-throw the in-flight exception from a landing pad.
+    ///
+    /// Operand is the `{ i8*, i32 }` aggregate produced by the `landingpad`
+    /// instruction.  This is a terminator; control does not return to the
+    /// caller.
+    Resume {
+        /// The exception aggregate to propagate.
+        val: ValueRef,
+    },
 }
 
 impl InstrKind {
@@ -743,6 +752,7 @@ impl InstrKind {
                 | InstrKind::Invoke { .. }
                 | InstrKind::Switch { .. }
                 | InstrKind::Unreachable
+                | InstrKind::Resume { .. }
         )
     }
 
@@ -807,6 +817,7 @@ impl InstrKind {
             InstrKind::CondBr { .. } => "br",
             InstrKind::Switch { .. } => "switch",
             InstrKind::Unreachable => "unreachable",
+            InstrKind::Resume { .. } => "resume",
         }
     }
 
@@ -904,6 +915,7 @@ impl InstrKind {
             } => vec![*ptr, *cmp, *new_val],
             InstrKind::AtomicRmw { ptr, val, .. } => vec![*ptr, *val],
             InstrKind::Ret { val } => val.iter().copied().collect(),
+            InstrKind::Resume { val } => vec![*val],
             InstrKind::Br { .. } | InstrKind::Unreachable => vec![],
             InstrKind::CondBr { cond, .. } => vec![*cond],
             InstrKind::Switch { val, cases, .. } => {
@@ -943,11 +955,12 @@ impl InstrKind {
                 }
                 v
             }
-            // Non-terminators and exit terminators (Ret, Unreachable) have no
+            // Non-terminators and exit terminators (Ret, Unreachable, Resume) have no
             // successors.  Listed explicitly so the compiler enforces that every
             // future variant is consciously placed in one arm or the other.
             InstrKind::Ret { .. }
             | InstrKind::Unreachable
+            | InstrKind::Resume { .. }
             | InstrKind::Add { .. }
             | InstrKind::Sub { .. }
             | InstrKind::Mul { .. }

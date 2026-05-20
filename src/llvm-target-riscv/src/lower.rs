@@ -715,7 +715,7 @@ fn lower_instr(
             mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
         }
 
-        Ret { .. } | Br { .. } | CondBr { .. } | Invoke { .. } | Switch { .. } | Unreachable => {}
+        Ret { .. } | Br { .. } | CondBr { .. } | Invoke { .. } | Switch { .. } | Unreachable | Resume { .. } => {}
     }
 }
 
@@ -792,6 +792,9 @@ fn lower_terminator(
         }
 
         Unreachable => mf.push(mblock, MInstr::new(NOP)),
+
+        // resume re-throws the in-flight exception; lower to NOP as placeholder.
+        Resume { .. } => mf.push(mblock, MInstr::new(NOP)),
 
         _ => {}
     }

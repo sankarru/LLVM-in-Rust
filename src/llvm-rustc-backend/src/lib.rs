@@ -37,6 +37,7 @@ pub mod aggregate;
 pub mod drop_glue;
 pub mod place;
 pub mod shim;
+pub mod unwind;
 
 #[cfg(feature = "rustc-backend")]
 pub mod codegen_backend;
