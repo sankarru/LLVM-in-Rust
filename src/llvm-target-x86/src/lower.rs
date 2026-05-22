@@ -166,6 +166,11 @@ impl IselBackend for X86Backend {
                     // Emit a placeholder LEA to mark the stack slot.
                     mf.push(0, MInstr::new(LEA_RI).with_dst(vr).with_imm(offset as i64));
                 }
+                ArgLocation::ByPtr => {
+                    // By-pointer struct arg: address arrives in the next GPR slot.
+                    // For now treat as a stack-spilled integer (address in a GPR).
+                    mf.push(0, MInstr::new(LEA_RI).with_dst(vr).with_imm(0));
+                }
             }
         }
 
@@ -951,6 +956,7 @@ fn lower_instr(
                     ArgLocation::Reg(preg) => reg_moves.push((preg, src)),
                     ArgLocation::FpReg(preg) => reg_moves.push((preg, src)),
                     ArgLocation::Stack(_) => stack_args.push(src),
+                    ArgLocation::ByPtr => stack_args.push(src),
                 }
             }
 
@@ -1321,7 +1327,7 @@ fn lower_terminator(
                 match arg_locs[i] {
                     ArgLocation::Reg(preg) => emit_mov_to_preg(mf, mblock, preg, src),
                     ArgLocation::FpReg(preg) => emit_mov_to_preg(mf, mblock, preg, src),
-                    ArgLocation::Stack(_) => {}
+                    ArgLocation::Stack(_) | ArgLocation::ByPtr => {}
                 }
             }
             let callee_src = resolve(ctx, mf, mblock, vmap, *callee);
