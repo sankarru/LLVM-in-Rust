@@ -812,90 +812,62 @@ fn build_debug_loclists(text_size: u64) -> Vec<u8> {
 }
 
 fn build_eh_frame(text_size: u64, frame_size: u32, used_callee_saved: &[PReg]) -> Vec<u8> {
-    // Baseline .eh_frame with one CIE/FDE, now shaped by frame facts.
+    // Build .eh_frame using the structured CfiWriter from crate::cfi.
     // CIE augmentation uses zR and encodes FDE pointers as pcrel/sdata4.
-    let mut out = Vec::new();
+    use crate::cfi::{CfiInstr, CfiWriter};
 
-    let mut cie = Vec::new();
-    cie.push(1); // version
-    cie.extend_from_slice(b"zR\0"); // augmentation
-    write_uleb128(&mut cie, 1); // code alignment factor
-    write_sleb128(&mut cie, -8); // data alignment factor
-    write_uleb128(&mut cie, 16); // return address register (RIP)
-    write_uleb128(&mut cie, 1); // augmentation data length
-    cie.push(0x1b); // DW_EH_PE_pcrel | DW_EH_PE_sdata4
+    let mut cfi = CfiWriter::new();
+    cfi.write_cie();
 
-    // Initial canonical frame: CFA = rsp + 8, RA saved at cfa-8.
-    cie.push(0x0c); // DW_CFA_def_cfa
-    write_uleb128(&mut cie, 7); // rsp
-    write_uleb128(&mut cie, 8);
-    cie.push(0x90); // DW_CFA_offset + r16 (rip)
-    write_uleb128(&mut cie, 1);
+    // Build the FDE CFI instruction stream from the machine function's frame shape.
+    // For x86-64 with a frame pointer, the prologue is:
+    //   push rbp (1 byte)       → CFA offset increases by 8, RBP saved
+    //   mov rbp, rsp (3 bytes)  → CFA register switches to RBP
+    //   push callee-saved regs  → additional saves recorded
 
-    w32(&mut out, cie.len() as u32 + 4);
-    w32(&mut out, 0); // CIE id
-    out.extend_from_slice(&cie);
-    while out.len() % 8 != 0 {
-        out.push(0);
-    }
+    let has_frame = frame_size > 0 || !used_callee_saved.is_empty();
+    let mut prologue_cfi: Vec<CfiInstr> = Vec::new();
 
-    let fde_start = out.len();
-    let mut fde = Vec::new();
-    w32(&mut fde, 0); // initial_location (placeholder in object file)
-    w32(&mut fde, text_size.max(1) as u32); // address range
+    if has_frame {
+        // After "push rbp" (1 byte): CFA = RSP+16, RBP saved at CFA-16.
+        prologue_cfi.push(CfiInstr::AdvanceLoc(1));
+        prologue_cfi.push(CfiInstr::DefCfaOffset(16));
+        prologue_cfi.push(CfiInstr::Offset { reg: 6, factored_offset: 2 });
 
-    // Build FDE instruction stream from frame shape.
-    let mut fde_prog = Vec::new();
-    let mut cfa_off = 8u64;
+        // After "mov rbp, rsp" (3 bytes): CFA register = RBP.
+        prologue_cfi.push(CfiInstr::AdvanceLoc(3));
+        prologue_cfi.push(CfiInstr::DefCfaRegister(6));
 
-    // Account for frame pointer setup and pushed callee-saved registers.
-    let pushes = if frame_size > 0 || !used_callee_saved.is_empty() {
-        1 + used_callee_saved.len() as u64 // push rbp + pushes
-    } else {
-        0
-    };
-
-    if pushes > 0 {
-        cfa_off += pushes * 8;
-        fde_prog.push(0x0e); // DW_CFA_def_cfa_offset
-        write_uleb128(&mut fde_prog, cfa_off);
-
-        // rbp saved at CFA-16 after push rbp + call return address.
-        fde_prog.push(0x86); // DW_CFA_offset + r6 (rbp)
-        write_uleb128(&mut fde_prog, 2);
-
+        // Record callee-saved register saves (each push is 1 or 2 bytes).
+        // CFA offset at this point = 16 + n_callee*8; factored = (16 + (idx+1)*8) / 8 = 2 + idx+1.
         for (idx, pr) in used_callee_saved.iter().enumerate() {
-            let reg = pr.0;
+            let reg = pr.0 as u8;
+            // Push instruction: 1 byte for RAX-RDI (no REX), 2 bytes for R8-R15 (REX.B prefix).
+            let push_len: u8 = if pr.0 >= 8 { 2 } else { 1 };
+            // DWARF register numbers for x86-64 (System V ABI Table 3.18).
+            // Our PReg: 0=RAX,1=RCX,2=RDX,3=RBX,4=RSP,5=RBP,6=RSI,7=RDI,8=R8..15=R15
+            // DWARF:    RAX=0,RDX=1,RCX=2,RBX=3,RSI=4,RDI=5,RBP=6,RSP=7,R8-R15=8-15
+            let dwarf_reg: u8 = match pr.0 {
+                0 => 0,  // RAX
+                1 => 2,  // RCX → DWARF 2
+                2 => 1,  // RDX → DWARF 1
+                3 => 3,  // RBX → DWARF 3
+                4 => 7,  // RSP → DWARF 7
+                5 => 6,  // RBP → DWARF 6
+                6 => 4,  // RSI → DWARF 4
+                7 => 5,  // RDI → DWARF 5
+                n => n,  // R8-R15 → DWARF 8-15 (same number)
+            };
             if reg <= 0x3f {
-                fde_prog.push(0x80 | reg); // DW_CFA_offset + reg
-                write_uleb128(&mut fde_prog, 3 + idx as u64); // after RA+RBP
+                prologue_cfi.push(CfiInstr::AdvanceLoc(push_len));
+                let factored = 3u32 + idx as u32; // CFA-((3+idx)*8): after RA+RBP slots
+                prologue_cfi.push(CfiInstr::Offset { reg: dwarf_reg, factored_offset: factored });
             }
         }
-
-        // set CFA register to rbp once prologue establishes frame pointer.
-        fde_prog.push(0x0d); // DW_CFA_def_cfa_register
-        write_uleb128(&mut fde_prog, 6); // rbp
     }
 
-    if frame_size > 0 {
-        cfa_off += frame_size as u64;
-        fde_prog.push(0x0e); // DW_CFA_def_cfa_offset
-        write_uleb128(&mut fde_prog, cfa_off);
-    }
-
-    write_uleb128(&mut fde, fde_prog.len() as u64); // augmentation data length
-    fde.extend_from_slice(&fde_prog);
-
-    w32(&mut out, fde.len() as u32 + 4);
-    let cie_ptr = fde_start as u32;
-    w32(&mut out, cie_ptr); // CIE pointer (offset back to CIE at 0)
-    out.extend_from_slice(&fde);
-    while out.len() % 8 != 0 {
-        out.push(0);
-    }
-
-    w32(&mut out, 0); // terminator
-    out
+    cfi.write_fde(text_size.max(1) as u32, &prologue_cfi);
+    cfi.assemble()
 }
 
 fn build_coff_unwind_tables(text_size: u64, frame_size: u32, used_callee_saved: &[PReg]) -> (Vec<u8>, Vec<u8>) {
