@@ -45,6 +45,8 @@ pub mod printer;
 pub mod types;
 /// Public API for `value`.
 pub mod value;
+/// IR minimizer (delta debugging style).
+pub mod reduce;
 
 // Re-export key types at crate root for ergonomic use.
 /// Public API for `re-export`.
@@ -70,3 +72,5 @@ pub use printer::Printer;
 pub use types::{FloatKind, FunctionType, StructType, TypeData};
 /// Public API for `re-export`.
 pub use value::{Argument, ConstExprOp, ConstantData, GlobalVariable, Linkage};
+/// Public API for `re-export`.
+pub use reduce::{ContainsPredicate, Predicate, Reducer};
