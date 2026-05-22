@@ -14,6 +14,8 @@ pub mod legalize;
 pub mod regalloc;
 /// Public API for `regalloc_gc`.
 pub mod regalloc_gc;
+/// LLVM intrinsic recognition and lowering.
+pub mod intrinsics;
 /// Public API for `schedule`.
 pub mod schedule;
 
@@ -41,6 +43,8 @@ pub use regalloc::{
     allocate_registers, apply_allocation, compute_live_intervals, graph_color,
     insert_spill_reloads, linear_scan, RegAllocStrategy,
 };
+/// Public API for `intrinsics` re-exports.
+pub use intrinsics::{is_llvm_intrinsic, lower_intrinsic};
 /// Public API for `schedule` re-exports.
 pub use schedule::{
     apply_schedule, build_dep_dag, compute_critical_paths, list_schedule, x86_latency, DepEdge,
