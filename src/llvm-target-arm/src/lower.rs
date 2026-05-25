@@ -826,6 +826,9 @@ fn lower_instr(
 
         // Terminators handled in lower_terminator.
         Ret { .. } | Br { .. } | CondBr { .. } | Invoke { .. } | Switch { .. } | Unreachable | Resume { .. } => {}
+
+        // Funclet pads — not yet fully supported; emit a NOP stub.
+        CatchPad { .. } | CleanupPad { .. } | CatchSwitch { .. } | CatchRet { .. } | CleanupRet { .. } => {}
     }
 }
 
@@ -963,6 +966,31 @@ fn lower_terminator(
         // placeholder — a real backend would call _Unwind_Resume.
         Resume { .. } => {
             mf.push(mblock, MInstr::new(NOP));
+        }
+
+        // CatchSwitch — lower first handler as unconditional branch (stub).
+        CatchSwitch { handlers, default, .. } => {
+            if let Some(&h) = handlers.first() {
+                mf.push(mblock, MInstr::new(B).with_block(h.0 as usize));
+            } else if let Some(d) = default {
+                mf.push(mblock, MInstr::new(B).with_block(d.0 as usize));
+            } else {
+                mf.push(mblock, MInstr::new(NOP));
+            }
+        }
+
+        // CatchRet — unconditional branch to successor.
+        CatchRet { successor, .. } => {
+            mf.push(mblock, MInstr::new(B).with_block(successor.0 as usize));
+        }
+
+        // CleanupRet — branch to unwind_dest or NOP if unwind-to-caller.
+        CleanupRet { unwind_dest, .. } => {
+            if let Some(d) = unwind_dest {
+                mf.push(mblock, MInstr::new(B).with_block(d.0 as usize));
+            } else {
+                mf.push(mblock, MInstr::new(NOP));
+            }
         }
 
         _ => {} // body instructions already handled

@@ -1638,88 +1638,84 @@ impl<'src> Parser<'src> {
                 let (val, ty) = self.parse_typed_value()?;
                 Ok((InstrKind::Resume { val }, ty))
             }
-            // --- Funclet pads ---
+            // --- Funclet pad instructions ---
             Token::Kw(Keyword::Catchpad) => {
-                self.lex.next()?; // consume 'catchpad'
+                // catchpad within %cs [type val, ...]
+                self.lex.next()?;
                 self.lex.expect_kw(&Keyword::Within)?;
+                // catchpad always has a catch_switch parent (never "none")
                 let catch_switch = self.parse_value_untyped()?;
-                // parse [args...]
                 let args = self.parse_pad_args()?;
-                let tok_ty = self.ctx.ptr_ty;
-                Ok((InstrKind::CatchPad { catch_switch, args }, tok_ty))
+                let ptr_ty = self.ctx.ptr_ty;
+                Ok((InstrKind::CatchPad { catch_switch, args }, ptr_ty))
             }
             Token::Kw(Keyword::Cleanuppad) => {
-                self.lex.next()?; // consume 'cleanuppad'
+                // cleanuppad within none [type val, ...]  OR  cleanuppad within %tok [...]
+                self.lex.next()?;
                 self.lex.expect_kw(&Keyword::Within)?;
                 let parent = self.parse_funclet_parent()?;
                 let args = self.parse_pad_args()?;
-                let tok_ty = self.ctx.ptr_ty;
-                Ok((InstrKind::CleanupPad { parent, args }, tok_ty))
+                let ptr_ty = self.ctx.ptr_ty;
+                Ok((InstrKind::CleanupPad { parent, args }, ptr_ty))
             }
             Token::Kw(Keyword::Catchswitch) => {
-                self.lex.next()?; // consume 'catchswitch'
+                // catchswitch within none [label %h1, label %h2, ...] unwind to caller
+                //   OR  unwind label %dest
+                self.lex.next()?;
                 self.lex.expect_kw(&Keyword::Within)?;
                 let parent = self.parse_funclet_parent()?;
-                // parse [label %b1, label %b2, ...]
+                // parse handler list: [label %b, ...]
                 self.lex.expect(&Token::LBracket)?;
-                let mut handlers = Vec::new();
-                loop {
-                    match self.lex.peek()? {
-                        Token::RBracket => {
-                            self.lex.next()?;
+                let mut handlers: Vec<BlockId> = Vec::new();
+                if !matches!(self.lex.peek()?, Token::RBracket) {
+                    loop {
+                        self.lex.expect_kw(&Keyword::Label)?;
+                        let bname = self.lex.expect_local_ident()?;
+                        let bid = self.get_or_create_block(&bname)?;
+                        handlers.push(bid);
+                        if !matches!(self.lex.peek()?, Token::Comma) {
                             break;
                         }
-                        _ => {
-                            if !handlers.is_empty() {
-                                self.lex.expect(&Token::Comma)?;
-                                // check again for trailing bracket
-                                if matches!(self.lex.peek()?, Token::RBracket) {
-                                    self.lex.next()?;
-                                    break;
-                                }
-                            }
-                            self.lex.expect_kw(&Keyword::Label)?;
-                            let bname = self.lex.expect_local_ident()?;
-                            let bid = self.get_or_create_block(&bname)?;
-                            handlers.push(bid);
-                        }
+                        self.lex.next()?; // consume comma
                     }
                 }
-                // unwind
+                self.lex.expect(&Token::RBracket)?;
                 self.lex.expect_kw(&Keyword::Unwind)?;
                 let default = self.parse_unwind_dest()?;
-                let tok_ty = self.ctx.ptr_ty;
-                Ok((InstrKind::CatchSwitch { parent, handlers, default }, tok_ty))
+                let ptr_ty = self.ctx.ptr_ty;
+                Ok((InstrKind::CatchSwitch { parent, handlers, default }, ptr_ty))
             }
             Token::Kw(Keyword::Catchret) => {
-                self.lex.next()?; // consume 'catchret'
-                // expect 'from' (now a keyword)
+                // catchret from %tok to label %cont
+                self.lex.next()?;
+                // "from" keyword (optional for robustness)
                 match self.lex.peek()?.clone() {
                     Token::Kw(Keyword::From) => { self.lex.next()?; }
                     Token::LocalIdent(ref s) if s == "from" => { self.lex.next()?; }
-                    t => return Err(self.err(format!("expected 'from', got {:?}", t))),
+                    _ => {}
                 }
                 let catch_pad = self.parse_value_untyped()?;
                 self.lex.expect_kw(&Keyword::To)?;
                 self.lex.expect_kw(&Keyword::Label)?;
                 let bname = self.lex.expect_local_ident()?;
                 let successor = self.get_or_create_block(&bname)?;
-                let void_ty = self.ctx.void_ty;
-                Ok((InstrKind::CatchRet { catch_pad, successor }, void_ty))
+                let ptr_ty = self.ctx.ptr_ty;
+                Ok((InstrKind::CatchRet { catch_pad, successor }, ptr_ty))
             }
             Token::Kw(Keyword::Cleanupret) => {
-                self.lex.next()?; // consume 'cleanupret'
-                // expect 'from' (now a keyword)
+                // cleanupret from %tok unwind to caller  OR  unwind label %dest
+                self.lex.next()?;
+                // "from" keyword (optional for robustness)
                 match self.lex.peek()?.clone() {
                     Token::Kw(Keyword::From) => { self.lex.next()?; }
                     Token::LocalIdent(ref s) if s == "from" => { self.lex.next()?; }
-                    t => return Err(self.err(format!("expected 'from', got {:?}", t))),
+                    _ => {}
                 }
                 let cleanup_pad = self.parse_value_untyped()?;
                 self.lex.expect_kw(&Keyword::Unwind)?;
                 let unwind_dest = self.parse_unwind_dest()?;
-                let void_ty = self.ctx.void_ty;
-                Ok((InstrKind::CleanupRet { cleanup_pad, unwind_dest }, void_ty))
+                let ptr_ty = self.ctx.ptr_ty;
+                Ok((InstrKind::CleanupRet { cleanup_pad, unwind_dest }, ptr_ty))
             }
             _ => {
                 let t = self.lex.next()?;
@@ -2475,9 +2471,15 @@ impl<'src> Parser<'src> {
                 | Token::Eof
                 | Token::Kw(Keyword::Define)
                 | Token::Kw(Keyword::Declare)
-                | Token::GlobalIdent(_)
                 | Token::Kw(Keyword::Target)
                 | Token::Kw(Keyword::Source) => break,
+                // `personality <type> <global>` — consume all three tokens.
+                Token::Kw(Keyword::Personality) => {
+                    self.lex.next()?; // consume "personality"
+                    self.parse_type()?; // consume the type (e.g. ptr)
+                    self.lex.next()?; // consume the global ident (@name)
+                }
+                Token::GlobalIdent(_) => break,
                 Token::LocalIdent(s) if s == "attributes" => break,
                 Token::LocalIdent(s) if Self::is_fn_attr_name(s) => {
                     let name = s.clone();
@@ -3097,6 +3099,15 @@ impl<'src> Parser<'src> {
             Keyword::Switch => "switch",
             Keyword::Unreachable => "unreachable",
             Keyword::Resume => "resume",
+            Keyword::Catchpad => "catchpad",
+            Keyword::Cleanuppad => "cleanuppad",
+            Keyword::Catchswitch => "catchswitch",
+            Keyword::Catchret => "catchret",
+            Keyword::Cleanupret => "cleanupret",
+            Keyword::Within => "within",
+            Keyword::Caller => "caller",
+            Keyword::None => "none",
+            Keyword::From => "from",
             Keyword::Eq => "eq",
             Keyword::Ne => "ne",
             Keyword::Ugt => "ugt",

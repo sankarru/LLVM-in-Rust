@@ -335,7 +335,7 @@ where
             handlers,
             default,
         } => InstrKind::CatchSwitch {
-            parent,
+            parent: parent.map(&mut f),
             handlers,
             default,
         },

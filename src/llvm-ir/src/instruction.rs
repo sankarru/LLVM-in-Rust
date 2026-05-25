@@ -747,6 +747,56 @@ pub enum InstrKind {
         /// The exception aggregate to propagate.
         val: ValueRef,
     },
+
+    // --- Funclet pads (Windows EH / SEH, Itanium EH v2) ---
+    /// `catchpad within %cs [args...]` — entry to a catch handler funclet.
+    ///
+    /// Result is a token value used by the enclosing `catchswitch` and by
+    /// `catchret`.  Not a terminator.
+    CatchPad {
+        /// The `catchswitch` token that encloses this handler.
+        catch_switch: ValueRef,
+        /// Catch clause arguments (e.g. a type-info pointer).
+        args: Vec<ValueRef>,
+    },
+    /// `cleanuppad within <parent> [args...]` — entry to a cleanup funclet.
+    ///
+    /// Result is a token value.  Not a terminator.
+    CleanupPad {
+        /// Enclosing funclet token, or `None` for `within none`.
+        parent: Option<ValueRef>,
+        /// Additional cleanup arguments.
+        args: Vec<ValueRef>,
+    },
+    /// `catchswitch within <parent> [handlers...] unwind <dest>` — dispatcher.
+    ///
+    /// This **is** a terminator.
+    CatchSwitch {
+        /// Enclosing funclet token, or `None` for `within none`.
+        parent: Option<ValueRef>,
+        /// Catch-handler basic blocks.
+        handlers: Vec<BlockId>,
+        /// Where to unwind if no handler matches (`None` = unwind to caller).
+        default: Option<BlockId>,
+    },
+    /// `catchret from %tok to label %succ` — return from a catch handler.
+    ///
+    /// Terminator.
+    CatchRet {
+        /// The `catchpad` token produced in the handler.
+        catch_pad: ValueRef,
+        /// Normal-continuation block.
+        successor: BlockId,
+    },
+    /// `cleanupret from %tok unwind [label %dest | to caller]`
+    ///
+    /// Terminator.
+    CleanupRet {
+        /// The `cleanuppad` token produced in this cleanup funclet.
+        cleanup_pad: ValueRef,
+        /// Destination block, or `None` for "unwind to caller".
+        unwind_dest: Option<BlockId>,
+    },
 }
 
 impl InstrKind {
@@ -761,6 +811,9 @@ impl InstrKind {
                 | InstrKind::Switch { .. }
                 | InstrKind::Unreachable
                 | InstrKind::Resume { .. }
+                | InstrKind::CatchSwitch { .. }
+                | InstrKind::CatchRet { .. }
+                | InstrKind::CleanupRet { .. }
         )
     }
 
@@ -826,6 +879,11 @@ impl InstrKind {
             InstrKind::Switch { .. } => "switch",
             InstrKind::Unreachable => "unreachable",
             InstrKind::Resume { .. } => "resume",
+            InstrKind::CatchPad { .. } => "catchpad",
+            InstrKind::CleanupPad { .. } => "cleanuppad",
+            InstrKind::CatchSwitch { .. } => "catchswitch",
+            InstrKind::CatchRet { .. } => "catchret",
+            InstrKind::CleanupRet { .. } => "cleanupret",
         }
     }
 
@@ -933,6 +991,19 @@ impl InstrKind {
                 }
                 v
             }
+            InstrKind::CatchPad { catch_switch, args } => {
+                let mut v = vec![*catch_switch];
+                v.extend_from_slice(args);
+                v
+            }
+            InstrKind::CleanupPad { parent, args } => {
+                let mut v: Vec<ValueRef> = parent.iter().copied().collect();
+                v.extend_from_slice(args);
+                v
+            }
+            InstrKind::CatchSwitch { parent, .. } => parent.iter().copied().collect(),
+            InstrKind::CatchRet { catch_pad, .. } => vec![*catch_pad],
+            InstrKind::CleanupRet { cleanup_pad, .. } => vec![*cleanup_pad],
         }
     }
 
@@ -963,12 +1034,28 @@ impl InstrKind {
                 }
                 v
             }
+            // Funclet terminators.
+            InstrKind::CatchSwitch {
+                handlers, default, ..
+            } => {
+                let mut v: Vec<BlockId> = handlers.clone();
+                if let Some(d) = default {
+                    v.push(*d);
+                }
+                v
+            }
+            InstrKind::CatchRet { successor, .. } => vec![*successor],
+            InstrKind::CleanupRet { unwind_dest, .. } => {
+                unwind_dest.iter().copied().collect()
+            }
             // Non-terminators and exit terminators (Ret, Unreachable, Resume) have no
             // successors.  Listed explicitly so the compiler enforces that every
             // future variant is consciously placed in one arm or the other.
             InstrKind::Ret { .. }
             | InstrKind::Unreachable
             | InstrKind::Resume { .. }
+            | InstrKind::CatchPad { .. }
+            | InstrKind::CleanupPad { .. }
             | InstrKind::Add { .. }
             | InstrKind::Sub { .. }
             | InstrKind::Mul { .. }

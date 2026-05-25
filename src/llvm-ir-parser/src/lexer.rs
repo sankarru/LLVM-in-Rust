@@ -230,6 +230,24 @@ pub enum Keyword {
     Unreachable,
     /// `Resume` variant.
     Resume,
+    /// `Catchpad` variant.
+    Catchpad,
+    /// `Cleanuppad` variant.
+    Cleanuppad,
+    /// `Catchswitch` variant.
+    Catchswitch,
+    /// `Catchret` variant.
+    Catchret,
+    /// `Cleanupret` variant.
+    Cleanupret,
+    /// `Within` variant.
+    Within,
+    /// `Caller` variant.
+    Caller,
+    /// `None` variant (used after `within` in funclet pads).
+    None,
+    /// `From` variant (used in catchret/cleanupret).
+    From,
 
     // ICmp predicates
     /// `Eq` variant.
@@ -1003,6 +1021,15 @@ impl<'src> Lexer<'src> {
             "switch" => Keyword::Switch,
             "unreachable" => Keyword::Unreachable,
             "resume" => Keyword::Resume,
+            "catchpad" => Keyword::Catchpad,
+            "cleanuppad" => Keyword::Cleanuppad,
+            "catchswitch" => Keyword::Catchswitch,
+            "catchret" => Keyword::Catchret,
+            "cleanupret" => Keyword::Cleanupret,
+            "within" => Keyword::Within,
+            "caller" => Keyword::Caller,
+            "none" => Keyword::None,
+            "from" => Keyword::From,
             "eq" => Keyword::Eq,
             "ne" => Keyword::Ne,
             "ugt" => Keyword::Ugt,

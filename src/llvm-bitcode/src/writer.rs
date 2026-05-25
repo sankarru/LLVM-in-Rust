@@ -554,6 +554,16 @@ mod instr_tag {
     pub const UNREACHABLE: u32 = 94;
     /// Public API for `RESUME`.
     pub const RESUME: u32 = 95;
+    /// Public API for `CATCHPAD`.
+    pub const CATCHPAD: u32 = 100;
+    /// Public API for `CLEANUPPAD`.
+    pub const CLEANUPPAD: u32 = 101;
+    /// Public API for `CATCHSWITCH`.
+    pub const CATCHSWITCH: u32 = 102;
+    /// Public API for `CATCHRET`.
+    pub const CATCHRET: u32 = 103;
+    /// Public API for `CLEANUPRET`.
+    pub const CLEANUPRET: u32 = 104;
 }
 
 fn encode_vref(w: &mut Writer, vr: &ValueRef) {
@@ -1071,6 +1081,48 @@ fn encode_instr(w: &mut Writer, instr: &Instruction) {
         Resume { val } => {
             w.u32(instr_tag::RESUME);
             encode_vref(w, val);
+        }
+        CatchPad { catch_switch, args } => {
+            w.u32(instr_tag::CATCHPAD);
+            encode_vref(w, catch_switch);
+            w.u32(args.len() as u32);
+            for arg in args {
+                encode_vref(w, arg);
+            }
+        }
+        CleanupPad { parent, args } => {
+            w.u32(instr_tag::CLEANUPPAD);
+            encode_opt_vref(w, parent);
+            w.u32(args.len() as u32);
+            for arg in args {
+                encode_vref(w, arg);
+            }
+        }
+        CatchSwitch {
+            parent,
+            handlers,
+            default,
+        } => {
+            w.u32(instr_tag::CATCHSWITCH);
+            encode_opt_vref(w, parent);
+            w.u32(handlers.len() as u32);
+            for h in handlers {
+                w.u32(h.0);
+            }
+            encode_opt_u32(w, default.map(|b| b.0));
+        }
+        CatchRet { catch_pad, successor } => {
+            w.u32(instr_tag::CATCHRET);
+            encode_vref(w, catch_pad);
+            w.u32(successor.0);
+        }
+        CleanupRet {
+            cleanup_pad,
+            unwind_dest,
+        } => {
+            w.u32(instr_tag::CLEANUPRET);
+            encode_vref(w, cleanup_pad);
+            encode_opt_u32(w, unwind_dest.map(|b| b.0));
         }
     }
 }

@@ -1253,11 +1253,12 @@ fn lower_instr(
             mf.push(mblock, MInstr::new(MOV_RI).with_dst(dst).with_imm(0));
         }
 
-        // Terminators handled in lower_terminator.
-        Ret { .. } | Br { .. } | CondBr { .. } | Invoke { .. } | Switch { .. } | Unreachable | Resume { .. } => {}
+        // Funclet pad non-terminators — emit nothing (token-producing stubs).
+        CatchPad { .. } | CleanupPad { .. } => {}
 
-        // Funclet pads — not yet fully supported; emit a NOP stub.
-        CatchPad { .. } | CleanupPad { .. } | CatchSwitch { .. } | CatchRet { .. } | CleanupRet { .. } => {}
+        // Terminators handled in lower_terminator.
+        Ret { .. } | Br { .. } | CondBr { .. } | Invoke { .. } | Switch { .. } | Unreachable
+        | Resume { .. } | CatchSwitch { .. } | CatchRet { .. } | CleanupRet { .. } => {}
     }
 }
 
@@ -1378,6 +1379,31 @@ fn lower_terminator(
         // _Unwind_Resume or the equivalent libunwind entry point.
         Resume { .. } => {
             mf.push(mblock, MInstr::new(NOP));
+        }
+
+        // CatchSwitch — lower first handler as unconditional branch (stub).
+        CatchSwitch { handlers, default, .. } => {
+            if let Some(&h) = handlers.first() {
+                mf.push(mblock, MInstr::new(JMP).with_block(h.0 as usize));
+            } else if let Some(d) = default {
+                mf.push(mblock, MInstr::new(JMP).with_block(d.0 as usize));
+            } else {
+                mf.push(mblock, MInstr::new(NOP));
+            }
+        }
+
+        // CatchRet — unconditional branch to successor.
+        CatchRet { successor, .. } => {
+            mf.push(mblock, MInstr::new(JMP).with_block(successor.0 as usize));
+        }
+
+        // CleanupRet — branch to unwind_dest or NOP if unwind-to-caller.
+        CleanupRet { unwind_dest, .. } => {
+            if let Some(d) = unwind_dest {
+                mf.push(mblock, MInstr::new(JMP).with_block(d.0 as usize));
+            } else {
+                mf.push(mblock, MInstr::new(NOP));
+            }
         }
 
         _ => {} // body instructions already handled

@@ -663,6 +663,16 @@ mod instr_tag {
     pub const UNREACHABLE: u32 = 94;
     /// Public API for `RESUME`.
     pub const RESUME: u32 = 95;
+    /// Public API for `CATCHPAD`.
+    pub const CATCHPAD: u32 = 100;
+    /// Public API for `CLEANUPPAD`.
+    pub const CLEANUPPAD: u32 = 101;
+    /// Public API for `CATCHSWITCH`.
+    pub const CATCHSWITCH: u32 = 102;
+    /// Public API for `CATCHRET`.
+    pub const CATCHRET: u32 = 103;
+    /// Public API for `CLEANUPRET`.
+    pub const CLEANUPRET: u32 = 104;
 }
 
 fn decode_vref(r: &mut Reader) -> Result<ValueRef, BitcodeError> {
@@ -1249,6 +1259,44 @@ fn decode_instr(
         instr_tag::RESUME => {
             let val = decode_vref(r)?;
             InstrKind::Resume { val }
+        }
+        instr_tag::CATCHPAD => {
+            let catch_switch = decode_vref(r)?;
+            let argc = r.u32()? as usize;
+            let mut args = Vec::with_capacity(argc);
+            for _ in 0..argc {
+                args.push(decode_vref(r)?);
+            }
+            InstrKind::CatchPad { catch_switch, args }
+        }
+        instr_tag::CLEANUPPAD => {
+            let parent = decode_opt_vref(r)?;
+            let argc = r.u32()? as usize;
+            let mut args = Vec::with_capacity(argc);
+            for _ in 0..argc {
+                args.push(decode_vref(r)?);
+            }
+            InstrKind::CleanupPad { parent, args }
+        }
+        instr_tag::CATCHSWITCH => {
+            let parent = decode_opt_vref(r)?;
+            let handler_count = r.u32()? as usize;
+            let mut handlers = Vec::with_capacity(handler_count);
+            for _ in 0..handler_count {
+                handlers.push(BlockId(r.u32()?));
+            }
+            let default = decode_opt_u32(r)?.map(BlockId);
+            InstrKind::CatchSwitch { parent, handlers, default }
+        }
+        instr_tag::CATCHRET => {
+            let catch_pad = decode_vref(r)?;
+            let successor = BlockId(r.u32()?);
+            InstrKind::CatchRet { catch_pad, successor }
+        }
+        instr_tag::CLEANUPRET => {
+            let cleanup_pad = decode_vref(r)?;
+            let unwind_dest = decode_opt_u32(r)?.map(BlockId);
+            InstrKind::CleanupRet { cleanup_pad, unwind_dest }
         }
         other => return Err(BitcodeError::UnsupportedRecord(other)),
     };

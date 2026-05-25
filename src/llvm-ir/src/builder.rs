@@ -1088,6 +1088,73 @@ impl<'a> Builder<'a> {
         self.append_instr(None, void_ty, InstrKind::Unreachable)
     }
 
+    // --- Funclet pads (Windows EH / SEH) ---
+
+    /// Build a `catchpad within %catch_switch [args...]` instruction.
+    ///
+    /// Returns a token `ValueRef`.  Not a terminator.
+    pub fn build_catchpad(
+        &mut self,
+        name: impl Into<String>,
+        catch_switch: ValueRef,
+        args: Vec<ValueRef>,
+    ) -> ValueRef {
+        let tok_ty = self.ctx.ptr_ty; // token type approximated as ptr
+        self.append_instr(Some(name.into()), tok_ty, InstrKind::CatchPad { catch_switch, args })
+    }
+
+    /// Build a `cleanuppad within <parent> [args...]` instruction.
+    ///
+    /// Returns a token `ValueRef`.  Not a terminator.
+    pub fn build_cleanuppad(
+        &mut self,
+        name: impl Into<String>,
+        parent: Option<ValueRef>,
+        args: Vec<ValueRef>,
+    ) -> ValueRef {
+        let tok_ty = self.ctx.ptr_ty;
+        self.append_instr(Some(name.into()), tok_ty, InstrKind::CleanupPad { parent, args })
+    }
+
+    /// Build a `catchswitch within <parent> [handlers...] unwind <dest>` terminator.
+    pub fn build_catchswitch(
+        &mut self,
+        parent: Option<ValueRef>,
+        handlers: Vec<BlockId>,
+        default: Option<BlockId>,
+    ) -> ValueRef {
+        let tok_ty = self.ctx.ptr_ty;
+        self.append_instr(
+            None,
+            tok_ty,
+            InstrKind::CatchSwitch { parent, handlers, default },
+        )
+    }
+
+    /// Build a `catchret from %catch_pad to label %successor` terminator.
+    pub fn build_catchret(&mut self, catch_pad: ValueRef, successor: BlockId) -> ValueRef {
+        let void_ty = self.ctx.void_ty;
+        self.append_instr(
+            None,
+            void_ty,
+            InstrKind::CatchRet { catch_pad, successor },
+        )
+    }
+
+    /// Build a `cleanupret from %cleanup_pad unwind [label %dest | to caller]` terminator.
+    pub fn build_cleanupret(
+        &mut self,
+        cleanup_pad: ValueRef,
+        unwind_dest: Option<BlockId>,
+    ) -> ValueRef {
+        let void_ty = self.ctx.void_ty;
+        self.append_instr(
+            None,
+            void_ty,
+            InstrKind::CleanupRet { cleanup_pad, unwind_dest },
+        )
+    }
+
     // -----------------------------------------------------------------------
     // Type-of helper (for non-Constant/Global value refs)
     // -----------------------------------------------------------------------
