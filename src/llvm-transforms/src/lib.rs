@@ -63,6 +63,8 @@ pub mod sroa;
 pub mod tailcall;
 /// Public API for `tsan`.
 pub mod tsan;
+/// Public API for `ubsan`.
+pub mod ubsan;
 mod value_rewrite;
 
 /// Public API for `re-export`.
@@ -107,3 +109,5 @@ pub use sroa::Sroa;
 pub use tailcall::TailCallOpt;
 /// Public API for `re-export`.
 pub use tsan::TsanPass;
+/// Public API for `re-export`.
+pub use ubsan::{UbsanModulePass, UbsanPass};
