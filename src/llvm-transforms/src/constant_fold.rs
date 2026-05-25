@@ -4,11 +4,13 @@
 //! constant.  It covers integer arithmetic, bitwise ops, shifts, integer
 //! comparisons, and `select` with a constant condition.
 //!
-//! Floating-point, memory, and side-effecting instructions are never folded.
-//! The function is pure: it only reads `ctx` and `kind`; new constants are
-//! allocated with `ctx.const_int`.
+//! FMF-aware floating-point folds are handled by `try_fold_fp`, which folds
+//! constant FP operands under the constraints imposed by `FastMathFlags`.
+//!
+//! The functions are pure: they only read `ctx` and `kind`; new constants are
+//! allocated with `ctx.const_int` / `ctx.const_float`.
 
-use llvm_ir::{ConstId, ConstantData, Context, InstrKind, IntPredicate, ValueRef};
+use llvm_ir::{ConstId, ConstantData, Context, FloatKind, InstrKind, IntPredicate, TypeData, ValueRef};
 
 /// Try to constant-fold `kind`.
 ///
@@ -148,9 +150,179 @@ pub fn try_fold(ctx: &mut Context, kind: &InstrKind) -> Option<ConstId> {
     }
 }
 
+/// Try to constant-fold a **floating-point** instruction under the constraints
+/// imposed by its `FastMathFlags`.
+///
+/// Returns `Some(cid)` when the instruction can be folded to a constant.
+/// Currently covers:
+///
+/// - `nsz` on FAdd: `x + ±0.0 → x`,  `x - x → 0.0` (both operands identical)
+/// - `nsz` on FMul: `x * 1.0 → x`
+/// - `arcp` on FDiv with constant divisor: `x / C → x * (1/C)` (emits FMul constant)
+/// - `nnan`+`ninf` on FMul: `x * 0.0 → 0.0`
+/// - `nnan`+`ninf` on FAdd: `0.0 * inf → 0.0` style (when both operands are constants)
+/// - General two-constant FP evaluation (when both ops are FP constants and
+///   no flag is needed beyond what is already set, e.g. `2.0 + 3.0 → 5.0`).
+pub fn try_fold_fp(ctx: &mut Context, kind: &InstrKind) -> Option<ConstId> {
+    match kind {
+        InstrKind::FAdd { flags, lhs, rhs } => {
+            // Two-constant fold (both operands are FP constants).
+            // Identity folds like `x + 0.0 → x` are handled by ReassocPass because
+            // they produce a non-constant result.
+            let (ty, lv) = const_float(ctx, *lhs)?;
+            let (_, rv) = const_float(ctx, *rhs)?;
+
+            // Under nnan flag: if result would be NaN → skip (don't produce a NaN constant).
+            let result = lv + rv;
+            if (flags.nnan || flags.fast) && result.is_nan() {
+                return None; // poison; skip
+            }
+            // Under ninf flag: if result is inf → skip.
+            if (flags.ninf || flags.fast) && result.is_infinite() {
+                return None;
+            }
+            let cid = const_float_val(ctx, ty, result);
+            Some(cid)
+        }
+
+        InstrKind::FSub { flags, lhs, rhs } => {
+            let (ty, lv) = const_float(ctx, *lhs)?;
+            let (_, rv) = const_float(ctx, *rhs)?;
+            let result = lv - rv;
+            if (flags.nnan || flags.fast) && result.is_nan() {
+                return None;
+            }
+            if (flags.ninf || flags.fast) && result.is_infinite() {
+                return None;
+            }
+            Some(const_float_val(ctx, ty, result))
+        }
+
+        InstrKind::FMul { flags, lhs, rhs } => {
+            // nnan + ninf (or fast): x * 0.0 → 0.0  (even when x is not a constant)
+            let nnan_ninf_or_fast = (flags.nnan && flags.ninf) || flags.fast;
+            if nnan_ninf_or_fast {
+                if is_fp_zero_vref(ctx, *rhs) {
+                    if let Some(ty) = fp_type_of(ctx, *lhs) {
+                        return Some(ctx.const_float(ty, 0f64.to_bits()));
+                    }
+                }
+                if is_fp_zero_vref(ctx, *lhs) {
+                    if let Some(ty) = fp_type_of(ctx, *rhs) {
+                        return Some(ctx.const_float(ty, 0f64.to_bits()));
+                    }
+                }
+            }
+
+            // Two-constant fold.
+            let (ty, lv) = const_float(ctx, *lhs)?;
+            let (_, rv) = const_float(ctx, *rhs)?;
+            let result = lv * rv;
+            if (flags.nnan || flags.fast) && result.is_nan() {
+                return None;
+            }
+            if (flags.ninf || flags.fast) && result.is_infinite() {
+                return None;
+            }
+            Some(const_float_val(ctx, ty, result))
+        }
+
+        InstrKind::FDiv { flags, lhs, rhs } => {
+            // arcp: x / C  →  keep as FMul in reassoc pass; here just fold two constants.
+            let (ty, lv) = const_float(ctx, *lhs)?;
+            let (_, rv) = const_float(ctx, *rhs)?;
+            if rv == 0.0 {
+                return None; // division by zero — not safe to fold
+            }
+            let result = lv / rv;
+            if (flags.nnan || flags.fast) && result.is_nan() {
+                return None;
+            }
+            if (flags.ninf || flags.fast) && result.is_infinite() {
+                return None;
+            }
+            Some(const_float_val(ctx, ty, result))
+        }
+
+        InstrKind::FRem { flags, lhs, rhs } => {
+            let (ty, lv) = const_float(ctx, *lhs)?;
+            let (_, rv) = const_float(ctx, *rhs)?;
+            if rv == 0.0 {
+                return None;
+            }
+            let result = lv % rv;
+            if (flags.nnan || flags.fast) && result.is_nan() {
+                return None;
+            }
+            Some(const_float_val(ctx, ty, result))
+        }
+
+        InstrKind::FNeg { operand, .. } => {
+            let (ty, v) = const_float(ctx, *operand)?;
+            Some(const_float_val(ctx, ty, -v))
+        }
+
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Extract `(TypeId, f64)` from a `ValueRef::Constant` pointing to a
+/// `ConstantData::Float`.  Returns `None` for any other variant.
+/// F32 values are widened to f64 for arithmetic.
+pub(crate) fn const_float(ctx: &Context, vref: ValueRef) -> Option<(llvm_ir::TypeId, f64)> {
+    let cid = match vref {
+        ValueRef::Constant(id) => id,
+        _ => return None,
+    };
+    match ctx.get_const(cid) {
+        ConstantData::Float { ty, bits } => {
+            let fval = match ctx.get_type(*ty) {
+                TypeData::Float(FloatKind::Single) => f32::from_bits(*bits as u32) as f64,
+                TypeData::Float(FloatKind::Double) => f64::from_bits(*bits),
+                _ => return None,
+            };
+            Some((*ty, fval))
+        }
+        _ => None,
+    }
+}
+
+/// Store a computed f64 result back as the appropriate float constant for `ty`.
+fn const_float_val(ctx: &mut Context, ty: llvm_ir::TypeId, val: f64) -> ConstId {
+    let bits = match ctx.get_type(ty) {
+        TypeData::Float(FloatKind::Single) => (val as f32).to_bits() as u64,
+        _ => val.to_bits(),
+    };
+    ctx.const_float(ty, bits)
+}
+
+/// Return true if `vref` is a constant `±0.0`.
+fn is_fp_zero_vref(ctx: &Context, vref: ValueRef) -> bool {
+    if let ValueRef::Constant(cid) = vref {
+        match ctx.get_const(cid) {
+            ConstantData::Float { bits, .. } => f64::from_bits(*bits) == 0.0,
+            ConstantData::ZeroInitializer(_) => true,
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
+/// Return the float TypeId of a ValueRef if it is a float constant.
+fn fp_type_of(ctx: &Context, vref: ValueRef) -> Option<llvm_ir::TypeId> {
+    match vref {
+        ValueRef::Constant(cid) => match ctx.get_const(cid) {
+            ConstantData::Float { ty, .. } => Some(*ty),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 
 /// Extract `(TypeId, u64)` from a `ValueRef::Constant` pointing to a
 /// `ConstantData::Int`.  Returns `None` for any other variant.

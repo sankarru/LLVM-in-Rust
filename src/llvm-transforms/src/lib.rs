@@ -65,6 +65,8 @@ pub mod tailcall;
 pub mod tsan;
 /// Public API for `ubsan`.
 pub mod ubsan;
+/// Public API for `reassoc`.
+pub mod reassoc;
 mod value_rewrite;
 
 /// Public API for `re-export`.
@@ -111,3 +113,5 @@ pub use tailcall::TailCallOpt;
 pub use tsan::TsanPass;
 /// Public API for `re-export`.
 pub use ubsan::{UbsanModulePass, UbsanPass};
+/// Public API for `re-export`.
+pub use reassoc::ReassocPass;
