@@ -427,7 +427,7 @@ fn remap_kind(
     call_args: &[ValueRef],
     block_map: &HashMap<BlockId, BlockId>,
 ) -> InstrKind {
-    let s = |v: ValueRef| remap_val(v, instr_map, call_args);
+    let mut s = |v: ValueRef| remap_val(v, instr_map, call_args);
     let b = |bid: BlockId| *block_map.get(&bid).unwrap_or(&bid);
 
     match kind {
@@ -749,6 +749,38 @@ fn remap_kind(
         },
         InstrKind::Unreachable => InstrKind::Unreachable,
         InstrKind::Resume { val } => InstrKind::Resume { val: s(val) },
+        // --- Funclet pads ---
+        InstrKind::CatchPad { catch_switch, args } => InstrKind::CatchPad {
+            catch_switch: s(catch_switch),
+            args: args.into_iter().map(s).collect(),
+        },
+        InstrKind::CleanupPad { parent, args } => InstrKind::CleanupPad {
+            parent: parent.map(&mut s),
+            args: args.into_iter().map(s).collect(),
+        },
+        InstrKind::CatchSwitch {
+            parent,
+            handlers,
+            default,
+        } => InstrKind::CatchSwitch {
+            parent,
+            handlers: handlers.into_iter().map(b).collect(),
+            default: default.map(b),
+        },
+        InstrKind::CatchRet {
+            catch_pad,
+            successor,
+        } => InstrKind::CatchRet {
+            catch_pad: s(catch_pad),
+            successor: b(successor),
+        },
+        InstrKind::CleanupRet {
+            cleanup_pad,
+            unwind_dest,
+        } => InstrKind::CleanupRet {
+            cleanup_pad: s(cleanup_pad),
+            unwind_dest: unwind_dest.map(b),
+        },
     }
 }
 
