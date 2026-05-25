@@ -1255,6 +1255,9 @@ fn lower_instr(
 
         // Terminators handled in lower_terminator.
         Ret { .. } | Br { .. } | CondBr { .. } | Invoke { .. } | Switch { .. } | Unreachable | Resume { .. } => {}
+
+        // Funclet pads — not yet fully supported; emit a NOP stub.
+        CatchPad { .. } | CleanupPad { .. } | CatchSwitch { .. } | CatchRet { .. } | CleanupRet { .. } => {}
     }
 }
 

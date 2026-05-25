@@ -321,5 +321,37 @@ where
         },
         InstrKind::Unreachable => InstrKind::Unreachable,
         InstrKind::Resume { val } => InstrKind::Resume { val: f(val) },
+        // --- Funclet pads ---
+        InstrKind::CatchPad { catch_switch, args } => InstrKind::CatchPad {
+            catch_switch: f(catch_switch),
+            args: args.into_iter().map(f).collect(),
+        },
+        InstrKind::CleanupPad { parent, args } => InstrKind::CleanupPad {
+            parent: parent.map(&mut f),
+            args: args.into_iter().map(f).collect(),
+        },
+        InstrKind::CatchSwitch {
+            parent,
+            handlers,
+            default,
+        } => InstrKind::CatchSwitch {
+            parent,
+            handlers,
+            default,
+        },
+        InstrKind::CatchRet {
+            catch_pad,
+            successor,
+        } => InstrKind::CatchRet {
+            catch_pad: f(catch_pad),
+            successor,
+        },
+        InstrKind::CleanupRet {
+            cleanup_pad,
+            unwind_dest,
+        } => InstrKind::CleanupRet {
+            cleanup_pad: f(cleanup_pad),
+            unwind_dest,
+        },
     }
 }

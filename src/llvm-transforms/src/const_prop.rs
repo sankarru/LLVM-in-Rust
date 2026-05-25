@@ -78,7 +78,7 @@ impl FunctionPass for ConstProp {
 ///
 /// This function is `pub(crate)` so that `mem2reg` can reuse it.
 pub(crate) fn subst_kind(kind: InstrKind, subst: &HashMap<InstrId, ValueRef>) -> InstrKind {
-    let s = |v: ValueRef| -> ValueRef {
+    let mut s = |v: ValueRef| -> ValueRef {
         if let ValueRef::Instruction(id) = v {
             subst.get(&id).copied().unwrap_or(v)
         } else {
@@ -411,6 +411,38 @@ pub(crate) fn subst_kind(kind: InstrKind, subst: &HashMap<InstrId, ValueRef>) ->
         },
         InstrKind::Unreachable => InstrKind::Unreachable,
         InstrKind::Resume { val } => InstrKind::Resume { val: s(val) },
+        // --- Funclet pads ---
+        InstrKind::CatchPad { catch_switch, args } => InstrKind::CatchPad {
+            catch_switch: s(catch_switch),
+            args: args.into_iter().map(s).collect(),
+        },
+        InstrKind::CleanupPad { parent, args } => InstrKind::CleanupPad {
+            parent: parent.map(&mut s),
+            args: args.into_iter().map(s).collect(),
+        },
+        InstrKind::CatchSwitch {
+            parent,
+            handlers,
+            default,
+        } => InstrKind::CatchSwitch {
+            parent,
+            handlers,
+            default,
+        },
+        InstrKind::CatchRet {
+            catch_pad,
+            successor,
+        } => InstrKind::CatchRet {
+            catch_pad: s(catch_pad),
+            successor,
+        },
+        InstrKind::CleanupRet {
+            cleanup_pad,
+            unwind_dest,
+        } => InstrKind::CleanupRet {
+            cleanup_pad: s(cleanup_pad),
+            unwind_dest,
+        },
     }
 }
 

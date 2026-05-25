@@ -59,6 +59,8 @@ pub mod slp;
 pub mod sroa;
 /// Public API for `tailcall`.
 pub mod tailcall;
+/// Public API for `tsan`.
+pub mod tsan;
 mod value_rewrite;
 
 /// Public API for `re-export`.
@@ -99,3 +101,5 @@ pub use slp::SlpVectorizer;
 pub use sroa::Sroa;
 /// Public API for `re-export`.
 pub use tailcall::TailCallOpt;
+/// Public API for `re-export`.
+pub use tsan::TsanPass;
