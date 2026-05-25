@@ -717,6 +717,9 @@ fn lower_instr(
         }
 
         Ret { .. } | Br { .. } | CondBr { .. } | Invoke { .. } | Switch { .. } | Unreachable | Resume { .. } => {}
+
+        // Funclet pads — not yet fully supported; emit a NOP stub.
+        CatchPad { .. } | CleanupPad { .. } | CatchSwitch { .. } | CatchRet { .. } | CleanupRet { .. } => {}
     }
 }
 
@@ -796,6 +799,31 @@ fn lower_terminator(
 
         // resume re-throws the in-flight exception; lower to NOP as placeholder.
         Resume { .. } => mf.push(mblock, MInstr::new(NOP)),
+
+        // CatchSwitch — lower first handler as unconditional branch (stub).
+        CatchSwitch { handlers, default, .. } => {
+            if let Some(&h) = handlers.first() {
+                mf.push(mblock, MInstr::new(JAL).with_block(h.0 as usize));
+            } else if let Some(d) = default {
+                mf.push(mblock, MInstr::new(JAL).with_block(d.0 as usize));
+            } else {
+                mf.push(mblock, MInstr::new(NOP));
+            }
+        }
+
+        // CatchRet — unconditional branch to successor.
+        CatchRet { successor, .. } => {
+            mf.push(mblock, MInstr::new(JAL).with_block(successor.0 as usize));
+        }
+
+        // CleanupRet — branch to unwind_dest or NOP if unwind-to-caller.
+        CleanupRet { unwind_dest, .. } => {
+            if let Some(d) = unwind_dest {
+                mf.push(mblock, MInstr::new(JAL).with_block(d.0 as usize));
+            } else {
+                mf.push(mblock, MInstr::new(NOP));
+            }
+        }
 
         _ => {}
     }

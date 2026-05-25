@@ -1040,6 +1040,79 @@ impl<'a> Printer<'a> {
                 out.push_str("resume ");
                 self.write_typed_value(out, *val, func);
             }
+            InstrKind::CatchPad { catch_switch, args } => {
+                out.push_str("catchpad within ");
+                self.write_value(out, *catch_switch, func);
+                out.push_str(" [");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    self.write_typed_value(out, *arg, func);
+                }
+                out.push(']');
+            }
+            InstrKind::CleanupPad { parent, args } => {
+                out.push_str("cleanuppad within ");
+                if let Some(p) = parent {
+                    self.write_value(out, *p, func);
+                } else {
+                    out.push_str("none");
+                }
+                out.push_str(" [");
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    self.write_typed_value(out, *arg, func);
+                }
+                out.push(']');
+            }
+            InstrKind::CatchSwitch {
+                parent,
+                handlers,
+                default,
+            } => {
+                out.push_str("catchswitch within ");
+                if let Some(p) = parent {
+                    self.write_value(out, *p, func);
+                } else {
+                    out.push_str("none");
+                }
+                out.push_str(" [");
+                for (i, &h) in handlers.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    write!(out, "label %{}", func.block(h).name).unwrap();
+                }
+                out.push(']');
+                if let Some(d) = default {
+                    write!(out, " unwind label %{}", func.block(*d).name).unwrap();
+                } else {
+                    out.push_str(" unwind to caller");
+                }
+            }
+            InstrKind::CatchRet {
+                catch_pad,
+                successor,
+            } => {
+                out.push_str("catchret from ");
+                self.write_value(out, *catch_pad, func);
+                write!(out, " to label %{}", func.block(*successor).name).unwrap();
+            }
+            InstrKind::CleanupRet {
+                cleanup_pad,
+                unwind_dest,
+            } => {
+                out.push_str("cleanupret from ");
+                self.write_value(out, *cleanup_pad, func);
+                if let Some(d) = unwind_dest {
+                    write!(out, " unwind label %{}", func.block(*d).name).unwrap();
+                } else {
+                    out.push_str(" unwind to caller");
+                }
+            }
         }
 
         if let Some(attachments) = func.instr_metadata(id) {

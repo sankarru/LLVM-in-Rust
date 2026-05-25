@@ -425,7 +425,7 @@ pub(crate) fn subst_kind(kind: InstrKind, subst: &HashMap<InstrId, ValueRef>) ->
             handlers,
             default,
         } => InstrKind::CatchSwitch {
-            parent,
+            parent: parent.map(s),
             handlers,
             default,
         },

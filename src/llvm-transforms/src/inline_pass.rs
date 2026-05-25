@@ -763,7 +763,7 @@ fn remap_kind(
             handlers,
             default,
         } => InstrKind::CatchSwitch {
-            parent,
+            parent: parent.map(&mut s),
             handlers: handlers.into_iter().map(b).collect(),
             default: default.map(b),
         },

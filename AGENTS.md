@@ -208,6 +208,30 @@ When:   The sub-task is independent of the current work and would block
 
 ---
 
+## Autonomous Milestone Execution (standing instruction)
+
+When the user asks to "work on remaining milestones" or "finish the roadmap",
+Claude must execute the following loop **without waiting for user prompts**
+at each step:
+
+1. Read `MEMORY.md` and `#93` to determine which milestones and sub-issues are open.
+2. For each open milestone (in order Q → R → S → T → U):
+   a. Work on each sub-issue in dependency order (infrastructure first).
+   b. Use parallel worktree agents for independent sub-issues within a milestone.
+   c. Follow the full PR workflow (implement → review → test → fix → merge → close).
+   d. After all sub-issues for a milestone are merged, close the milestone tracker.
+   e. Update #93 roadmap and report progress to the user.
+3. After all milestones are done, update `MEMORY.md` and post a final summary.
+
+**Auto-resume after interruption**: Use the `/loop` skill with a self-paced
+interval.  At each wakeup, check GitHub for open milestone sub-issues, pick
+the next one, and resume work.  Never wait for the user to restart.
+
+**Progress reporting**: Post one short message per completed milestone:
+which PRs merged, issue numbers closed, and the updated roadmap link.
+
+---
+
 ## Milestone Workflow
 
 Milestones (#285, #286, …) are **tracking issues**, not implementation issues.

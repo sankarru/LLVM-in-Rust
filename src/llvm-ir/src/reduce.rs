@@ -899,6 +899,27 @@ where
             ty: *ty,
             incoming: incoming.iter().map(|(v, b)| (f(*v), *b)).collect(),
         },
+        CatchPad { catch_switch, args } => CatchPad {
+            catch_switch: f(*catch_switch),
+            args: args.iter().map(|&a| f(a)).collect(),
+        },
+        CleanupPad { parent, args } => CleanupPad {
+            parent: parent.map(|v| f(v)),
+            args: args.iter().map(|&a| f(a)).collect(),
+        },
+        CatchSwitch { parent, handlers, default } => CatchSwitch {
+            parent: parent.map(|v| f(v)),
+            handlers: handlers.clone(),
+            default: *default,
+        },
+        CatchRet { catch_pad, successor } => CatchRet {
+            catch_pad: f(*catch_pad),
+            successor: *successor,
+        },
+        CleanupRet { cleanup_pad, unwind_dest } => CleanupRet {
+            cleanup_pad: f(*cleanup_pad),
+            unwind_dest: *unwind_dest,
+        },
     }
 }
 
