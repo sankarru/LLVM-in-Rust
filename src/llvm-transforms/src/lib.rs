@@ -49,6 +49,8 @@ pub mod loop_unroll;
 pub mod jump_threading;
 /// Public API for `mem2reg`.
 pub mod mem2reg;
+/// Public API for `msan`.
+pub mod msan;
 /// Public API for `pass`.
 pub mod pass;
 /// Public API for `pipeline`.
@@ -91,6 +93,8 @@ pub use loop_unroll::LoopUnroll;
 pub use jump_threading::JumpThreading;
 /// Public API for `re-export`.
 pub use mem2reg::Mem2Reg;
+/// Public API for `re-export`.
+pub use msan::MsanPass;
 /// Public API for `re-export`.
 pub use pass::{FunctionPass, ModulePass, PassManager};
 /// Public API for `re-export`.
