@@ -94,6 +94,10 @@ pub const CALL_DIRECT: MOpcode = MOpcode(0x52);
 pub const CALL_R: MOpcode = MOpcode(0x53);
 /// Public API for `RET`.
 pub const RET: MOpcode = MOpcode(0x54);
+/// Unconditional tail-call jump to a register-held callee address.
+/// Emitted in place of `CALL_R` when the call is in tail position.
+/// Encodes as a `jmp *reg` (FF /4) — no stack frame manipulation.
+pub const JMP_TAIL: MOpcode = MOpcode(0x55);
 
 // ── stack ──────────────────────────────────────────────────────────────────
 /// Public API for `PUSH_R`.

@@ -491,6 +491,17 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
             }
         }
 
+        // ── BR_TAIL (br xn) — tail-call jump, no link update ─────────────
+        // Encoding: 0xD61F0000 | (Rn<<5)  (same as BR instruction)
+        BR_TAIL => {
+            if let Some(src) = instr.operands.first().and_then(preg) {
+                let rn = reg_enc(src) as u32;
+                ctx.emit4(0xD61F0000 | (rn << 5));
+            } else {
+                ctx.emit4(0xD503201F); // NOP fallback
+            }
+        }
+
         // ── RET (ret x30) — 0xD65F03C0 ───────────────────────────────────
         RET => {
             ctx.emit4(0xD65F03C0);

@@ -17,7 +17,8 @@ use llvm_codegen::lsda::CallSiteRecord;
 use llvm_codegen::sizeof_ty;
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, FloatKind, FloatPredicate, Function, InstrId,
-    InstrKind, InstrprofIntrinsic, IntPredicate, Module, TypeData, ValueRef, VpIntrinsic,
+    InstrKind, InstrprofIntrinsic, IntPredicate, Module, TailCallKind, TypeData, ValueRef,
+    VpIntrinsic,
 };
 use std::collections::HashMap;
 
@@ -900,7 +901,7 @@ fn lower_instr(
         }
 
         // ── calls ──────────────────────────────────────────────────────────
-        Call { callee, args, .. } => {
+        Call { callee, args, tail, .. } => {
             if let Some(ip) = instrprof_from_callee(ctx, *callee) {
                 eprintln!(
                     "warning: PGO intrinsic {} elided — counter emission not implemented",
@@ -1011,18 +1012,35 @@ fn lower_instr(
                 emit_mov_to_preg(mf, mblock, *preg, tmp);
             }
 
-            let mut call_mi = MInstr::new(CALL_R).with_vreg(callee_vr);
-            call_mi.clobbers = cc.caller_saved_clobbers().to_vec();
-            mf.push(mblock, call_mi);
+            // For tail calls, emit JMP_TAIL instead of CALL_R.
+            // The frame cleanup is skipped — the callee will use our frame.
+            let is_tail = matches!(tail, TailCallKind::Tail | TailCallKind::MustTail);
+            if is_tail {
+                let mut jmp_mi = MInstr::new(JMP_TAIL).with_vreg(callee_vr);
+                jmp_mi.clobbers = cc.caller_saved_clobbers().to_vec();
+                mf.push(mblock, jmp_mi);
+                // No stack cleanup — the ret in the callee handles it.
+                // No result capture — the callee's return value is our return value.
+                if instr.ty != ctx.void_ty {
+                    let dst = new_dst!();
+                    // Placeholder: result formally exists but the JMP means we
+                    // never actually read it; DCE will clean this up.
+                    mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(callee_vr));
+                }
+            } else {
+                let mut call_mi = MInstr::new(CALL_R).with_vreg(callee_vr);
+                call_mi.clobbers = cc.caller_saved_clobbers().to_vec();
+                mf.push(mblock, call_mi);
 
-            let cleanup = shadow as i64 + (stack_args.len() as i64) * 8 + align_pad as i64;
-            if cleanup != 0 {
-                emit_stack_adjust(mf, mblock, cleanup);
+                let cleanup = shadow as i64 + (stack_args.len() as i64) * 8 + align_pad as i64;
+                if cleanup != 0 {
+                    emit_stack_adjust(mf, mblock, cleanup);
+                }
+
+                // Capture return value from RAX.
+                let dst = new_dst!();
+                emit_mov_from_preg(mf, mblock, dst, cc.int_ret());
             }
-
-            // Capture return value from RAX.
-            let dst = new_dst!();
-            emit_mov_from_preg(mf, mblock, dst, cc.int_ret());
         }
 
         InlineAsm { asm_string, args, .. } => {

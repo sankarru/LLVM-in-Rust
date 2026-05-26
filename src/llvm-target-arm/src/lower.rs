@@ -15,7 +15,7 @@ use llvm_codegen::lsda::CallSiteRecord;
 use llvm_codegen::sizeof_ty;
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, InstrprofIntrinsic,
-    IntPredicate, Module, RmwOp, TypeData, ValueRef,
+    IntPredicate, Module, RmwOp, TailCallKind, TypeData, ValueRef,
 };
 use std::collections::HashMap;
 
@@ -633,7 +633,7 @@ fn lower_instr(
         }
 
         // ── calls ──────────────────────────────────────────────────────────
-        Call { callee, args, .. } => {
+        Call { callee, args, tail, .. } => {
             if let Some(ip) = instrprof_from_callee(ctx, *callee) {
                 eprintln!(
                     "warning: PGO intrinsic {} elided — counter emission not implemented",
@@ -659,13 +659,20 @@ fn lower_instr(
                 }
             }
             let callee_vr = res!(*callee);
-            let mut call_mi = MInstr::new(BLR).with_vreg(callee_vr);
-            call_mi.clobbers = ALLOCATABLE.to_vec();
-            mf.push(mblock, call_mi);
+            let is_tail = matches!(tail, TailCallKind::Tail | TailCallKind::MustTail);
+            if is_tail {
+                let mut jmp_mi = MInstr::new(BR_TAIL).with_vreg(callee_vr);
+                jmp_mi.clobbers = ALLOCATABLE.to_vec();
+                mf.push(mblock, jmp_mi);
+            } else {
+                let mut call_mi = MInstr::new(BLR).with_vreg(callee_vr);
+                call_mi.clobbers = ALLOCATABLE.to_vec();
+                mf.push(mblock, call_mi);
 
-            // Capture return value from X0.
-            let dst = new_dst!();
-            emit_mov_from_preg(mf, mblock, dst, INT_RET);
+                // Capture return value from X0.
+                let dst = new_dst!();
+                emit_mov_from_preg(mf, mblock, dst, INT_RET);
+            }
         }
 
         InlineAsm {
