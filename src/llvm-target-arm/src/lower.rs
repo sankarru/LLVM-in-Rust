@@ -8,6 +8,7 @@ use crate::{
     abi::{classify_aapcs64_args, classify_aapcs64_args_typed, ArgKind, ArgLocation, INT_RET},
     instructions::*,
     regs::{ALLOCATABLE, CALLEE_SAVED, FP_ALLOCATABLE, FP_RET_REG},
+    tti::{AArch64Profile, AArch64Tti},
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MachineFunction, PReg, VReg};
 use llvm_codegen::lsda::CallSiteRecord;
@@ -41,6 +42,8 @@ impl AArch64Features {
 pub struct AArch64Backend {
     /// Target feature flags controlling which instruction set extensions to use.
     pub features: AArch64Features,
+    /// Target Transform Info cost model (Generic AArch64 by default).
+    pub tti: AArch64Tti,
 }
 
 impl Default for AArch64Backend {
@@ -49,6 +52,9 @@ impl Default for AArch64Backend {
         // modern AArch64 cores.
         Self {
             features: AArch64Features::lse(),
+            tti: AArch64Tti {
+                profile: AArch64Profile::Generic,
+            },
         }
     }
 }
@@ -56,11 +62,28 @@ impl Default for AArch64Backend {
 impl AArch64Backend {
     /// Construct a backend with the given feature set.
     pub fn new(features: AArch64Features) -> Self {
-        Self { features }
+        Self {
+            features,
+            tti: AArch64Tti {
+                profile: AArch64Profile::Generic,
+            },
+        }
+    }
+
+    /// Construct a backend with a specific microarchitecture profile.
+    pub fn with_profile(features: AArch64Features, profile: AArch64Profile) -> Self {
+        Self {
+            features,
+            tti: AArch64Tti { profile },
+        }
     }
 }
 
 impl IselBackend for AArch64Backend {
+    fn tti(&self) -> &dyn llvm_codegen::tti::TargetTransformInfo {
+        &self.tti
+    }
+
     fn lower_function(
         &mut self,
         // `ctx` field.

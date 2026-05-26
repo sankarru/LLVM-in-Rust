@@ -9,3 +9,8 @@ pub mod instructions;
 pub mod lower;
 /// Public API for `regs`.
 pub mod regs;
+/// Target Transform Info cost tables for AArch64.
+pub mod tti;
+
+/// Public API for `re-export`.
+pub use tti::{AArch64Profile, AArch64Tti};
