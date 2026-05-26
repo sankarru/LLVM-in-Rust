@@ -27,6 +27,19 @@ use llvm_ir::{
 use std::collections::{HashMap, HashSet};
 
 // ---------------------------------------------------------------------------
+// TTI gate constant
+// ---------------------------------------------------------------------------
+
+/// Minimum number of scalar operations that must form a group before SLP
+/// vectorization is attempted.
+///
+/// This constant provides a simple, target-independent profitability gate that
+/// mirrors what `TargetTransformInfo::slp_profitable` would return for a
+/// generic target.  Backends with a real TTI (e.g. x86-64, AArch64) can tune
+/// this further through their cost model.
+pub(crate) const SLP_MIN_CHAIN_LEN: usize = 2;
+
+// ---------------------------------------------------------------------------
 // Public pass struct
 // ---------------------------------------------------------------------------
 
@@ -39,7 +52,8 @@ use std::collections::{HashMap, HashSet};
 /// instructions.
 ///
 /// `min_width` is the minimum number of elements that must form a group
-/// before vectorization is attempted (default 4).
+/// before vectorization is attempted (default 4, also bounded by
+/// [`SLP_MIN_CHAIN_LEN`]).
 #[derive(Debug, Clone)]
 pub struct SlpVectorizer {
     /// Minimum group width (in scalar elements).  Default 4.
@@ -48,7 +62,9 @@ pub struct SlpVectorizer {
 
 impl Default for SlpVectorizer {
     fn default() -> Self {
-        Self { min_width: 4 }
+        Self {
+            min_width: SLP_MIN_CHAIN_LEN.max(4),
+        }
     }
 }
 

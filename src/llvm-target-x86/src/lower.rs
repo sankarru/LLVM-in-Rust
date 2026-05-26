@@ -8,6 +8,7 @@ use crate::{
     abi::{ArgLocation, CallingConvention},
     instructions::*,
     regs::{FP_ALLOCATABLE, RAX, RCX, RDX, RSP},
+    tti::{X86Profile, X86Tti},
 };
 use llvm_codegen::isel::{
     DebugLoc, IselBackend, MInstr, MOpcode, MOperand, MachineFunction, PReg, VReg,
@@ -78,24 +79,46 @@ impl TargetFeatures {
 pub struct X86Backend {
     /// Public API for `features`.
     pub features: TargetFeatures,
+    /// Target Transform Info cost model (Skylake by default).
+    pub tti: X86Tti,
 }
 
 impl Default for X86Backend {
     fn default() -> Self {
         Self {
             features: TargetFeatures::baseline(),
+            tti: X86Tti {
+                profile: X86Profile::Skylake,
+            },
         }
     }
 }
 
 impl X86Backend {
     /// Public API for `new`.
-    pub const fn new(features: TargetFeatures) -> Self {
-        Self { features }
+    pub fn new(features: TargetFeatures) -> Self {
+        Self {
+            features,
+            tti: X86Tti {
+                profile: X86Profile::Skylake,
+            },
+        }
+    }
+
+    /// Construct a backend with a specific microarchitecture profile.
+    pub fn with_profile(features: TargetFeatures, profile: X86Profile) -> Self {
+        Self {
+            features,
+            tti: X86Tti { profile },
+        }
     }
 }
 
 impl IselBackend for X86Backend {
+    fn tti(&self) -> &dyn llvm_codegen::tti::TargetTransformInfo {
+        &self.tti
+    }
+
     fn lower_function(
         &mut self,
         ctx: &Context,

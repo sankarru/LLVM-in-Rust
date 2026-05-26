@@ -340,6 +340,16 @@ pub trait IselBackend {
         module: &Module,
         func: &Function,
     ) -> MachineFunction;
+
+    /// Return the target's cost model.
+    ///
+    /// The default implementation returns a conservative [`GenericTti`] that
+    /// assigns cost 1 to every instruction.  Targets with real cost tables
+    /// should override this.
+    fn tti(&self) -> &dyn crate::tti::TargetTransformInfo {
+        static GENERIC: crate::tti::GenericTti = crate::tti::GenericTti;
+        &GENERIC
+    }
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────
