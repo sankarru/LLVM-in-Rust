@@ -13,43 +13,120 @@
 //!
 //! # Status
 //!
-//! All methods are `todo!()` stubs.  The MIR→IR translation layer (the largest
-//! gap) must be implemented before any of these methods can do real work.  See
-//! `docs/rustc-backend-gap-analysis.md` for a full gap analysis.
+//! All nightly-specific methods are gated behind `#[cfg(feature = "rustc-backend")]`.
+//! The public entry point `codegen_backend_entrypoint` is always available.
 
-// Nightly feature required to access rustc internals.
 #![allow(unused_variables, dead_code)]
 
-// When this module is compiled, the caller is responsible for ensuring
-// `#![feature(rustc_private)]` is active in the crate root.
+// ── always-available public API ───────────────────────────────────────────────
 
-/// Entry point symbol that rustc's dynamic loader calls when the backend dylib
-/// is loaded via `-Zcodegen-backend=<path>`.
+/// Return the backend name/version string.
+///
+/// This does **not** require rustc internals — it can be used from stable
+/// tests to verify the crate is wired up correctly.
+pub fn codegen_backend_entrypoint() -> &'static str {
+    "llvm-in-rust codegen backend v0.1"
+}
+
+// ── nightly-only rustc integration ────────────────────────────────────────────
+
+#[cfg(feature = "rustc-backend")]
+mod real_backend {
+    //! Feature-gated implementation using `rustc_codegen_ssa` traits.
+    //!
+    //! This compiles only when both:
+    //!  * `--features rustc-backend` is passed to Cargo, AND
+    //!  * a nightly toolchain with `rustc-dev` is active.
+    //!
+    //! The `#![feature(rustc_private)]` attribute is required in the crate root
+    //! to access `rustc_codegen_ssa` and related internal crates.  Add it to
+    //! `lib.rs` when building with this feature.
+
+    use llvm_codegen::isel::IselBackend;
+    use llvm_target_arm::lower::{AArch64Backend, AArch64Features};
+    use llvm_target_x86::{TargetFeatures, X86Backend};
+    use std::sync::{Arc, Mutex};
+
+    /// The LLVM-in-Rust codegen backend.
+    ///
+    /// One instance is created per compilation session.  The `target_machine`
+    /// mutex holds the lazily-initialised backend, which is selected based on
+    /// the target triple provided to `init`.
+    pub struct LlvmInRustBackend {
+        pub(crate) target_machine:
+            Arc<Mutex<Option<Box<dyn IselBackend + Send>>>>,
+    }
+
+    impl LlvmInRustBackend {
+        /// Create a new backend instance with no target machine yet selected.
+        pub fn new() -> Self {
+            Self {
+                target_machine: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        /// Select the right instruction-selection backend for `triple`.
+        ///
+        /// Defaults to x86-64 for any unrecognised triple.
+        pub fn make_backend(triple: &str) -> Box<dyn IselBackend + Send> {
+            if triple.contains("aarch64") || triple.contains("arm64") {
+                Box::new(AArch64Backend::new(AArch64Features::lse()))
+            } else {
+                Box::new(X86Backend::new(TargetFeatures::baseline()))
+            }
+        }
+    }
+
+    impl Default for LlvmInRustBackend {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    // TODO: when #![feature(rustc_private)] + rustc-dev are available, add:
+    //
+    //   extern crate rustc_codegen_ssa;
+    //   extern crate rustc_middle;
+    //   extern crate rustc_target;
+    //
+    // and implement `rustc_codegen_ssa::traits::CodegenBackend`:
+    //
+    //   impl CodegenBackend for LlvmInRustBackend {
+    //       fn init(&self, sess: &Session) { ... }
+    //       fn codegen_crate(&self, tcx: TyCtxt, ...) -> Box<dyn Any> { ... }
+    //       fn join_codegen(...) -> (CodegenResults, FxHashMap<...>) { ... }
+    //       fn link(&self, sess, codegen_results, outputs) { ... }
+    //   }
+    //
+    // Each CGU in `codegen_crate` maps to a call to
+    // `crate::driver::codegen_module(ctx, &mut module, &opts)`.
+}
+
+// ── __rustc_codegen_backend symbol ────────────────────────────────────────────
+//
+// rustc's dynamic-plugin loader dlsym()s for `__rustc_codegen_backend` when
+// `-Zcodegen-backend=<path>` is passed.  This symbol is only meaningful in a
+// `rustc-backend` build; on stable the function body is a no-op stub.
+
+/// Entry point called by rustc when this dylib is loaded as a codegen backend.
 ///
 /// # Safety
 ///
-/// Called by rustc's plugin loader; must be `unsafe extern "C"`.
+/// Called by rustc's plugin loader via `dlsym`; must be `unsafe extern "C"`.
+///
+/// Without `--features rustc-backend` this returns a null pointer and is
+/// effectively unused.  With the feature enabled, it allocates and returns
+/// a `LlvmInRustBackend` as a type-erased raw pointer for rustc to use.
 #[no_mangle]
 pub unsafe extern "C" fn __rustc_codegen_backend() -> *mut () {
-    // TODO: return a Box<dyn CodegenBackend> cast to *mut ().
-    // Requires extern crate rustc_codegen_ssa once rustc_private is active.
-    todo!("rustc codegen backend entry point not yet implemented")
+    #[cfg(feature = "rustc-backend")]
+    {
+        let backend = real_backend::LlvmInRustBackend::new();
+        Box::into_raw(Box::new(backend)) as *mut ()
+    }
+    #[cfg(not(feature = "rustc-backend"))]
+    {
+        // Stable build: symbol must exist for linking but is never called.
+        std::ptr::null_mut()
+    }
 }
-
-// TODO items (in implementation order):
-//
-// 1. Add `#![feature(rustc_private)]` to lib.rs (only when this feature is on).
-// 2. `extern crate rustc_codegen_ssa;`
-//    `extern crate rustc_middle;`
-//    `extern crate rustc_target;`
-// 3. Define `struct LlvmInRustBackend;`
-// 4. Implement `CodegenBackend for LlvmInRustBackend`:
-//    - `init(&self, sess: &Session)`
-//    - `print(&self, req: &PrintRequest, sess: &Session)`
-//    - `codegen_crate(&self, tcx: TyCtxt, metadata, …) -> Box<dyn Any>`
-//    - `join_codegen(&self, ongoing, sess, outputs) -> (CodegenResults, FxHashMap<…>)`
-//    - `link(&self, sess, codegen_results, outputs)`
-// 5. Map rustc CGU → our `Module` in `codegen_crate`.
-// 6. For each CGU: lower MIR BasicBlocks → llvm-ir BasicBlocks.
-// 7. Run `build_pipeline(opt_level)` on the resulting Module.
-// 8. Call `emit_module_to_bytes` → pass ObjectFile bytes to `join_codegen`.

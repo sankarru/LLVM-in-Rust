@@ -34,13 +34,12 @@
 //! stages are already implemented by the sibling crates.
 
 pub mod aggregate;
+pub mod codegen_backend;
+pub mod driver;
 pub mod drop_glue;
 pub mod place;
 pub mod shim;
 pub mod unwind;
-
-#[cfg(feature = "rustc-backend")]
-pub mod codegen_backend;
 
 /// The name reported to rustc when this backend is loaded as a plugin.
 pub const BACKEND_NAME: &str = "llvm-in-rust";
