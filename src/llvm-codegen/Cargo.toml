@@ -15,6 +15,7 @@ name = "llvm_codegen"
 [dependencies]
 llvm-ir = { package = "llvm-in-rust-ir", version = "0.1.0", path = "../llvm-ir" }
 llvm-analysis = { package = "llvm-in-rust-analysis", version = "0.1.0", path = "../llvm-analysis" }
+llvm-bitcode = { package = "llvm-in-rust-bitcode", version = "0.1.0", path = "../llvm-bitcode" }
 
 [dev-dependencies]
 llvm-ir-parser = { version = "0.1.0", package = "llvm-in-rust-ir-parser", path = "../llvm-ir-parser" }
