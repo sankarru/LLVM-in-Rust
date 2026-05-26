@@ -57,3 +57,5 @@ pub use lsda::{
     get_or_create_section_data, write_sleb128, write_uleb128, CallSiteRecord, LsdaBuilder,
     XdataBuilder,
 };
+/// ThinLTO bitcode section embedding (.llvmbc / .llvmcmd).
+pub mod thinlto;

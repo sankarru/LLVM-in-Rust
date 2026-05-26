@@ -507,6 +507,7 @@ name = "llvm-in-rust-codegen"
 version = "0.1.0"
 dependencies = [
  "llvm-in-rust-analysis",
+ "llvm-in-rust-bitcode",
  "llvm-in-rust-ir",
  "llvm-in-rust-ir-parser",
  "llvm-in-rust-target-arm",
