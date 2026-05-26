@@ -562,7 +562,8 @@ impl<'src> Parser<'src> {
         self.lex.expect(&Token::RParen)?;
 
         // Skip trailing function attributes (e.g. #0, nounwind, ...).
-        self.skip_trailing_fn_attrs()?;
+        // Returns true if "strictfp" was among the trailing attributes.
+        let has_strictfp = self.skip_trailing_fn_attrs()?;
 
         let fn_ty =
             self.ctx
@@ -593,14 +594,16 @@ impl<'src> Parser<'src> {
         }
 
         if is_declaration {
-            let func = Function::new_declaration(&name, fn_ty, args, linkage);
+            let mut func = Function::new_declaration(&name, fn_ty, args, linkage);
+            func.strictfp = has_strictfp;
             let idx = self.module.add_function(func);
             self.current_func = Some(idx.0 as usize);
             return Ok(());
         }
 
         // Parse body.
-        let func = Function::new(&name, fn_ty, args, linkage);
+        let mut func = Function::new(&name, fn_ty, args, linkage);
+        func.strictfp = has_strictfp;
         let idx = self.module.add_function(func);
         self.current_func = Some(idx.0 as usize);
 
@@ -2461,10 +2464,12 @@ impl<'src> Parser<'src> {
         Ok(())
     }
 
-    fn skip_trailing_fn_attrs(&mut self) -> Result<(), ParseError> {
+    fn skip_trailing_fn_attrs(&mut self) -> Result<bool, ParseError> {
         // Skip `#N`, bare word attrs, etc. until `{`, EOF, or next top-level token.
         // Stopping at top-level tokens prevents consuming into the next definition
         // when parsing a declaration (which has no `{`).
+        // Returns true if the "strictfp" attribute was encountered.
+        let mut has_strictfp = false;
         loop {
             match self.lex.peek()? {
                 Token::LBrace
@@ -2484,6 +2489,9 @@ impl<'src> Parser<'src> {
                 Token::LocalIdent(s) if Self::is_fn_attr_name(s) => {
                     let name = s.clone();
                     self.lex.next()?;
+                    if name == "strictfp" {
+                        has_strictfp = true;
+                    }
                     self.skip_fn_attr_payload_if_present(&name)?;
                 }
                 Token::LocalIdent(_) => break,
@@ -2500,7 +2508,7 @@ impl<'src> Parser<'src> {
                 }
             }
         }
-        Ok(())
+        Ok(has_strictfp)
     }
 
     fn skip_param_attrs(&mut self) -> Result<(), ParseError> {

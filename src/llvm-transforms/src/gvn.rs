@@ -194,6 +194,14 @@ fn expr_key(kind: &InstrKind) -> Option<ExprKey> {
     })
 }
 
+/// Returns true when a floating-point instruction with these flags is safe
+/// to CSE.  CSE is only semantics-preserving when the flags indicate that
+/// the result is mathematically equivalent regardless of evaluation order
+/// (`reassoc` or `fast`).
+fn fp_cse_safe(flags: &FastMathFlags) -> bool {
+    flags.reassoc || flags.fast
+}
+
 /// Global Value Numbering pass.
 pub struct Gvn;
 
@@ -221,6 +229,10 @@ impl FunctionPass for Gvn {
         let mut subst: HashMap<InstrId, ValueRef> = HashMap::new();
         let mut remove: HashSet<InstrId> = HashSet::new();
 
+        // When the function is compiled in strict IEEE-754 mode, suppress ALL
+        // FP CSE regardless of per-instruction flags.
+        let strictfp_mode = func.strictfp;
+
         rewrite_block(
             func,
             BlockId(0),
@@ -229,6 +241,7 @@ impl FunctionPass for Gvn {
             &mut HashMap::new(),
             &mut subst,
             &mut remove,
+            strictfp_mode,
         );
 
         if subst.is_empty() {
@@ -250,6 +263,40 @@ impl FunctionPass for Gvn {
     }
 }
 
+/// Return true if `kind` is a floating-point arithmetic instruction.
+fn is_fp_arith(kind: &InstrKind) -> bool {
+    matches!(
+        kind,
+        InstrKind::FAdd { .. }
+            | InstrKind::FSub { .. }
+            | InstrKind::FMul { .. }
+            | InstrKind::FDiv { .. }
+            | InstrKind::FRem { .. }
+            | InstrKind::FNeg { .. }
+    )
+}
+
+/// Return true if the instruction `kind` is safe to CSE given the current
+/// strictfp context and per-instruction flags.
+fn cse_allowed(kind: &InstrKind, strictfp_mode: bool) -> bool {
+    if !is_fp_arith(kind) {
+        return true; // Non-FP instructions are always CSE-safe.
+    }
+    if strictfp_mode {
+        return false; // strictfp function: no FP CSE at all.
+    }
+    // Per-instruction check: CSE only when reassoc or fast is set.
+    match kind {
+        InstrKind::FAdd { flags, .. }
+        | InstrKind::FSub { flags, .. }
+        | InstrKind::FMul { flags, .. }
+        | InstrKind::FDiv { flags, .. }
+        | InstrKind::FRem { flags, .. }
+        | InstrKind::FNeg { flags, .. } => fp_cse_safe(flags),
+        _ => true,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn rewrite_block(
     func: &mut Function,
@@ -259,6 +306,7 @@ fn rewrite_block(
     loads_in: &mut HashMap<ValueRef, ValueRef>,
     subst: &mut HashMap<InstrId, ValueRef>,
     remove: &mut HashSet<InstrId>,
+    strictfp_mode: bool,
 ) {
     let mut exprs = exprs_in.clone();
     let mut loads = loads_in.clone();
@@ -296,21 +344,32 @@ fn rewrite_block(
             | InstrKind::AtomicRmw { .. } => {
                 loads.clear();
                 if let Some(key) = expr_key(&rewritten) {
-                    if let Some(existing) = exprs.get(&key).copied() {
-                        subst.insert(iid, existing);
-                        remove.insert(iid);
+                    if cse_allowed(&rewritten, strictfp_mode) {
+                        if let Some(existing) = exprs.get(&key).copied() {
+                            subst.insert(iid, existing);
+                            remove.insert(iid);
+                        } else {
+                            exprs.insert(key, ValueRef::Instruction(iid));
+                        }
                     } else {
-                        exprs.insert(key, ValueRef::Instruction(iid));
+                        // Not CSE-able: still record the expression so dominated
+                        // blocks see it, but do NOT replace this use.
+                        exprs.entry(key).or_insert(ValueRef::Instruction(iid));
                     }
                 }
             }
             _ => {
                 if let Some(key) = expr_key(&rewritten) {
-                    if let Some(existing) = exprs.get(&key).copied() {
-                        subst.insert(iid, existing);
-                        remove.insert(iid);
+                    if cse_allowed(&rewritten, strictfp_mode) {
+                        if let Some(existing) = exprs.get(&key).copied() {
+                            subst.insert(iid, existing);
+                            remove.insert(iid);
+                        } else {
+                            exprs.insert(key, ValueRef::Instruction(iid));
+                        }
                     } else {
-                        exprs.insert(key, ValueRef::Instruction(iid));
+                        // Not CSE-able: record without replacing.
+                        exprs.entry(key).or_insert(ValueRef::Instruction(iid));
                     }
                 }
             }
@@ -323,7 +382,7 @@ fn rewrite_block(
     }
 
     for &child in &dom_children[bid.0 as usize] {
-        rewrite_block(func, child, dom_children, &mut exprs, &mut loads, subst, remove);
+        rewrite_block(func, child, dom_children, &mut exprs, &mut loads, subst, remove, strictfp_mode);
     }
 }
 

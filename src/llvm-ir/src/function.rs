@@ -31,6 +31,10 @@ pub struct Function {
     pub is_declaration: bool,
     /// Public API for `linkage`.
     pub linkage: Linkage,
+    /// When true, the function is compiled in strict IEEE-754 mode.
+    /// Optimizers must not reorder, CSE, or constant-fold FP operations
+    /// in ways that would change observable floating-point behaviour.
+    pub strictfp: bool,
     /// Counter for generating unique names.
     next_name_id: u32,
 }
@@ -50,6 +54,7 @@ impl Function {
             arg_names: HashMap::new(),
             is_declaration: false,
             linkage,
+            strictfp: false,
             next_name_id: 0,
         };
         for arg in args {

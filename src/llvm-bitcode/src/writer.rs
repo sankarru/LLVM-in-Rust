@@ -394,6 +394,7 @@ fn encode_function(w: &mut Writer, func: &Function) {
     };
     w.u8(ltag);
     w.u8(if func.is_declaration { 1 } else { 0 });
+    w.u8(if func.strictfp { 1 } else { 0 });
 
     // Arguments.
     w.u32(func.args.len() as u32);
