@@ -50,3 +50,10 @@ pub use schedule::{
     apply_schedule, build_dep_dag, compute_critical_paths, list_schedule, x86_latency, DepEdge,
     DepKind,
 };
+/// LSDA (.gcc_except_table) builder for exception-handling metadata.
+pub mod lsda;
+/// Public API for `lsda` re-exports.
+pub use lsda::{
+    get_or_create_section_data, write_sleb128, write_uleb128, CallSiteRecord, LsdaBuilder,
+    XdataBuilder,
+};

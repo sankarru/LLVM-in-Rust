@@ -12,6 +12,7 @@ use crate::{
 use llvm_codegen::isel::{
     DebugLoc, IselBackend, MInstr, MOpcode, MOperand, MachineFunction, PReg, VReg,
 };
+use llvm_codegen::lsda::CallSiteRecord;
 use llvm_codegen::sizeof_ty;
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, FloatKind, FloatPredicate, Function, InstrId,
@@ -1323,6 +1324,7 @@ fn lower_terminator(
             callee,
             args,
             normal_dest,
+            unwind_dest,
             ..
         } => {
             let arg_locs = cc.classify_int_args(args.len());
@@ -1337,9 +1339,27 @@ fn lower_terminator(
             let callee_src = resolve(ctx, mf, mblock, vmap, *callee);
             let callee_vr = mf.fresh_vreg();
             mf.push(mblock, MInstr::new(MOV_RR).with_dst(callee_vr).with_vreg(callee_src));
+            // Record the instruction index of the CALL before pushing it.
+            let call_instr_idx = mf.blocks[mblock].instrs.len();
+            let lsda_rec_idx = mf.lsda_call_sites.len();
             let mut call = MInstr::new(CALL_R).with_vreg(callee_vr);
             call.clobbers = cc.caller_saved_clobbers().to_vec();
             mf.push(mblock, call);
+            // Add a placeholder LSDA call-site record.
+            // call_start / landing_pad are placeholders (0); the encoder fixes them up.
+            mf.lsda_call_sites.push(CallSiteRecord {
+                call_start: 0,
+                call_len: 3, // CALL_R (indirect) is 2 or 3 bytes; placeholder, encoder updates
+                landing_pad: 0,
+                action: 0,
+            });
+            // Track: (machine_block, call_instr_in_block, lsda_record_idx, unwind_dest_mblock)
+            mf.invoke_tracking.push((
+                mblock,
+                call_instr_idx,
+                lsda_rec_idx,
+                unwind_dest.0 as usize,
+            ));
             if term.ty != ctx.void_ty {
                 let dst = mf.fresh_vreg();
                 vmap.insert(ValueRef::Instruction(tid), dst);
