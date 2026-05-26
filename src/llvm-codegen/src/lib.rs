@@ -50,6 +50,12 @@ pub use schedule::{
     apply_schedule, build_dep_dag, compute_critical_paths, list_schedule, x86_latency, DepEdge,
     DepKind,
 };
+
+/// Target Transform Info cost model trait and generic fallback.
+pub mod tti;
+/// Public API for `tti` re-exports.
+pub use tti::{GenericTti, TargetTransformInfo};
+
 /// LSDA (.gcc_except_table) builder for exception-handling metadata.
 pub mod lsda;
 /// Public API for `lsda` re-exports.

@@ -9,8 +9,12 @@ pub mod instructions;
 pub mod lower;
 /// Public API for `regs`.
 pub mod regs;
+/// Target Transform Info cost tables for x86-64.
+pub mod tti;
 
 /// Public API for `re-export`.
 pub use encode::X86Emitter;
 /// Public API for `re-export`.
 pub use lower::{TargetFeatures, X86Backend};
+/// Public API for `re-export`.
+pub use tti::{X86Profile, X86Tti};
