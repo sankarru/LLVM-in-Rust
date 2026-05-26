@@ -11,19 +11,38 @@ use crate::{instructions::*, regs::{fp_enc, is_fp_reg, reg_enc}};
 use llvm_codegen::{
     emit::{DebugLineRow, Emitter, ObjectFormat, Reloc, Section},
     isel::{MInstr, MOperand, MachineFunction, PReg},
+    lsda::LsdaBuilder,
 };
 use std::collections::HashMap;
 
 /// AArch64 code emitter.
+///
+/// See also the [`lsda_section`] field for `.gcc_except_table` data produced
+/// when the function contains `invoke` call sites.
+///
+/// [`lsda_section`]: AArch64Emitter::lsda_section
 pub struct AArch64Emitter {
     /// Public API for `format`.
     pub format: ObjectFormat,
+    /// LSDA (`.gcc_except_table`) bytes produced during the last
+    /// [`emit_function`] call, or `None` if the function had no `Invoke` instructions.
+    ///
+    /// [`emit_function`]: Emitter::emit_function
+    pub lsda_section: Option<Vec<u8>>,
 }
 
 impl AArch64Emitter {
     /// Public API for `new`.
     pub fn new(format: ObjectFormat) -> Self {
-        Self { format }
+        Self { format, lsda_section: None }
+    }
+
+    /// Return and clear the LSDA bytes produced during the last
+    /// [`emit_function`] call, or `None` if the function had no `Invoke` instructions.
+    ///
+    /// [`emit_function`]: Emitter::emit_function
+    pub fn take_lsda(&mut self) -> Option<Vec<u8>> {
+        self.lsda_section.take()
     }
 }
 
@@ -78,7 +97,9 @@ impl Emitter for AArch64Emitter {
         // First pass: encode all instructions, recording branch patch sites.
         for (bi, block) in mf.blocks.iter().enumerate() {
             ctx.block_offsets.insert(bi, ctx.code.len());
-            for instr in &block.instrs {
+            for (ii, instr) in block.instrs.iter().enumerate() {
+                // Record byte offset of this instruction for LSDA fixup.
+                ctx.instr_offsets.insert((bi, ii), ctx.code.len());
                 let instr_addr = ctx.code.len() as u64;
                 // Emit epilogue before any RET when we have a frame.
                 if instr.opcode == RET && needs_frame {
@@ -140,6 +161,41 @@ impl Emitter for AArch64Emitter {
             }
         }
 
+        let func_size = ctx.code.len();
+
+        // Third pass: fix up LSDA call-site records using tracked instruction offsets.
+        let mut lsda_call_sites = mf.lsda_call_sites.clone();
+        for &(call_mblock, call_instr_idx, lsda_rec_idx, unwind_mblock) in &mf.invoke_tracking {
+            if let (Some(&call_off), Some(&lp_off)) = (
+                ctx.instr_offsets.get(&(call_mblock, call_instr_idx)),
+                ctx.block_offsets.get(&unwind_mblock),
+            ) {
+                if let Some(rec) = lsda_call_sites.get_mut(lsda_rec_idx) {
+                    rec.call_start = call_off as u32;
+                    rec.landing_pad = lp_off as u32;
+                    // AArch64: BLR is 4 bytes.
+                    let next_off = ctx
+                        .instr_offsets
+                        .get(&(call_mblock, call_instr_idx + 1))
+                        .or_else(|| ctx.block_offsets.get(&(call_mblock + 1)))
+                        .copied()
+                        .unwrap_or(func_size);
+                    rec.call_len = (next_off - call_off) as u32;
+                }
+            }
+        }
+
+        // Build LSDA if this function has invoke call sites.
+        self.lsda_section = if !lsda_call_sites.is_empty() {
+            let mut lsda = LsdaBuilder::new();
+            for rec in lsda_call_sites {
+                lsda.add_call_site(rec);
+            }
+            Some(lsda.build())
+        } else {
+            None
+        };
+
         let section_name = match self.format {
             ObjectFormat::Elf => ".text",
             ObjectFormat::MachO => "__text",
@@ -161,6 +217,10 @@ impl Emitter for AArch64Emitter {
     fn elf_machine(&self) -> u16 {
         183 // EM_AARCH64
     }
+
+    fn take_lsda_bytes(&mut self) -> Option<Vec<u8>> {
+        self.lsda_section.take()
+    }
 }
 
 // ── encoding context ──────────────────────────────────────────────────────
@@ -180,6 +240,9 @@ struct EncodeCtx {
     /// Number of alloca slots (= alloca_frame_bytes / 8, rounded up).
     /// Spill-slot encoders shift their offsets by this count.
     alloca_slot_count: u32,
+    /// Per-instruction byte offsets: (block_idx, instr_idx_in_block) → byte offset.
+    /// Populated during the first encoding pass; used to fix up LSDA call-site records.
+    instr_offsets: HashMap<(usize, usize), usize>,
 }
 
 impl EncodeCtx {

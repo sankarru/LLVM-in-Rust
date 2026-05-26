@@ -3,6 +3,7 @@
 //! The machine IR (`MachineFunction`, `MInstr`, …) is target-independent.
 //! Target backends implement [`IselBackend`] to lower LLVM IR to machine IR.
 
+use crate::lsda::CallSiteRecord;
 use llvm_ir::{Context, Function, Module};
 use std::collections::HashMap;
 
@@ -224,6 +225,18 @@ pub struct MachineFunction {
     pub alloca_frame_bytes: u32,
     /// Counter for alloca slot allocation (0-based slot index).
     next_alloca_slot: u32,
+    /// LSDA call-site records, populated during lowering when `Invoke` instructions
+    /// are encountered.  The `call_start` and `landing_pad` fields are byte-offset
+    /// placeholders that are fixed up during encoding (in the target emitter).
+    /// An empty `Vec` means this function has no exception-handling call sites.
+    pub lsda_call_sites: Vec<CallSiteRecord>,
+    /// Invoke tracking entries, used by the encoder to fix up `lsda_call_sites`.
+    ///
+    /// Each entry is `(machine_block_idx, instr_idx_in_block, lsda_record_idx,
+    /// unwind_dest_machine_block_idx)`.  The encoder walks this list and replaces
+    /// placeholder offsets in `lsda_call_sites[lsda_record_idx]` with the actual
+    /// byte offsets observed during encoding.
+    pub invoke_tracking: Vec<(usize, usize, usize, usize)>,
 }
 
 impl MachineFunction {
@@ -245,6 +258,8 @@ impl MachineFunction {
             current_debug_loc: None,
             alloca_frame_bytes: 0,
             next_alloca_slot: 0,
+            lsda_call_sites: Vec::new(),
+            invoke_tracking: Vec::new(),
         }
     }
 

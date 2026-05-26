@@ -132,12 +132,27 @@ pub trait Emitter {
     fn coff_machine(&self) -> u16 {
         0x8664 // IMAGE_FILE_MACHINE_AMD64
     }
+
+    /// Return and clear the LSDA (`.gcc_except_table`) bytes produced during the
+    /// last [`emit_function`] call, if any.
+    ///
+    /// The default implementation returns `None`; targets that support exception
+    /// handling override this to expose the LSDA bytes they built.  The bytes are
+    /// consumed by [`emit_object`] and appended to the `.gcc_except_table` section.
+    ///
+    /// [`emit_function`]: Emitter::emit_function
+    /// [`emit_object`]: emit_object
+    fn take_lsda_bytes(&mut self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// Build a complete [`ObjectFile`] from a [`MachineFunction`] using `emitter`.
 pub fn emit_object(mf: &MachineFunction, emitter: &mut dyn Emitter) -> ObjectFile {
     let section = emitter.emit_function(mf);
     let size = section.data.len() as u64;
+    // Retrieve LSDA bytes (if the function had invoke call sites).
+    let lsda_bytes = emitter.take_lsda_bytes();
     let sym = Symbol {
         name: mf.name.clone(),
         section: 0,
@@ -176,6 +191,27 @@ pub fn emit_object(mf: &MachineFunction, emitter: &mut dyn Emitter) -> ObjectFil
             });
         }
         ObjectFormat::MachO => {}
+    }
+
+    // If the function has LSDA bytes (from invoke call sites), add the
+    // `.gcc_except_table` section (ELF / Mach-O) or `.xdata` supplement (COFF).
+    if let Some(lsda) = lsda_bytes {
+        let lsda_name = match emitter.object_format() {
+            ObjectFormat::Elf => ".gcc_except_table",
+            ObjectFormat::MachO => "__gcc_except_tab",
+            ObjectFormat::Coff => ".gcc_except_table",
+        };
+        // Append to an existing section if one already exists, or create a new one.
+        if let Some(sec) = sections.iter_mut().find(|s| s.name == lsda_name) {
+            sec.data.extend_from_slice(&lsda);
+        } else {
+            sections.push(Section {
+                name: lsda_name.into(),
+                data: lsda,
+                relocs: Vec::new(),
+                debug_rows: Vec::new(),
+            });
+        }
     }
 
     let has_debug = !sections[0].debug_rows.is_empty() || mf.debug_line_start.is_some();

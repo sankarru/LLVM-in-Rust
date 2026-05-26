@@ -10,6 +10,7 @@ use crate::{
     regs::{ALLOCATABLE, CALLEE_SAVED, FP_ALLOCATABLE, FP_RET_REG},
 };
 use llvm_codegen::isel::{DebugLoc, IselBackend, MInstr, MachineFunction, PReg, VReg};
+use llvm_codegen::lsda::CallSiteRecord;
 use llvm_codegen::sizeof_ty;
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, InstrprofIntrinsic,
@@ -914,6 +915,7 @@ fn lower_terminator(
             callee,
             args,
             normal_dest,
+            unwind_dest,
             ..
         } => {
             let arg_locs = classify_aapcs64_args(args.len());
@@ -925,9 +927,26 @@ fn lower_terminator(
                 }
             }
             let callee_vr = resolve(ctx, mf, mblock, vmap, *callee);
+            // Record the instruction index of the BLR before pushing it.
+            let call_instr_idx = mf.blocks[mblock].instrs.len();
+            let lsda_rec_idx = mf.lsda_call_sites.len();
             let mut call_mi = MInstr::new(BLR).with_vreg(callee_vr);
             call_mi.clobbers = ALLOCATABLE.to_vec();
             mf.push(mblock, call_mi);
+            // Add a placeholder LSDA call-site record.
+            mf.lsda_call_sites.push(CallSiteRecord {
+                call_start: 0,
+                call_len: 4, // AArch64 BLR is always 4 bytes
+                landing_pad: 0,
+                action: 0,
+            });
+            // Track: (machine_block, call_instr_in_block, lsda_record_idx, unwind_dest_mblock)
+            mf.invoke_tracking.push((
+                mblock,
+                call_instr_idx,
+                lsda_rec_idx,
+                unwind_dest.0 as usize,
+            ));
             if term.ty != ctx.void_ty {
                 let dst = mf.fresh_vreg();
                 vmap.insert(ValueRef::Instruction(tid), dst);
