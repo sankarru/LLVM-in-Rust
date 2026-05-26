@@ -65,7 +65,7 @@ pub fn build_pipeline(level: OptLevel) -> PassManager {
             pm.add_function_pass(ConstProp);
             pm.add_function_pass(DeadCodeElim);
             pm.add_function_pass(JumpThreading);
-            pm.add_function_pass(TailCallOpt);
+            pm.add_module_pass(TailCallOpt);
             // Clean up after inlining.
             pm.add_function_pass(Gvn);
             pm.add_function_pass(ConstantFold);
@@ -96,7 +96,7 @@ pub fn build_pipeline(level: OptLevel) -> PassManager {
             pm.add_function_pass(ConstProp);
             pm.add_function_pass(DeadCodeElim);
             pm.add_function_pass(JumpThreading);
-            pm.add_function_pass(TailCallOpt);
+            pm.add_module_pass(TailCallOpt);
             // Extra cleanup rounds as a placeholder for future aggressive O3.
             pm.add_function_pass(Gvn);
             pm.add_function_pass(ConstantFold);

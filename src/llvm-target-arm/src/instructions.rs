@@ -63,6 +63,10 @@ pub const BL: MOpcode = MOpcode(0x42);
 pub const BLR: MOpcode = MOpcode(0x43);
 /// `ret x30` — return via link register
 pub const RET: MOpcode = MOpcode(0x44);
+/// Unconditional tail-call branch to a register-held callee address.
+/// Emitted in place of `BLR` when the call is in tail position.
+/// Encodes as `br xN` (D61F0000 | (rn << 5)) — no link register update.
+pub const BR_TAIL: MOpcode = MOpcode(0x45);
 
 // ── memory ─────────────────────────────────────────────────────────────────
 
