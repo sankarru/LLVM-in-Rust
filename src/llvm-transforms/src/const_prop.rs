@@ -12,9 +12,9 @@
 //! constants) require a second pass; use `PassManager::run_until_fixed_point`
 //! when that is needed.
 
-use crate::constant_fold::try_fold;
+use crate::constant_fold::{try_fold, try_fold_fp};
 use crate::pass::FunctionPass;
-use llvm_ir::{Context, Function, InstrId, InstrKind, LandingPadClause, ValueRef};
+use llvm_ir::{ConstantData, Context, FloatKind, Function, InstrId, InstrKind, LandingPadClause, TypeData, ValueRef};
 use std::collections::{HashMap, HashSet};
 
 /// Constant propagation / constant folding pass.
@@ -29,6 +29,8 @@ impl FunctionPass for ConstProp {
         if func.blocks.is_empty() {
             return false;
         }
+
+        let strictfp = func.strictfp;
 
         // Map InstrId → its constant replacement (ValueRef::Constant).
         let mut subst: HashMap<InstrId, ValueRef> = HashMap::new();
@@ -46,6 +48,15 @@ impl FunctionPass for ConstProp {
                 let kind = func.instr(iid).kind.clone();
                 if let Some(cid) = try_fold(ctx, &kind) {
                     subst.insert(iid, ValueRef::Constant(cid));
+                } else if let Some(cid) = try_fold_fp(ctx, &kind) {
+                    // In strictfp mode, refuse to fold FP ops to NaN or Inf.
+                    // IEEE-754 requires that such exceptional results are only
+                    // produced at the exact program-order point of execution.
+                    if strictfp && fold_result_is_nan_or_inf(ctx, cid) {
+                        // Do not record the substitution.
+                    } else {
+                        subst.insert(iid, ValueRef::Constant(cid));
+                    }
                 }
             }
             // Also propagate into the terminator.
@@ -66,6 +77,30 @@ impl FunctionPass for ConstProp {
             bb.body.retain(|id| !subst.contains_key(id));
         }
         true
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Strictfp helper — detect NaN / Inf folded constants
+// ---------------------------------------------------------------------------
+
+/// Return true if `cid` is a floating-point constant whose value is NaN or
+/// infinite.  Used by the strictfp constant-fold barrier to avoid
+/// materialising exceptional FP results at compile time.
+fn fold_result_is_nan_or_inf(ctx: &Context, cid: llvm_ir::ConstId) -> bool {
+    match ctx.get_const(cid) {
+        ConstantData::Float { ty, bits } => match ctx.get_type(*ty) {
+            TypeData::Float(FloatKind::Single) => {
+                let f = f32::from_bits(*bits as u32);
+                f.is_nan() || f.is_infinite()
+            }
+            TypeData::Float(FloatKind::Double) => {
+                let f = f64::from_bits(*bits);
+                f.is_nan() || f.is_infinite()
+            }
+            _ => false,
+        },
+        _ => false,
     }
 }
 

@@ -412,6 +412,10 @@ impl<'a> Printer<'a> {
         }
         out.push(')');
 
+        if func.strictfp {
+            out.push_str(" strictfp");
+        }
+
         if func.is_declaration {
             writeln!(out).unwrap();
             return;

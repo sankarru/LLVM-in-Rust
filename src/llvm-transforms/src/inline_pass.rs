@@ -206,7 +206,14 @@ fn do_inline(ctx: &mut Context, module: &mut Module, site: CallSite) {
         block_offset,
     );
 
+    // If the callee is strictfp, propagate that attribute to the caller so that
+    // the inlined FP instructions are still treated as strict.
+    let callee_strictfp = module.functions[callee_id.0 as usize].strictfp;
+
     let caller = &mut module.functions[caller_id.0 as usize];
+    if callee_strictfp {
+        caller.strictfp = true;
+    }
 
     // Step 1: split the caller block at the call site.
     // pre_block keeps instructions 0..instr_pos (not including the call).

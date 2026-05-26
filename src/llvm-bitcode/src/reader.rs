@@ -480,6 +480,8 @@ fn decode_function(
     let ty = map_type_id(type_id_map, ty_raw)?;
     let linkage = decode_linkage(r.u8()?)?;
     let is_declaration = r.u8()? != 0;
+    // strictfp is optional — older bitcode files may not have this byte.
+    let strictfp = r.u8().unwrap_or(0) != 0;
 
     // Arguments.
     let arg_count = r.u32()? as usize;
@@ -502,6 +504,7 @@ fn decode_function(
         Function::new(name, ty, args, linkage)
     };
     func.is_declaration = is_declaration;
+    func.strictfp = strictfp;
 
     // Read flat instruction pool first (needed for block body references).
     let block_count = r.u32()? as usize;

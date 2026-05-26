@@ -50,6 +50,10 @@ impl FunctionPass for Licm {
             return false;
         }
 
+        // When the function is compiled in strict IEEE-754 mode, no FP op can
+        // be hoisted out of a loop regardless of per-instruction flags.
+        let strictfp_mode = func.strictfp;
+
         // Process innermost loops first: sort by body length ascending.
         let mut loop_order: Vec<usize> = (0..li.loops().len()).collect();
         loop_order.sort_by_key(|&i| li.loops()[i].body.len());
@@ -66,7 +70,7 @@ impl FunctionPass for Licm {
 
             // Iteratively hoist invariant instructions until stable.
             loop {
-                let hoisted = hoist_one_round(func, &loop_body, preheader);
+                let hoisted = hoist_one_round(func, &loop_body, preheader, strictfp_mode);
                 if !hoisted {
                     break;
                 }
@@ -82,7 +86,8 @@ impl FunctionPass for Licm {
 // Invariance helpers
 // ---------------------------------------------------------------------------
 
-/// Returns true if `kind` is side-effect-free and eligible for hoisting.
+/// Returns true if `kind` is side-effect-free and eligible for hoisting
+/// from a structural (non-FP) perspective.
 ///
 /// Pure arithmetic, bitwise, comparison, cast, and select instructions are
 /// eligible.  Phi nodes are excluded — their incoming-block semantics are
@@ -131,6 +136,31 @@ fn is_hoist_safe(kind: &InstrKind) -> bool {
     )
 }
 
+/// Returns true if a floating-point instruction is safe to hoist out of a
+/// loop.  IEEE-754 requires FP operations to execute in program order unless
+/// the instruction carries `reassoc` or `fast` flags.
+///
+/// In strictfp mode (function-level attribute) ALL FP hoisting is blocked
+/// regardless of per-instruction flags, because strict mode mandates exact
+/// program-order semantics.
+fn is_fp_hoist_safe(kind: &InstrKind, strictfp_mode: bool) -> bool {
+    match kind {
+        InstrKind::FAdd { flags, .. }
+        | InstrKind::FSub { flags, .. }
+        | InstrKind::FMul { flags, .. }
+        | InstrKind::FDiv { flags, .. }
+        | InstrKind::FRem { flags, .. }
+        | InstrKind::FNeg { flags, .. } => {
+            if strictfp_mode {
+                false // strict mode: never hoist FP ops
+            } else {
+                flags.reassoc || flags.fast
+            }
+        }
+        _ => true, // non-FP instructions not affected by this check
+    }
+}
+
 /// Build a map from `InstrId` → the `BlockId` that contains it (all blocks).
 fn build_instr_to_block(func: &Function) -> Vec<Option<BlockId>> {
     let n = func.instructions.len();
@@ -153,14 +183,22 @@ fn build_instr_to_block(func: &Function) -> Vec<Option<BlockId>> {
 
 /// Returns true if `iid`'s instruction is loop-invariant with respect to
 /// `loop_body`, given a precomputed `instr_to_block` mapping.
+///
+/// `strictfp_mode` gates the IEEE-754 hoisting rule for FP instructions.
 fn is_loop_invariant(
     func: &Function,
     iid: InstrId,
     loop_body: &HashSet<BlockId>,
     instr_to_block: &[Option<BlockId>],
+    strictfp_mode: bool,
 ) -> bool {
     let instr = func.instr(iid);
     if !is_hoist_safe(&instr.kind) {
+        return false;
+    }
+    // IEEE-754 strictness check: FP instructions may not be hoisted unless
+    // their flags explicitly allow reordering.
+    if !is_fp_hoist_safe(&instr.kind, strictfp_mode) {
         return false;
     }
     for operand in instr.kind.operands() {
@@ -198,6 +236,7 @@ fn hoist_one_round(
     func: &mut Function,
     loop_body: &HashSet<BlockId>,
     preheader: BlockId,
+    strictfp_mode: bool,
 ) -> bool {
     let instr_to_block = build_instr_to_block(func);
 
@@ -213,7 +252,7 @@ fn hoist_one_round(
     for bid in sorted_body {
         let body_snapshot: Vec<InstrId> = func.blocks[bid.0 as usize].body.clone();
         for iid in body_snapshot {
-            if is_loop_invariant(func, iid, loop_body, &instr_to_block) {
+            if is_loop_invariant(func, iid, loop_body, &instr_to_block, strictfp_mode) {
                 candidates.push((bid, iid));
             }
         }
