@@ -17,6 +17,10 @@ The `Platform Matrix Gate` workflow provides the M2 merge gate:
 - `Tier-1 host matrix`: runs core checks on `ubuntu-24.04`, `macos-14`, and `windows-2022`.
 - `Tier-1 artifact generation`: validates target-specific crates for x86-64, AArch64, and RV64GC target triples.
 - `Known-issues registry validation`: enforces that tracked Tier-2 or waived Tier-1 breakages include category, owner, and ETA.
+- `Backend Support Contract`: validates `docs/backend_support_matrix.json` and runs release-blocking rustc-backend stable smoke plus LTO smoke tests.
+
+Backend-level support claims, unsupported cells, and release-blocking evidence
+are documented in [`docs/backend_support_matrix.md`](backend_support_matrix.md).
 
 ## Release sign-off checklist
 
@@ -25,8 +29,9 @@ Before tagging a release:
 1. Confirm the latest `main` run of `Platform Matrix Gate` is green.
 2. Confirm all Tier-1 host jobs are passing.
 3. Confirm x86-64, AArch64, and RV64GC artifact-generation checks are passing.
-4. Review `docs/platform_known_issues.json`; no Tier-1 issue may remain open without an explicit owner, ETA, and release-manager acceptance.
-5. Link the green workflow run and known-issues review in the release notes.
+4. Confirm the backend support contract workflow is passing and the matrix has no unsupported production cell without an explicit marker.
+5. Review `docs/platform_known_issues.json`; no Tier-1 issue may remain open without an explicit owner, ETA, and release-manager acceptance.
+6. Link the green workflow run and known-issues review in the release notes.
 
 ## Known-issues categories
 

@@ -11,6 +11,7 @@ Lanes:
   target-aarch64  Validate AArch64 artifact-generation crates.
   target-rv64gc   Validate RV64GC artifact-generation crates.
   known-issues   Validate docs/platform_known_issues.json shape.
+  backend-contract Validate backend support contract fixture shape.
 USAGE
 }
 
@@ -75,6 +76,7 @@ case "$lane" in
   target-aarch64) run_target_aarch64 ;;
   target-rv64gc) run_target_rv64gc ;;
   known-issues) validate_known_issues ;;
+  backend-contract) scripts/backend_support_contract.sh validate ;;
   *)
     usage >&2
     exit 2
