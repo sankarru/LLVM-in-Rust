@@ -50,7 +50,7 @@ fn make_decl_only() -> (Context, Module) {
     let ptr_ty = ctx.ptr_ty;
     let mut b = Builder::new(&mut ctx, &mut module);
     b.add_declaration("printf", void_ty, vec![ptr_ty], true);
-    drop(b);
+    let _ = b;
     (ctx, module)
 }
 
@@ -187,7 +187,7 @@ fn backend_pipeline_smoke_via_driver() {
     let x = b.get_arg(0);
     let r = b.build_mul("r", x, x);
     b.build_ret(r);
-    drop(b);
+    let _ = b;
 
     let opts = CodegenOptions {
         target: TargetArch::X86_64,

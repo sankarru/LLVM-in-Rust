@@ -2199,7 +2199,7 @@ mod tests {
                 self.pending = 0;
                 self.pending_bits = 0;
             }
-            while self.buf.len() % 4 != 0 {
+            while !self.buf.len().is_multiple_of(4) {
                 self.buf.push(0);
             }
         }
@@ -2253,7 +2253,7 @@ mod tests {
                 self.buf.push(self.pending as u8);
             }
             // Pad to 4 bytes.
-            while self.buf.len() % 4 != 0 {
+            while !self.buf.len().is_multiple_of(4) {
                 self.buf.push(0);
             }
             self.buf

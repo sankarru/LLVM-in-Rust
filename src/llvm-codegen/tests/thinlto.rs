@@ -197,7 +197,7 @@ fn thinlto_roundtrip_function_count() {
     b.position_at_end(e2);
     let c2 = b.const_int(i32_ty, 2);
     b.build_ret(c2);
-    drop(b);
+    let _ = b;
 
     let mut obj = elf_obj();
     embed_bitcode(&mut obj, &ctx, &module, "").unwrap();

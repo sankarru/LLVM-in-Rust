@@ -82,8 +82,8 @@ entry:
 }
 
 /// Parse `fence`, `cmpxchg`, and `atomicrmw` and confirm the IR structure
-/// + the result of the print → parse round-trip is stable.  Covers issue #205
-/// at the parser layer.
+/// and the print → parse round-trip are stable.  Covers issue #205 at the
+/// parser layer.
 #[test]
 fn parse_atomics_round_trip() {
     let src = r#"

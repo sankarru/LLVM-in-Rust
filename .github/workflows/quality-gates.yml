@@ -1,8 +1,8 @@
 name: Quality Gates
 
-# Release-blocking source-quality gates (roadmap Milestone V / issue #381).
-# Formatting is enforced here; clippy `-D warnings` is added in a follow-up
-# once the existing warnings are cleared.
+# Release-blocking source-quality gates (roadmap Milestone V / issue #381):
+# workspace formatting (`cargo fmt --check`) and lint cleanliness
+# (`cargo clippy --locked --all-targets -- -D warnings`).
 
 on:
   push:
@@ -31,3 +31,21 @@ jobs:
 
       - name: Check workspace formatting
         run: cargo +stable fmt --all -- --check
+
+  clippy:
+    name: cargo clippy -D warnings
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Rust stable toolchain with clippy
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable --component clippy
+          rustup default stable
+
+      - name: Lint workspace (deny warnings)
+        run: cargo +stable clippy --locked --all-targets -- -D warnings
+

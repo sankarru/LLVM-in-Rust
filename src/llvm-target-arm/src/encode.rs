@@ -1691,7 +1691,7 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // 0xC8E0FC00 | (1<<16) | (0<<5) | 2 = 0xC8F0FC02
-        let expected = 0xC8E0FC00u32 | (1 << 16) | (0 << 5) | 2;
+        let expected = (0xC8E0FC00u32 | (1 << 16)) | 2;
         assert_eq!(
             word, expected,
             "CASAL X1, X2, [X0] must encode as 0x{expected:08X}"
@@ -1720,7 +1720,7 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // 0xF8E00000 | (Rs=1 <<16) | (Rn=2 <<5) | Rt=0
-        let expected = 0xF8E00000u32 | (1 << 16) | (2 << 5) | 0;
+        let expected = 0xF8E00000u32 | (1 << 16) | (2 << 5);
         assert_eq!(
             word, expected,
             "LDADDAL X1, X0, [X2] must encode as 0x{expected:08X}"
@@ -1747,7 +1747,7 @@ mod tests {
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
-        let expected = 0xC85F7C00u32 | (1 << 5) | 0;
+        let expected = 0xC85F7C00u32 | (1 << 5);
         assert_eq!(
             word, expected,
             "LDXR X0, [X1] must encode as 0x{expected:08X}"
@@ -1776,7 +1776,7 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // 0xC8007C00 | (Ws=0 <<16) | (Rn=1 <<5) | Rt=2
-        let expected = 0xC8007C00u32 | (0 << 16) | (1 << 5) | 2;
+        let expected = 0xC8007C00u32 | (1 << 5) | 2;
         assert_eq!(
             word, expected,
             "STXR W0, X2, [X1] must encode as 0x{expected:08X}"
@@ -1803,7 +1803,7 @@ mod tests {
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
-        let expected = 0xF8E08000u32 | (1 << 16) | (2 << 5) | 0;
+        let expected = 0xF8E08000u32 | (1 << 16) | (2 << 5);
         assert_eq!(
             word, expected,
             "SWPAL X1, X0, [X2] must encode as 0x{expected:08X}"
@@ -1844,7 +1844,7 @@ mod tests {
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
-        let expected = 0x1E602800u32 | (2 << 16) | (1 << 5) | 0;
+        let expected = 0x1E602800u32 | (2 << 16) | (1 << 5);
         assert_eq!(
             word, expected,
             "FADD D0, D1, D2 should encode as 0x{expected:08X}"
@@ -1860,7 +1860,7 @@ mod tests {
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
-        let expected = 0x1E603800u32 | (2 << 16) | (1 << 5) | 0;
+        let expected = 0x1E603800u32 | (2 << 16) | (1 << 5);
         assert_eq!(
             word, expected,
             "FSUB D0, D1, D2 should encode as 0x{expected:08X}"
@@ -1876,7 +1876,7 @@ mod tests {
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
-        let expected = 0x1E600800u32 | (2 << 16) | (1 << 5) | 0;
+        let expected = 0x1E600800u32 | (2 << 16) | (1 << 5);
         assert_eq!(
             word, expected,
             "FMUL D0, D1, D2 should encode as 0x{expected:08X}"
@@ -1892,7 +1892,7 @@ mod tests {
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
-        let expected = 0x1E601800u32 | (2 << 16) | (1 << 5) | 0;
+        let expected = 0x1E601800u32 | (2 << 16) | (1 << 5);
         assert_eq!(
             word, expected,
             "FDIV D0, D1, D2 should encode as 0x{expected:08X}"
@@ -1908,7 +1908,7 @@ mod tests {
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
-        let expected = 0x1E614000u32 | (1 << 5) | 0;
+        let expected = 0x1E614000u32 | (1 << 5);
         assert_eq!(
             word, expected,
             "FNEG D0, D1 should encode as 0x{expected:08X}"
@@ -1924,7 +1924,7 @@ mod tests {
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
-        let expected = 0x1E61C000u32 | (1 << 5) | 0;
+        let expected = 0x1E61C000u32 | (1 << 5);
         assert_eq!(
             word, expected,
             "FSQRT D0, D1 should encode as 0x{expected:08X}"
@@ -1963,7 +1963,7 @@ mod tests {
         let mut e = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
-        let expected = 0x1E604000u32 | (1 << 5) | 0;
+        let expected = 0x1E604000u32 | (1 << 5);
         assert_eq!(
             word, expected,
             "FMOV D0, D1 should encode as 0x{expected:08X}"
@@ -1988,7 +1988,7 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // Rd = X0 = reg 0 (low 5 bits of X0.0 = 0); Rn = fp_enc(D0) = 0
-        let expected = 0x9E780000u32 | (0 << 5) | 0;
+        let expected = 0x9E780000u32;
         assert_eq!(
             word, expected,
             "FCVTZS X0, D0 should encode as 0x{expected:08X}"
@@ -2037,7 +2037,7 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // rd = dst.0 & 0x1F = 32 & 0x1F = 0; rn = reg_enc(X1) = 1
-        let expected = 0x9E620000u32 | (1 << 5) | 0;
+        let expected = 0x9E620000u32 | (1 << 5);
         assert_eq!(
             word, expected,
             "SCVTF D0, X1 should encode as 0x{expected:08X}"
@@ -2062,7 +2062,7 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // rt = D0.0 & 0x1F = 32 & 0x1F = 0; imm12 = 2 + 0 + 0 = 2
-        let expected = 0xFD400000u32 | (2 << 10) | (29 << 5) | 0;
+        let expected = 0xFD400000u32 | (2 << 10) | (29 << 5);
         assert_eq!(
             word, expected,
             "MOVSD_LOAD_MR D0, [x29, #16] should encode as 0x{expected:08X}"

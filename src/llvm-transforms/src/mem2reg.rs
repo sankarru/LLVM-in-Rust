@@ -350,19 +350,17 @@ fn rename_dfs(
                 ptr: ValueRef::Instruction(alloca_iid),
                 volatile: false,
                 ..
-            } => {
-                if stacks.contains_key(&alloca_iid) {
-                    // If the stored value is itself a replaced load, resolve it.
-                    let resolved = if let ValueRef::Instruction(vid) = val {
-                        subst.get(&vid).copied().unwrap_or(val)
-                    } else {
-                        val
-                    };
-                    let stack = stacks.get_mut(&alloca_iid).unwrap();
-                    saved.push((alloca_iid, stack.len()));
-                    stack.push(resolved);
-                    instrs_to_remove.insert(iid);
-                }
+            } if stacks.contains_key(&alloca_iid) => {
+                // If the stored value is itself a replaced load, resolve it.
+                let resolved = if let ValueRef::Instruction(vid) = val {
+                    subst.get(&vid).copied().unwrap_or(val)
+                } else {
+                    val
+                };
+                let stack = stacks.get_mut(&alloca_iid).unwrap();
+                saved.push((alloca_iid, stack.len()));
+                stack.push(resolved);
+                instrs_to_remove.insert(iid);
             }
             _ => {}
         }

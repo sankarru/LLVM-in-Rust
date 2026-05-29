@@ -39,7 +39,7 @@ fn sample_ll_emits_riscv_elf_objdump_accepts() {
     pm.add_function_pass(DeadCodeElim);
     pm.run(&mut ctx, &mut module);
 
-    let mut backend = RiscVBackend::default();
+    let mut backend = RiscVBackend;
     for func in &module.functions {
         if func.is_declaration {
             continue;

@@ -3186,15 +3186,6 @@ impl<'src> Parser<'src> {
             Keyword::Unwind => "unwind",
             Keyword::X => "x",
             Keyword::Vscale => "vscale",
-            Keyword::Catchpad => "catchpad",
-            Keyword::Cleanuppad => "cleanuppad",
-            Keyword::Catchswitch => "catchswitch",
-            Keyword::Catchret => "catchret",
-            Keyword::Cleanupret => "cleanupret",
-            Keyword::Within => "within",
-            Keyword::Caller => "caller",
-            Keyword::None => "none",
-            Keyword::From => "from",
         }
     }
 

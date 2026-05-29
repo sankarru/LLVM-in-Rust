@@ -24,7 +24,7 @@
 //! let bv = b.get_arg(1);
 //! let sum = b.build_add("sum", a, bv);
 //! b.build_ret(sum);
-//! drop(b);
+//! let _ = b;
 //! assert_eq!(module.functions[0].blocks.len(), 1);
 //! ```
 

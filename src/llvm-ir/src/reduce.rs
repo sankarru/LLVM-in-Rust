@@ -841,7 +841,7 @@ where
             align,
         } => Alloca {
             alloc_ty: *alloc_ty,
-            num_elements: num_elements.map(|v| f(v)),
+            num_elements: num_elements.map(&mut f),
             align: *align,
         },
         Load {
@@ -984,7 +984,7 @@ where
             clauses,
         } => LandingPad {
             result_ty: *result_ty,
-            personality_fn: personality_fn.map(|v| f(v)),
+            personality_fn: personality_fn.map(&mut f),
             cleanup: *cleanup,
             clauses: clauses
                 .iter()
@@ -1051,7 +1051,7 @@ where
             volatile: *volatile,
         },
         Ret { val } => Ret {
-            val: val.map(|v| f(v)),
+            val: val.map(&mut f),
         },
         Br { dest } => Br { dest: *dest },
         CondBr {
@@ -1096,7 +1096,7 @@ where
             args: args.iter().map(|&a| f(a)).collect(),
         },
         CleanupPad { parent, args } => CleanupPad {
-            parent: parent.map(|v| f(v)),
+            parent: parent.map(&mut f),
             args: args.iter().map(|&a| f(a)).collect(),
         },
         CatchSwitch {
@@ -1104,7 +1104,7 @@ where
             handlers,
             default,
         } => CatchSwitch {
-            parent: parent.map(|v| f(v)),
+            parent: parent.map(&mut f),
             handlers: handlers.clone(),
             default: *default,
         },
@@ -1156,7 +1156,7 @@ fn substitute_value_in_kind(
 mod tests {
     use super::*;
     use crate::basic_block::BasicBlock;
-    use crate::context::{ArgId, Context, InstrId, ValueRef};
+    use crate::context::{ArgId, Context, ValueRef};
     use crate::function::Function;
     use crate::instruction::{InstrKind, Instruction, IntArithFlags};
     use crate::module::Module;

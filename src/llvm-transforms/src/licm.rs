@@ -470,7 +470,7 @@ mod tests {
 
         b.position_at_end(exit_bb);
         b.build_ret(c0);
-        drop(b);
+        let _ = b;
 
         // Add back-edge to phi node.
         {
@@ -583,7 +583,7 @@ mod tests {
 
         b.position_at_end(exit_bb);
         b.build_ret_void();
-        drop(b);
+        let _ = b;
 
         {
             let i_phi_iid = module.functions[0].value_names["i"];
@@ -670,7 +670,7 @@ mod tests {
 
         b.position_at_end(exit_bb);
         b.build_ret(c0);
-        drop(b);
+        let _ = b;
 
         {
             let i_phi_iid = module.functions[1].value_names["i"];
@@ -812,7 +812,7 @@ mod tests {
 
         b.position_at_end(exit_bb);
         b.build_ret(c0);
-        drop(b);
+        let _ = b;
 
         // Add back-edge to inner phi.
         {

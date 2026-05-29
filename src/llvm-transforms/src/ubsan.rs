@@ -165,7 +165,7 @@ fn ensure_declarations(ctx: &mut Context, module: &mut Module) {
 /// creating a *forward-declared stub* in the function's instruction pool —
 /// a Call with a special zero-arg void fn_ty and a GlobalId placeholder.
 /// The module pass resolves these placeholders to real declarations.
-
+///
 /// Index into UBSAN_RUNTIME_FNS by name.
 fn ubsan_fn_index(name: &str) -> Option<u32> {
     UBSAN_RUNTIME_FNS
@@ -187,14 +187,16 @@ fn placeholder_callee(fn_name: &str) -> Option<ValueRef> {
 fn apply_resolution_table(func: &mut Function, table: &[Option<u32>; 8]) {
     for iid in 0..func.instructions.len() {
         let iid = llvm_ir::InstrId(iid as u32);
-        if let InstrKind::Call { callee, .. } = &mut func.instr_mut(iid).kind {
-            if let ValueRef::Global(llvm_ir::GlobalId(gid)) = callee {
-                if *gid >= PLACEHOLDER_BASE {
-                    let fn_idx = (*gid - PLACEHOLDER_BASE) as usize;
-                    if fn_idx < table.len() {
-                        if let Some(real_gid) = table[fn_idx] {
-                            *gid = real_gid;
-                        }
+        if let InstrKind::Call {
+            callee: ValueRef::Global(llvm_ir::GlobalId(gid)),
+            ..
+        } = &mut func.instr_mut(iid).kind
+        {
+            if *gid >= PLACEHOLDER_BASE {
+                let fn_idx = (*gid - PLACEHOLDER_BASE) as usize;
+                if fn_idx < table.len() {
+                    if let Some(real_gid) = table[fn_idx] {
+                        *gid = real_gid;
                     }
                 }
             }
@@ -852,7 +854,7 @@ mod tests {
         b.position_at_end(entry);
         // Build a load of &G (the global value as a pointer).
         let fid = b.current_function().unwrap();
-        drop(b);
+        let _ = b;
         // Manually construct a load from the global.
         let func = module.function_mut(fid);
         let gid_ref = ValueRef::Global(llvm_ir::GlobalId(0));
