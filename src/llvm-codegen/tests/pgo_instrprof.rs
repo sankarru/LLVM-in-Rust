@@ -6,37 +6,76 @@
 use llvm_codegen::{
     emit_object,
     isel::IselBackend,
-    regalloc::{allocate_registers, apply_allocation, compute_live_intervals, insert_spill_reloads, RegAllocStrategy},
+    regalloc::{
+        allocate_registers, apply_allocation, compute_live_intervals, insert_spill_reloads,
+        RegAllocStrategy,
+    },
     ObjectFormat,
 };
-use llvm_ir::{InstrprofIntrinsic};
+use llvm_ir::InstrprofIntrinsic;
 use llvm_ir_parser::parser::parse;
-use llvm_target_x86::{instructions::{MOV_LOAD_MR, MOV_STORE_RM, NOP, CALL_R}, X86Backend, X86Emitter};
+use llvm_target_x86::{
+    instructions::{CALL_R, MOV_LOAD_MR, MOV_STORE_RM, NOP},
+    X86Backend, X86Emitter,
+};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 fn compile_x86(src: &str) -> Vec<llvm_codegen::isel::MInstr> {
     let (ctx, module) = parse(src).expect("parse failed");
-    let func = module.functions.iter().find(|f| f.name == "main" && !f.is_declaration)
+    let func = module
+        .functions
+        .iter()
+        .find(|f| f.name == "main" && !f.is_declaration)
         .expect("no @main definition");
     let mut backend = X86Backend::default();
     let mut mf = backend.lower_function(&ctx, &module, func);
     let intervals = compute_live_intervals(&mf);
-    let mut result = allocate_registers(&intervals, &mf.allocatable_pregs, &mf.allocatable_fp_pregs, RegAllocStrategy::LinearScan);
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    let mut result = allocate_registers(
+        &intervals,
+        &mf.allocatable_pregs,
+        &mf.allocatable_fp_pregs,
+        RegAllocStrategy::LinearScan,
+    );
+    insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
-    mf.blocks.iter().flat_map(|b| b.instrs.iter().cloned()).collect()
+    mf.blocks
+        .iter()
+        .flat_map(|b| b.instrs.iter().cloned())
+        .collect()
 }
 
 fn compile_x86_object(src: &str) -> Vec<u8> {
     let (ctx, module) = parse(src).expect("parse failed");
-    let func = module.functions.iter().find(|f| f.name == "main" && !f.is_declaration)
+    let func = module
+        .functions
+        .iter()
+        .find(|f| f.name == "main" && !f.is_declaration)
         .expect("no @main definition");
     let mut backend = X86Backend::default();
     let mut mf = backend.lower_function(&ctx, &module, func);
     let intervals = compute_live_intervals(&mf);
-    let mut result = allocate_registers(&intervals, &mf.allocatable_pregs, &mf.allocatable_fp_pregs, RegAllocStrategy::LinearScan);
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    let mut result = allocate_registers(
+        &intervals,
+        &mf.allocatable_pregs,
+        &mf.allocatable_fp_pregs,
+        RegAllocStrategy::LinearScan,
+    );
+    insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
     let mut emitter = X86Emitter::new(ObjectFormat::Elf);
     emit_object(&mf, &mut emitter).to_bytes()
@@ -62,7 +101,10 @@ fn instrprof_from_name_recognizes_value_profile() {
 
 #[test]
 fn instrprof_from_name_returns_none_for_unknown() {
-    assert_eq!(InstrprofIntrinsic::from_name("llvm.instrprof.unknown"), None);
+    assert_eq!(
+        InstrprofIntrinsic::from_name("llvm.instrprof.unknown"),
+        None
+    );
     assert_eq!(InstrprofIntrinsic::from_name("llvm.lifetime.start"), None);
     assert_eq!(InstrprofIntrinsic::from_name("llvm.vp.add.i32"), None);
     assert_eq!(InstrprofIntrinsic::from_name(""), None);
@@ -110,13 +152,19 @@ entry:
 fn instrprof_increment_compiles_without_error() {
     // Must not panic; object bytes must be non-empty.
     let bytes = compile_x86_object(INSTRPROF_INCREMENT_IR);
-    assert!(!bytes.is_empty(), "expected non-empty object for instrprof.increment");
+    assert!(
+        !bytes.is_empty(),
+        "expected non-empty object for instrprof.increment"
+    );
 }
 
 #[test]
 fn instrprof_value_profile_compiles_without_error() {
     let bytes = compile_x86_object(INSTRPROF_VALUE_PROFILE_IR);
-    assert!(!bytes.is_empty(), "expected non-empty object for instrprof.value.profile");
+    assert!(
+        !bytes.is_empty(),
+        "expected non-empty object for instrprof.value.profile"
+    );
 }
 
 #[test]
@@ -125,7 +173,10 @@ fn instrprof_increment_emits_nop_not_call() {
     let instrs = compile_x86(INSTRPROF_INCREMENT_IR);
     let has_nop = instrs.iter().any(|mi| mi.opcode == NOP);
     let has_call_to_instrprof = instrs.iter().any(|mi| mi.opcode == CALL_R);
-    assert!(has_nop, "expected at least one NOP from instrprof.increment lowering");
+    assert!(
+        has_nop,
+        "expected at least one NOP from instrprof.increment lowering"
+    );
     // We allow call_r for other calls but confirm instrprof didn't sneak through as a real call.
     // Since @main has no other calls, any CALL_R would be the intrinsic leaking through.
     assert!(

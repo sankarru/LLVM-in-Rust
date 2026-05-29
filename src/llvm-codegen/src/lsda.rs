@@ -157,7 +157,9 @@ pub struct XdataBuilder {
 impl XdataBuilder {
     /// Create a new, empty `XdataBuilder`.
     pub fn new() -> Self {
-        Self { ip_to_state: Vec::new() }
+        Self {
+            ip_to_state: Vec::new(),
+        }
     }
 
     /// Record an IP-to-state transition at `ip_offset` bytes from function start.
@@ -327,16 +329,31 @@ mod tests {
         assert_eq!(bytes[0], 0xff); // @LPStart = omit
         assert_eq!(bytes[1], 0xff); // @TType   = omit
         assert_eq!(bytes[2], 0x01); // CallSite encoding = uleb128
-        // Must have more bytes beyond the 3-byte header.
+                                    // Must have more bytes beyond the 3-byte header.
         assert!(bytes.len() > 4);
     }
 
     #[test]
     fn lsda_multiple_call_sites() {
         let mut lsda = LsdaBuilder::new();
-        lsda.add_call_site(CallSiteRecord { call_start: 0, call_len: 5, landing_pad: 30, action: 0 });
-        lsda.add_call_site(CallSiteRecord { call_start: 10, call_len: 5, landing_pad: 50, action: 0 });
-        lsda.add_call_site(CallSiteRecord { call_start: 20, call_len: 5, landing_pad: 0, action: 0 });
+        lsda.add_call_site(CallSiteRecord {
+            call_start: 0,
+            call_len: 5,
+            landing_pad: 30,
+            action: 0,
+        });
+        lsda.add_call_site(CallSiteRecord {
+            call_start: 10,
+            call_len: 5,
+            landing_pad: 50,
+            action: 0,
+        });
+        lsda.add_call_site(CallSiteRecord {
+            call_start: 20,
+            call_len: 5,
+            landing_pad: 0,
+            action: 0,
+        });
         let bytes = lsda.build();
         // At least 3 call-site records beyond the header.
         assert!(bytes.len() > 10);

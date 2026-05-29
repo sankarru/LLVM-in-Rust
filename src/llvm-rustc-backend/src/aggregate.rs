@@ -240,8 +240,14 @@ mod tests {
         let val2 = ValueRef::Constant(ctx.const_int(i64_ty, 2));
 
         let operands = vec![
-            AggOperand { val: val1, ty: i32_ty },
-            AggOperand { val: val2, ty: i64_ty },
+            AggOperand {
+                val: val1,
+                ty: i32_ty,
+            },
+            AggOperand {
+                val: val2,
+                ty: i64_ty,
+            },
         ];
 
         let result = lower_aggregate(
@@ -338,13 +344,19 @@ mod tests {
         let enum_ty = ctx.mk_struct_anon(vec![i8_ty, i32_ty], false);
 
         let data_val = ValueRef::Constant(ctx.const_int(i32_ty, 42));
-        let operands = vec![AggOperand { val: data_val, ty: i32_ty }];
+        let operands = vec![AggOperand {
+            val: data_val,
+            ty: i32_ty,
+        }];
 
         lower_aggregate(
             &mut ctx,
             &mut func,
             entry_bid,
-            &AggKind::Enum { variant_idx: 1, discriminant: 1 },
+            &AggKind::Enum {
+                variant_idx: 1,
+                discriminant: 1,
+            },
             &operands,
             enum_ty,
         );
@@ -355,8 +367,12 @@ mod tests {
         assert_eq!(count_instrs(&func, is_store), 2);
 
         // The first store must store an i8 constant with value 1.
-        let stores: Vec<&InstrKind> =
-            func.instructions.iter().map(|i| &i.kind).filter(|k| is_store(k)).collect();
+        let stores: Vec<&InstrKind> = func
+            .instructions
+            .iter()
+            .map(|i| &i.kind)
+            .filter(|k| is_store(k))
+            .collect();
         if let InstrKind::Store { val, .. } = stores[0] {
             if let ValueRef::Constant(cid) = val {
                 let cd = ctx.get_const(*cid);
@@ -384,23 +400,37 @@ mod tests {
         let enum_ty = ctx.mk_struct_anon(vec![i8_ty, i32_ty], false);
 
         let payload = ValueRef::Constant(ctx.const_int(i32_ty, 99));
-        let operands = vec![AggOperand { val: payload, ty: i32_ty }];
+        let operands = vec![AggOperand {
+            val: payload,
+            ty: i32_ty,
+        }];
 
         lower_aggregate(
             &mut ctx,
             &mut func,
             entry_bid,
-            &AggKind::Enum { variant_idx: 0, discriminant: 0 },
+            &AggKind::Enum {
+                variant_idx: 0,
+                discriminant: 0,
+            },
             &operands,
             enum_ty,
         );
 
         // Two stores: discriminant + payload
-        assert_eq!(count_instrs(&func, is_store), 2, "disc store + payload store");
+        assert_eq!(
+            count_instrs(&func, is_store),
+            2,
+            "disc store + payload store"
+        );
 
         // The GEP for the payload field must use field index 1.
-        let geps: Vec<&InstrKind> =
-            func.instructions.iter().map(|i| &i.kind).filter(|k| is_gep(k)).collect();
+        let geps: Vec<&InstrKind> = func
+            .instructions
+            .iter()
+            .map(|i| &i.kind)
+            .filter(|k| is_gep(k))
+            .collect();
         assert_eq!(geps.len(), 2, "disc GEP + payload GEP");
 
         if let InstrKind::GetElementPtr { indices, .. } = geps[1] {
@@ -464,6 +494,10 @@ mod tests {
         // Only the alloca; no GEPs or stores for a zero-field struct.
         assert_eq!(count_instrs(&func, is_alloca), 1, "alloca for unit struct");
         assert_eq!(count_instrs(&func, is_gep), 0, "no GEPs for unit struct");
-        assert_eq!(count_instrs(&func, is_store), 0, "no stores for unit struct");
+        assert_eq!(
+            count_instrs(&func, is_store),
+            0,
+            "no stores for unit struct"
+        );
     }
 }

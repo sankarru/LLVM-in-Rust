@@ -180,7 +180,7 @@ fn emit_globals_gep_constexpr_reloc_with_addend() {
     .unwrap();
     let (secs, syms) = emit_globals(&ctx, &module, elf()).unwrap();
     assert_eq!(secs.len(), 1); // both constant → .rodata
-    // @p3 → 8 zero bytes + reloc with addend = 3 * sizeof(i32) = 12
+                               // @p3 → 8 zero bytes + reloc with addend = 3 * sizeof(i32) = 12
     let p3_sym = syms.iter().find(|s| s.name == "p3").unwrap();
     let reloc = secs[0]
         .relocs

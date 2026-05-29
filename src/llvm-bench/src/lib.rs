@@ -13,9 +13,9 @@
 
 #[cfg(test)]
 mod tests {
+    use llvm_ir::InstrKind;
     use llvm_ir::{Builder, GlobalId, Linkage, Module, ValueRef};
     use llvm_ir_parser::parser::parse;
-    use llvm_ir::InstrKind;
     use llvm_transforms::{build_pipeline, pass::PassManager, OptLevel};
 
     const FIXTURE: &str = include_str!("../fixtures/sample.ll");

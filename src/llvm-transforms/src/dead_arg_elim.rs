@@ -1,9 +1,7 @@
 //! Inter-procedural dead argument elimination.
 
 use crate::pass::ModulePass;
-use llvm_ir::{
-    Context, FunctionId, GlobalId, InstrKind, Module, TypeData, ValueRef,
-};
+use llvm_ir::{Context, FunctionId, GlobalId, InstrKind, Module, TypeData, ValueRef};
 
 /// Removes trailing unused function parameters and rewrites direct callsites.
 ///
@@ -118,9 +116,11 @@ mod tests {
         let x = b.get_arg(0);
         let c1 = b.const_int(b.ctx.i64_ty, 1);
         let c2 = b.const_int(b.ctx.i64_ty, 2);
-        let call_ty = b
-            .ctx
-            .mk_fn_type(b.ctx.i64_ty, vec![b.ctx.i64_ty, b.ctx.i64_ty, b.ctx.i64_ty], false);
+        let call_ty = b.ctx.mk_fn_type(
+            b.ctx.i64_ty,
+            vec![b.ctx.i64_ty, b.ctx.i64_ty, b.ctx.i64_ty],
+            false,
+        );
         let r = b.build_call(
             "r",
             b.ctx.i64_ty,

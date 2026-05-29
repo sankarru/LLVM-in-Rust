@@ -34,11 +34,7 @@ use lower::WasmFunction;
 
 /// Assemble a complete WebAssembly binary from the given `WasmFunction` list
 /// and the IR context/module (needed for type-section construction).
-pub fn assemble_module(
-    ctx: &Context,
-    module: &Module,
-    wasm_functions: &[WasmFunction],
-) -> Vec<u8> {
+pub fn assemble_module(ctx: &Context, module: &Module, wasm_functions: &[WasmFunction]) -> Vec<u8> {
     encode::assemble_module(ctx, module, wasm_functions)
 }
 
@@ -104,18 +100,19 @@ mod tests {
             "binary must contain i32.const (0x41)"
         );
         // 42 in LEB128 is just 0x2A.
-        assert!(bytes.contains(&0x2A), "binary must contain LEB128 of 42 (0x2A)");
+        assert!(
+            bytes.contains(&0x2A),
+            "binary must contain LEB128 of 42 (0x2A)"
+        );
     }
 
     #[test]
     fn wasm_add_two_ints() {
-        let ir = "define i32 @add(i32 %a, i32 %b) {\nentry:\n  %r = add i32 %a, %b\n  ret i32 %r\n}";
+        let ir =
+            "define i32 @add(i32 %a, i32 %b) {\nentry:\n  %r = add i32 %a, %b\n  ret i32 %r\n}";
         let bytes = compile_to_wasm(ir).expect("compile");
         // Must contain i32.add (0x6A).
-        assert!(
-            bytes.contains(&0x6A),
-            "binary must contain i32.add (0x6A)"
-        );
+        assert!(bytes.contains(&0x6A), "binary must contain i32.add (0x6A)");
     }
 
     #[test]

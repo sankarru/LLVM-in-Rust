@@ -4,8 +4,8 @@ use crate::basic_block::BasicBlock;
 use crate::context::{BlockId, ConstId, Context, FunctionId, GlobalId, TypeId, ValueRef};
 use crate::function::Function;
 use crate::instruction::{
-    FastMathFlags, FloatPredicate, InstrKind, Instruction, IntArithFlags, IntPredicate, MemOrdering,
-    RmwOp, TailCallKind,
+    FastMathFlags, FloatPredicate, InstrKind, Instruction, IntArithFlags, IntPredicate,
+    MemOrdering, RmwOp, TailCallKind,
 };
 use crate::module::Module;
 use crate::value::{Argument, GlobalVariable, Linkage};
@@ -1100,7 +1100,11 @@ impl<'a> Builder<'a> {
         args: Vec<ValueRef>,
     ) -> ValueRef {
         let tok_ty = self.ctx.ptr_ty; // token type approximated as ptr
-        self.append_instr(Some(name.into()), tok_ty, InstrKind::CatchPad { catch_switch, args })
+        self.append_instr(
+            Some(name.into()),
+            tok_ty,
+            InstrKind::CatchPad { catch_switch, args },
+        )
     }
 
     /// Build a `cleanuppad within <parent> [args...]` instruction.
@@ -1113,7 +1117,11 @@ impl<'a> Builder<'a> {
         args: Vec<ValueRef>,
     ) -> ValueRef {
         let tok_ty = self.ctx.ptr_ty;
-        self.append_instr(Some(name.into()), tok_ty, InstrKind::CleanupPad { parent, args })
+        self.append_instr(
+            Some(name.into()),
+            tok_ty,
+            InstrKind::CleanupPad { parent, args },
+        )
     }
 
     /// Build a `catchswitch within <parent> [handlers...] unwind <dest>` terminator.
@@ -1127,7 +1135,11 @@ impl<'a> Builder<'a> {
         self.append_instr(
             None,
             tok_ty,
-            InstrKind::CatchSwitch { parent, handlers, default },
+            InstrKind::CatchSwitch {
+                parent,
+                handlers,
+                default,
+            },
         )
     }
 
@@ -1137,7 +1149,10 @@ impl<'a> Builder<'a> {
         self.append_instr(
             None,
             void_ty,
-            InstrKind::CatchRet { catch_pad, successor },
+            InstrKind::CatchRet {
+                catch_pad,
+                successor,
+            },
         )
     }
 
@@ -1151,7 +1166,10 @@ impl<'a> Builder<'a> {
         self.append_instr(
             None,
             void_ty,
-            InstrKind::CleanupRet { cleanup_pad, unwind_dest },
+            InstrKind::CleanupRet {
+                cleanup_pad,
+                unwind_dest,
+            },
         )
     }
 

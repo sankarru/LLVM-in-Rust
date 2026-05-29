@@ -18,8 +18,8 @@
 //! [`AliasResult`].  [`CombinedAliasAnalysis`] runs BasicAA first and returns
 //! its answer (TBAA can be layered on later if `!tbaa` metadata is parsed).
 
-use llvm_ir::{ArgId, Function, GlobalId, InstrId, Module, ValueRef};
 use llvm_ir::instruction::InstrKind;
+use llvm_ir::{ArgId, Function, GlobalId, InstrId, Module, ValueRef};
 
 // ---------------------------------------------------------------------------
 // AliasResult
@@ -141,8 +141,7 @@ impl TbaaHierarchy {
         }
 
         // Rule 2: shared type lineage.
-        if self.is_ancestor(a.base_type, b.base_type)
-            || self.is_ancestor(b.base_type, a.base_type)
+        if self.is_ancestor(a.base_type, b.base_type) || self.is_ancestor(b.base_type, a.base_type)
         {
             return AliasResult::MayAlias;
         }
@@ -204,11 +203,7 @@ pub enum UnderlyingObject {
 ///
 /// The recursion is bounded implicitly because SSA is acyclic (no infinite
 /// chains in well-formed IR).
-pub fn underlying_object(
-    val: ValueRef,
-    func: &Function,
-    _module: &Module,
-) -> UnderlyingObject {
+pub fn underlying_object(val: ValueRef, func: &Function, _module: &Module) -> UnderlyingObject {
     match val {
         ValueRef::Global(gid) => UnderlyingObject::Global(gid),
         ValueRef::Argument(aid) => UnderlyingObject::Arg(aid),
@@ -327,10 +322,10 @@ impl<'a> AliasAnalysis for CombinedAliasAnalysis<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use llvm_ir::{
-        BasicBlock, Context, Function, Instruction, InstrKind, Linkage, Module, ValueRef,
-    };
     use llvm_ir::value::GlobalVariable;
+    use llvm_ir::{
+        BasicBlock, Context, Function, InstrKind, Instruction, Linkage, Module, ValueRef,
+    };
 
     // -----------------------------------------------------------------------
     // Helper: build a minimal 1-block function with the provided instructions
@@ -356,9 +351,21 @@ mod tests {
         // root (id=0) -> int (id=1), float (id=2)
         TbaaHierarchy {
             nodes: vec![
-                TbaaNode { id: 0, name: "TBAA root".to_string(), parent: None },
-                TbaaNode { id: 1, name: "int".to_string(), parent: Some(0) },
-                TbaaNode { id: 2, name: "float".to_string(), parent: Some(0) },
+                TbaaNode {
+                    id: 0,
+                    name: "TBAA root".to_string(),
+                    parent: None,
+                },
+                TbaaNode {
+                    id: 1,
+                    name: "int".to_string(),
+                    parent: Some(0),
+                },
+                TbaaNode {
+                    id: 2,
+                    name: "float".to_string(),
+                    parent: Some(0),
+                },
             ],
         }
     }
@@ -388,8 +395,16 @@ mod tests {
         let h = make_hierarchy();
         // int (1) and float (2) share only the root ancestor, but neither is
         // an ancestor of the other, so they do not alias.
-        let a = TbaaAccessTag { base_type: 1, access_type: 1, offset: 0 };
-        let b = TbaaAccessTag { base_type: 2, access_type: 2, offset: 0 };
+        let a = TbaaAccessTag {
+            base_type: 1,
+            access_type: 1,
+            offset: 0,
+        };
+        let b = TbaaAccessTag {
+            base_type: 2,
+            access_type: 2,
+            offset: 0,
+        };
         assert_eq!(h.may_alias(&a, &b), AliasResult::NoAlias);
     }
 
@@ -398,14 +413,34 @@ mod tests {
         // A node named "omnipotent char" must alias with everything.
         let h = TbaaHierarchy {
             nodes: vec![
-                TbaaNode { id: 0, name: "TBAA root".to_string(), parent: None },
-                TbaaNode { id: 1, name: "int".to_string(), parent: Some(0) },
-                TbaaNode { id: 2, name: "omnipotent char".to_string(), parent: Some(0) },
+                TbaaNode {
+                    id: 0,
+                    name: "TBAA root".to_string(),
+                    parent: None,
+                },
+                TbaaNode {
+                    id: 1,
+                    name: "int".to_string(),
+                    parent: Some(0),
+                },
+                TbaaNode {
+                    id: 2,
+                    name: "omnipotent char".to_string(),
+                    parent: Some(0),
+                },
             ],
         };
         // char (2) vs int (1) — char wins.
-        let a = TbaaAccessTag { base_type: 2, access_type: 2, offset: 0 };
-        let b = TbaaAccessTag { base_type: 1, access_type: 1, offset: 0 };
+        let a = TbaaAccessTag {
+            base_type: 2,
+            access_type: 2,
+            offset: 0,
+        };
+        let b = TbaaAccessTag {
+            base_type: 1,
+            access_type: 1,
+            offset: 0,
+        };
         assert_eq!(h.may_alias(&a, &b), AliasResult::MayAlias);
         // Also works in reverse.
         assert_eq!(h.may_alias(&b, &a), AliasResult::MayAlias);
@@ -434,7 +469,10 @@ mod tests {
 
         let iid = func.value_names["a"];
         let val = ValueRef::Instruction(iid);
-        assert_eq!(underlying_object(val, &func, &module), UnderlyingObject::Alloca(iid));
+        assert_eq!(
+            underlying_object(val, &func, &module),
+            UnderlyingObject::Alloca(iid)
+        );
     }
 
     #[test]
@@ -453,7 +491,10 @@ mod tests {
         let func = Function::new("f", fn_ty, vec![], Linkage::External);
 
         let val = ValueRef::Global(gid);
-        assert_eq!(underlying_object(val, &func, &module), UnderlyingObject::Global(gid));
+        assert_eq!(
+            underlying_object(val, &func, &module),
+            UnderlyingObject::Global(gid)
+        );
     }
 
     #[test]
@@ -548,8 +589,14 @@ mod tests {
         });
         let aa = BasicAliasAnalysis::new(&func, &module);
         let aref = ValueRef::Instruction(func.value_names["a"]);
-        let ma = MemAccess { ptr: aref, size_bytes: 4 };
-        let mb = MemAccess { ptr: aref, size_bytes: 4 };
+        let ma = MemAccess {
+            ptr: aref,
+            size_bytes: 4,
+        };
+        let mb = MemAccess {
+            ptr: aref,
+            size_bytes: 4,
+        };
         // Same alloca — could be same bytes, so MayAlias.
         assert_eq!(aa.may_alias(&ma, &mb), AliasResult::MayAlias);
     }
@@ -586,7 +633,10 @@ mod tests {
             ptr: ValueRef::Instruction(func.value_names["a"]),
             size_bytes: 4,
         };
-        let mb = MemAccess { ptr: ValueRef::Global(gid), size_bytes: 4 };
+        let mb = MemAccess {
+            ptr: ValueRef::Global(gid),
+            size_bytes: 4,
+        };
         assert_eq!(aa.may_alias(&ma, &mb), AliasResult::NoAlias);
     }
 

@@ -108,8 +108,8 @@ impl TargetTransformInfo for X86Tti {
             LEA_FRAME_MR | MOV_LOAD_REG_MR | MOV_STORE_REG_RM => 1,
 
             // ── atomics (fence-like cost) ──
-            MFENCE | LOCK_CMPXCHG_MR | LOCK_XADD_MR | LOCK_XADD32_MR | XCHG_MR
-            | LOCK_AND_MR | LOCK_OR_MR | LOCK_XOR_MR => 20,
+            MFENCE | LOCK_CMPXCHG_MR | LOCK_XADD_MR | LOCK_XADD32_MR | XCHG_MR | LOCK_AND_MR
+            | LOCK_OR_MR | LOCK_XOR_MR => 20,
 
             // ── SSE2 scalar double ──
             ADDSD_RR | SUBSD_RR => match self.profile {
@@ -150,8 +150,8 @@ impl TargetTransformInfo for X86Tti {
             UCOMISS_RR | MOVSS_LOAD_MR | MOVSS_STORE_RM => 1,
 
             // ── FP ↔ integer conversions ──
-            CVTTSD2SI_RR | CVTSI2SD_RR | CVTTSS2SI_RR | CVTSI2SS_RR | CVTSD2SS_RR
-            | CVTSS2SD_RR | MOVAPD_RR | MOVAPD_RR_F32 => 1,
+            CVTTSD2SI_RR | CVTSI2SD_RR | CVTTSS2SI_RR | CVTSI2SS_RR | CVTSD2SS_RR | CVTSS2SD_RR
+            | MOVAPD_RR | MOVAPD_RR_F32 => 1,
 
             // Default: conservatively 1 cycle.
             _ => 1,

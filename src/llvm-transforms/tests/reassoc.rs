@@ -2,14 +2,10 @@
 //! FMF-exploiting FP constant folding (`try_fold_fp`).
 
 use llvm_ir::{
-    ArgId, Builder, ConstantData, Context, FastMathFlags, InstrId, InstrKind, Instruction,
-    Linkage, Module, TypeId, ValueRef,
+    ArgId, Builder, ConstantData, Context, FastMathFlags, InstrId, InstrKind, Instruction, Linkage,
+    Module, TypeId, ValueRef,
 };
-use llvm_transforms::{
-    constant_fold::try_fold_fp,
-    pass::FunctionPass,
-    reassoc::ReassocPass,
-};
+use llvm_transforms::{constant_fold::try_fold_fp, pass::FunctionPass, reassoc::ReassocPass};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -43,7 +39,13 @@ fn body_len(module: &Module) -> usize {
 }
 
 /// Helper: append an instruction to block 0 of function 0, return its InstrId.
-fn push_instr(ctx: &Context, module: &mut Module, name: &str, ty: TypeId, kind: InstrKind) -> ValueRef {
+fn push_instr(
+    ctx: &Context,
+    module: &mut Module,
+    name: &str,
+    ty: TypeId,
+    kind: InstrKind,
+) -> ValueRef {
     let f = &mut module.functions[0];
     let iid = f.alloc_instr(Instruction::new(Some(name.into()), ty, kind));
     f.blocks[0].body.push(iid);
@@ -63,22 +65,42 @@ fn set_ret(ctx: &Context, module: &mut Module, val: ValueRef) {
 }
 
 fn flags_nsz() -> FastMathFlags {
-    FastMathFlags { nsz: true, ..Default::default() }
+    FastMathFlags {
+        nsz: true,
+        ..Default::default()
+    }
 }
 fn flags_nnan() -> FastMathFlags {
-    FastMathFlags { nnan: true, ..Default::default() }
+    FastMathFlags {
+        nnan: true,
+        ..Default::default()
+    }
 }
 fn flags_nnan_ninf() -> FastMathFlags {
-    FastMathFlags { nnan: true, ninf: true, ..Default::default() }
+    FastMathFlags {
+        nnan: true,
+        ninf: true,
+        ..Default::default()
+    }
 }
 fn flags_arcp() -> FastMathFlags {
-    FastMathFlags { arcp: true, ..Default::default() }
+    FastMathFlags {
+        arcp: true,
+        ..Default::default()
+    }
 }
 fn flags_reassoc() -> FastMathFlags {
-    FastMathFlags { reassoc: true, nnan: true, ..Default::default() }
+    FastMathFlags {
+        reassoc: true,
+        nnan: true,
+        ..Default::default()
+    }
 }
 fn flags_fast() -> FastMathFlags {
-    FastMathFlags { fast: true, ..Default::default() }
+    FastMathFlags {
+        fast: true,
+        ..Default::default()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -95,7 +117,11 @@ fn nsz_fadd_zero_elim() {
         &mut module,
         "r",
         f64_ty,
-        InstrKind::FAdd { flags: flags_nsz(), lhs: x, rhs: zero },
+        InstrKind::FAdd {
+            flags: flags_nsz(),
+            lhs: x,
+            rhs: zero,
+        },
     );
     set_ret(&ctx, &mut module, r);
 
@@ -129,7 +155,11 @@ fn nsz_fsub_zero_elim() {
         &mut module,
         "r",
         f64_ty,
-        InstrKind::FSub { flags: flags_nsz(), lhs: x, rhs: zero },
+        InstrKind::FSub {
+            flags: flags_nsz(),
+            lhs: x,
+            rhs: zero,
+        },
     );
     set_ret(&ctx, &mut module, r);
 
@@ -153,7 +183,11 @@ fn nnan_fmul_one_elim() {
         &mut module,
         "r",
         f64_ty,
-        InstrKind::FMul { flags: flags_nnan(), lhs: x, rhs: one },
+        InstrKind::FMul {
+            flags: flags_nnan(),
+            lhs: x,
+            rhs: one,
+        },
     );
     set_ret(&ctx, &mut module, r);
 
@@ -202,7 +236,11 @@ fn nnan_ninf_fmul_zero() {
         &mut module,
         "r",
         f64_ty,
-        InstrKind::FMul { flags: flags_nnan_ninf(), lhs: x, rhs: zero },
+        InstrKind::FMul {
+            flags: flags_nnan_ninf(),
+            lhs: x,
+            rhs: zero,
+        },
     );
     set_ret(&ctx, &mut module, r);
 
@@ -244,7 +282,11 @@ fn reassoc_const_chain() {
         &mut module,
         "inner",
         f64_ty,
-        InstrKind::FAdd { flags: flags_reassoc(), lhs: x, rhs: c1 },
+        InstrKind::FAdd {
+            flags: flags_reassoc(),
+            lhs: x,
+            rhs: c1,
+        },
     );
 
     // outer = fadd reassoc double %inner, 2.0
@@ -253,7 +295,11 @@ fn reassoc_const_chain() {
         &mut module,
         "outer",
         f64_ty,
-        InstrKind::FAdd { flags: flags_reassoc(), lhs: inner, rhs: c2 },
+        InstrKind::FAdd {
+            flags: flags_reassoc(),
+            lhs: inner,
+            rhs: c2,
+        },
     );
 
     set_ret(&ctx, &mut module, outer);
@@ -351,7 +397,11 @@ fn fast_flag_enables_all() {
         &mut module,
         "r",
         f64_ty,
-        InstrKind::FAdd { flags: flags_fast(), lhs: x, rhs: zero },
+        InstrKind::FAdd {
+            flags: flags_fast(),
+            lhs: x,
+            rhs: zero,
+        },
     );
     set_ret(&ctx, &mut module, r);
 
@@ -375,7 +425,11 @@ fn fdiv_one_elim() {
         &mut module,
         "r",
         f64_ty,
-        InstrKind::FDiv { flags: flags_nnan(), lhs: x, rhs: one },
+        InstrKind::FDiv {
+            flags: flags_nnan(),
+            lhs: x,
+            rhs: one,
+        },
     );
     set_ret(&ctx, &mut module, r);
 
@@ -418,7 +472,10 @@ fn fold_fp_nnan_suppresses_nan() {
     let f64_ty = ctx.f64_ty;
     let zero = ValueRef::Constant(ctx.const_float(f64_ty, 0f64.to_bits()));
     let kind = InstrKind::FDiv {
-        flags: FastMathFlags { nnan: true, ..Default::default() },
+        flags: FastMathFlags {
+            nnan: true,
+            ..Default::default()
+        },
         lhs: zero,
         rhs: zero,
     };
@@ -440,7 +497,11 @@ fn nsz_fadd_zero_lhs_elim() {
         &mut module,
         "r",
         f64_ty,
-        InstrKind::FAdd { flags: flags_nsz(), lhs: zero, rhs: x },
+        InstrKind::FAdd {
+            flags: flags_nsz(),
+            lhs: zero,
+            rhs: x,
+        },
     );
     set_ret(&ctx, &mut module, r);
 

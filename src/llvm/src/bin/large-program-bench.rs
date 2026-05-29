@@ -95,7 +95,13 @@ fn load_baselines(path: &Path) -> std::collections::HashMap<String, BaselineEntr
             if let (Some(name), Some(tb), Some(cm)) =
                 (current_name.take(), text_bytes.take(), compile_ms.take())
             {
-                map.insert(name, BaselineEntry { text_bytes: tb, compile_ms: cm });
+                map.insert(
+                    name,
+                    BaselineEntry {
+                        text_bytes: tb,
+                        compile_ms: cm,
+                    },
+                );
             }
         }
     }
@@ -110,10 +116,7 @@ fn extract_u64_field(line: &str, field: &str) -> Option<u64> {
     rest.parse::<u64>().ok()
 }
 
-fn save_baselines(
-    path: &Path,
-    entries: &[(String, BenchResult)],
-) -> Result<(), String> {
+fn save_baselines(path: &Path, entries: &[(String, BenchResult)]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create dir {}: {e}", parent.display()))?;
     }
@@ -135,14 +138,14 @@ fn save_baselines(
 
 #[derive(Debug, Clone)]
 struct BenchResult {
-    fixture:          String,
-    input_bytes:      usize,
-    text_bytes:       usize,
+    fixture: String,
+    input_bytes: usize,
+    text_bytes: usize,
     /// text_bytes / 4 — rough instruction count (each x86 instr encoded ≥4 B on average)
-    instr_estimate:   usize,
-    compile_ms:       u64,
+    instr_estimate: usize,
+    compile_ms: u64,
     /// Compiler-visible RSS estimate: 2× input bytes rule satisfied?
-    rss_ok:           bool,
+    rss_ok: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +166,11 @@ fn bench_fixture(path: &Path, fmt: ObjectFormat) -> Result<BenchResult, String> 
     // We use the whole object size as an upper bound; the real text section
     // is extracted separately via a simple scan for the .text content length.
     let text_bytes = estimate_text_bytes(&obj_bytes, fmt);
-    let instr_estimate = if text_bytes >= 4 { text_bytes / 4 } else { text_bytes };
+    let instr_estimate = if text_bytes >= 4 {
+        text_bytes / 4
+    } else {
+        text_bytes
+    };
 
     // RSS rule: object output must be <= 2× input IR size (memory efficiency check).
     // We approximate peak RSS as the output object size (worst-case allocator).
@@ -175,7 +182,7 @@ fn bench_fixture(path: &Path, fmt: ObjectFormat) -> Result<BenchResult, String> 
         .ok_or_else(|| format!("invalid filename: {}", path.display()))?;
 
     Ok(BenchResult {
-        fixture:        stem.to_string(),
+        fixture: stem.to_string(),
         input_bytes,
         text_bytes,
         instr_estimate,
@@ -197,29 +204,41 @@ fn estimate_text_bytes(obj: &[u8], fmt: ObjectFormat) -> usize {
 
 /// Read ELF-64 section header table and find .text section size.
 fn elf_text_size(obj: &[u8]) -> Option<usize> {
-    if obj.len() < 64 { return None; }
-    if obj[0..4] != [0x7f, b'E', b'L', b'F'] { return None; }
+    if obj.len() < 64 {
+        return None;
+    }
+    if obj[0..4] != [0x7f, b'E', b'L', b'F'] {
+        return None;
+    }
     // ELF64 header offsets (all little-endian)
-    let e_shoff     = u64::from_le_bytes(obj.get(40..48)?.try_into().ok()?) as usize;
+    let e_shoff = u64::from_le_bytes(obj.get(40..48)?.try_into().ok()?) as usize;
     let e_shentsize = u16::from_le_bytes(obj.get(58..60)?.try_into().ok()?) as usize;
-    let e_shnum     = u16::from_le_bytes(obj.get(60..62)?.try_into().ok()?) as usize;
-    let e_shstrndx  = u16::from_le_bytes(obj.get(62..64)?.try_into().ok()?) as usize;
+    let e_shnum = u16::from_le_bytes(obj.get(60..62)?.try_into().ok()?) as usize;
+    let e_shstrndx = u16::from_le_bytes(obj.get(62..64)?.try_into().ok()?) as usize;
 
-    if e_shoff == 0 || e_shentsize < 64 || e_shnum == 0 { return None; }
+    if e_shoff == 0 || e_shentsize < 64 || e_shnum == 0 {
+        return None;
+    }
 
     // Section name string table
     let shstrtab_start = e_shoff + e_shstrndx * e_shentsize;
-    if shstrtab_start + e_shentsize > obj.len() { return None; }
-    let shstr_off  = u64::from_le_bytes(
-        obj.get(shstrtab_start + 24..shstrtab_start + 32)?.try_into().ok()?,
+    if shstrtab_start + e_shentsize > obj.len() {
+        return None;
+    }
+    let shstr_off = u64::from_le_bytes(
+        obj.get(shstrtab_start + 24..shstrtab_start + 32)?
+            .try_into()
+            .ok()?,
     ) as usize;
 
     // Walk section headers looking for ".text"
     for i in 0..e_shnum {
         let sh = e_shoff + i * e_shentsize;
-        if sh + e_shentsize > obj.len() { break; }
-        let sh_name  = u32::from_le_bytes(obj.get(sh..sh + 4)?.try_into().ok()?) as usize;
-        let sh_size  = u64::from_le_bytes(obj.get(sh + 32..sh + 40)?.try_into().ok()?) as usize;
+        if sh + e_shentsize > obj.len() {
+            break;
+        }
+        let sh_name = u32::from_le_bytes(obj.get(sh..sh + 4)?.try_into().ok()?) as usize;
+        let sh_size = u64::from_le_bytes(obj.get(sh + 32..sh + 40)?.try_into().ok()?) as usize;
         let name_off = shstr_off + sh_name;
         if obj.get(name_off..)?.starts_with(b".text\0") {
             return Some(sh_size);
@@ -230,38 +249,43 @@ fn elf_text_size(obj: &[u8]) -> Option<usize> {
 
 /// Read Mach-O 64-bit section table and find __text section size.
 fn macho_text_size(obj: &[u8]) -> Option<usize> {
-    if obj.len() < 32 { return None; }
+    if obj.len() < 32 {
+        return None;
+    }
     // magic: 0xFEEDFACF (LE) = CF FA ED FE
-    if obj[0..4] != [0xCF, 0xFA, 0xED, 0xFE] { return None; }
-    let ncmds    = u32::from_le_bytes(obj.get(16..20)?.try_into().ok()?) as usize;
+    if obj[0..4] != [0xCF, 0xFA, 0xED, 0xFE] {
+        return None;
+    }
+    let ncmds = u32::from_le_bytes(obj.get(16..20)?.try_into().ok()?) as usize;
     let mut off = 32usize; // mach_header_64 is 32 bytes
     for _ in 0..ncmds {
-        if off + 8 > obj.len() { break; }
-        let cmd     = u32::from_le_bytes(obj.get(off..off + 4)?.try_into().ok()?);
+        if off + 8 > obj.len() {
+            break;
+        }
+        let cmd = u32::from_le_bytes(obj.get(off..off + 4)?.try_into().ok()?);
         let cmdsize = u32::from_le_bytes(obj.get(off + 4..off + 8)?.try_into().ok()?) as usize;
         if cmd == 0x19 {
             // LC_SEGMENT_64: segname at +8 (16 bytes), nsects at +64
-            let nsects = u32::from_le_bytes(
-                obj.get(off + 64..off + 68)?.try_into().ok()?,
-            ) as usize;
+            let nsects = u32::from_le_bytes(obj.get(off + 64..off + 68)?.try_into().ok()?) as usize;
             let sec_base = off + 72; // first section_64
             for s in 0..nsects {
                 let sec = sec_base + s * 80; // sizeof(section_64) = 80
-                if sec + 80 > obj.len() { break; }
+                if sec + 80 > obj.len() {
+                    break;
+                }
                 // sectname at sec+0 (16 bytes), segname at sec+16 (16 bytes)
                 let sectname = &obj[sec..sec + 16];
-                let segname  = &obj[sec + 16..sec + 32];
-                if segname.starts_with(b"__TEXT\0")
-                    && sectname.starts_with(b"__text\0")
-                {
-                    let size = u64::from_le_bytes(
-                        obj.get(sec + 40..sec + 48)?.try_into().ok()?,
-                    ) as usize;
+                let segname = &obj[sec + 16..sec + 32];
+                if segname.starts_with(b"__TEXT\0") && sectname.starts_with(b"__text\0") {
+                    let size =
+                        u64::from_le_bytes(obj.get(sec + 40..sec + 48)?.try_into().ok()?) as usize;
                     return Some(size);
                 }
             }
         }
-        if cmdsize == 0 { break; }
+        if cmdsize == 0 {
+            break;
+        }
         off += cmdsize;
     }
     None
@@ -292,7 +316,10 @@ fn main() -> ExitCode {
             .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("ll"))
             .collect(),
         Err(e) => {
-            eprintln!("error: cannot read fixture dir {}: {e}", fixture_dir.display());
+            eprintln!(
+                "error: cannot read fixture dir {}: {e}",
+                fixture_dir.display()
+            );
             return ExitCode::FAILURE;
         }
     };
@@ -356,11 +383,15 @@ fn main() -> ExitCode {
     // --- compare to baselines ---
     let mut regression = false;
     if !update_baselines && !baselines.is_empty() {
-        println!("Baseline comparison (threshold: ±{:.0}%):", threshold * 100.0);
+        println!(
+            "Baseline comparison (threshold: ±{:.0}%):",
+            threshold * 100.0
+        );
         println!("{}", "-".repeat(80));
         for r in &results {
             if let Some(bl) = baselines.get(&r.fixture) {
-                let delta = (r.text_bytes as f64 - bl.text_bytes as f64) / bl.text_bytes.max(1) as f64;
+                let delta =
+                    (r.text_bytes as f64 - bl.text_bytes as f64) / bl.text_bytes.max(1) as f64;
                 let flag = if delta > threshold {
                     regression = true;
                     "  !! REGRESSION"
@@ -371,10 +402,16 @@ fn main() -> ExitCode {
                 };
                 println!(
                     "  {:<22}  text_bytes: {:>6} vs baseline {:>6}  ({:+.1}%){flag}",
-                    r.fixture, r.text_bytes, bl.text_bytes, delta * 100.0
+                    r.fixture,
+                    r.text_bytes,
+                    bl.text_bytes,
+                    delta * 100.0
                 );
             } else {
-                println!("  {:<22}  (no baseline — run with --update-baselines)", r.fixture);
+                println!(
+                    "  {:<22}  (no baseline — run with --update-baselines)",
+                    r.fixture
+                );
             }
         }
         println!();
@@ -409,7 +446,10 @@ fn main() -> ExitCode {
     }
 
     if regression {
-        eprintln!("FAIL: instruction count regression detected (>{:.0}% above baseline)", threshold * 100.0);
+        eprintln!(
+            "FAIL: instruction count regression detected (>{:.0}% above baseline)",
+            threshold * 100.0
+        );
         return ExitCode::FAILURE;
     }
 

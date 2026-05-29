@@ -20,9 +20,9 @@
 //! let (_ctx2, _module2) = read_bitcode(&bytes).expect("round-trip failed");
 //! ```
 
-pub mod error;
 /// Low-level LLVM bitstream decoder (VBR, blocks, abbreviations).
 pub mod bitstream;
+pub mod error;
 /// Standard LLVM `.bc` file reader.
 pub mod llvm_reader;
 /// Public API for `reader`.
@@ -351,9 +351,18 @@ mod tests {
         let mut ctx = Context::new();
         let mut module = Module::new("test");
         // Build [i32 1, i32 2, i32 3].
-        let e0 = ctx.push_const(ConstantData::Int { ty: ctx.i32_ty, val: 1 });
-        let e1 = ctx.push_const(ConstantData::Int { ty: ctx.i32_ty, val: 2 });
-        let e2 = ctx.push_const(ConstantData::Int { ty: ctx.i32_ty, val: 3 });
+        let e0 = ctx.push_const(ConstantData::Int {
+            ty: ctx.i32_ty,
+            val: 1,
+        });
+        let e1 = ctx.push_const(ConstantData::Int {
+            ty: ctx.i32_ty,
+            val: 2,
+        });
+        let e2 = ctx.push_const(ConstantData::Int {
+            ty: ctx.i32_ty,
+            val: 3,
+        });
         let arr_ty = ctx.mk_array(ctx.i32_ty, 3);
         let init = ctx.push_const(ConstantData::Array {
             ty: arr_ty,
@@ -409,14 +418,20 @@ mod tests {
 
     #[test]
     fn test_globals_round_trip_with_expr_init() {
-        use llvm_ir::{ConstantData, ConstExprOp, GlobalId, GlobalVariable};
+        use llvm_ir::{ConstExprOp, ConstantData, GlobalId, GlobalVariable};
         let mut ctx = Context::new();
         let mut module = Module::new("test");
         // Declare an i8 array global first (GlobalId(0)).
         let i8_ty = ctx.mk_int(8);
         let arr_ty = ctx.mk_array(i8_ty, 4);
-        let e0 = ctx.push_const(ConstantData::Int { ty: i8_ty, val: b'h' as u64 });
-        let e1 = ctx.push_const(ConstantData::Int { ty: i8_ty, val: b'i' as u64 });
+        let e0 = ctx.push_const(ConstantData::Int {
+            ty: i8_ty,
+            val: b'h' as u64,
+        });
+        let e1 = ctx.push_const(ConstantData::Int {
+            ty: i8_ty,
+            val: b'i' as u64,
+        });
         let e2 = ctx.push_const(ConstantData::Int { ty: i8_ty, val: 0 });
         let e3 = ctx.push_const(ConstantData::Int { ty: i8_ty, val: 0 });
         let arr_init = ctx.push_const(ConstantData::Array {
@@ -436,10 +451,16 @@ mod tests {
             id: gid0,
             name: "str_data".into(),
         });
-        let idx0 = ctx.push_const(ConstantData::Int { ty: ctx.i64_ty, val: 0 });
+        let idx0 = ctx.push_const(ConstantData::Int {
+            ty: ctx.i64_ty,
+            val: 0,
+        });
         let gep_expr = ctx.push_const(ConstantData::Expr {
             ty: ctx.ptr_ty,
-            op: ConstExprOp::GetElementPtr { inbounds: true, base_ty: arr_ty },
+            op: ConstExprOp::GetElementPtr {
+                inbounds: true,
+                base_ty: arr_ty,
+            },
             operands: vec![base_ptr, idx0, idx0],
         });
         // Second global: a pointer initialized with the GEP expression.

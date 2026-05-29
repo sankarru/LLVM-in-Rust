@@ -24,11 +24,11 @@
 //! For types with `NeedsDrop = false` (integers, floats, raw pointers, etc.)
 //! no glue is emitted at all.
 
-use llvm_ir::{
-    BasicBlock, BlockId, Builder, Context, FunctionId, GlobalId, InstrKind, Instruction,
-    Module, TailCallKind, TypeId, ValueRef,
-};
 use llvm_ir::value::Linkage;
+use llvm_ir::{
+    BasicBlock, BlockId, Builder, Context, FunctionId, GlobalId, InstrKind, Instruction, Module,
+    TailCallKind, TypeId, ValueRef,
+};
 
 // ---------------------------------------------------------------------------
 // DropInfo
@@ -119,8 +119,8 @@ pub fn emit_drop_glue(
 
     // 1. Call the custom Drop::drop impl, if present.
     if info.has_custom_drop {
-        let custom_fid = custom_drop_fn
-            .expect("has_custom_drop is true but no custom_drop_fn was provided");
+        let custom_fid =
+            custom_drop_fn.expect("has_custom_drop is true but no custom_drop_fn was provided");
         let fn_ty = builder.ctx.mk_fn_type(void_ty, vec![ptr_ty], false);
         // Functions are referenced via ValueRef::Global(GlobalId(fn_id.0)).
         let callee = ValueRef::Global(GlobalId(custom_fid.0));
@@ -132,12 +132,7 @@ pub fn emit_drop_glue(
         // GEP: ptr to field at index `field_idx` within the struct.
         let zero = builder.const_i32(0);
         let idx = builder.const_i32(field_idx as i32);
-        let field_ptr = builder.build_gep_inbounds(
-            "field_ptr",
-            self_ty,
-            self_arg,
-            vec![zero, idx],
-        );
+        let field_ptr = builder.build_gep_inbounds("field_ptr", self_ty, self_arg, vec![zero, idx]);
 
         let fn_ty = builder.ctx.mk_fn_type(void_ty, vec![ptr_ty], false);
         let callee = ValueRef::Global(GlobalId(glue_fid.0));
@@ -205,11 +200,7 @@ pub fn emit_cleanup_block(
     func.block_mut(cleanup_bid).append_instr(call_id);
 
     // Terminator: unconditional branch to next_block.
-    let br_instr = Instruction::new(
-        None,
-        void_ty,
-        InstrKind::Br { dest: next_block },
-    );
+    let br_instr = Instruction::new(None, void_ty, InstrKind::Br { dest: next_block });
     let br_id = func.alloc_instr(br_instr);
     func.block_mut(cleanup_bid).set_terminator(br_id);
 
@@ -223,8 +214,8 @@ pub fn emit_cleanup_block(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use llvm_ir::{Context, Module};
     use llvm_ir::value::Linkage;
+    use llvm_ir::{Context, Module};
 
     // ------------------------------------------------------------------
     // Helpers
@@ -283,14 +274,7 @@ mod tests {
         let mut module = Module::new("test");
         let self_ty = ctx.i32_ty; // placeholder — doesn't matter for trivial type
 
-        let result = emit_drop_glue(
-            &mut ctx,
-            &mut module,
-            &trivial_info(),
-            self_ty,
-            None,
-            &[],
-        );
+        let result = emit_drop_glue(&mut ctx, &mut module, &trivial_info(), self_ty, None, &[]);
 
         assert!(result.is_none(), "trivial type must not emit drop glue");
     }
@@ -307,7 +291,11 @@ mod tests {
         let custom_fn = llvm_ir::Function::new(
             "_ZN6MyType4dropE",
             fn_ty,
-            vec![llvm_ir::value::Argument { name: "self".to_string(), ty: ptr_ty, index: 0 }],
+            vec![llvm_ir::value::Argument {
+                name: "self".to_string(),
+                ty: ptr_ty,
+                index: 0,
+            }],
             Linkage::External,
         );
         let custom_fid = module.add_function(custom_fn);
@@ -321,16 +309,12 @@ mod tests {
             droppable_fields: vec![],
         };
 
-        let result = emit_drop_glue(
-            &mut ctx,
-            &mut module,
-            &info,
-            self_ty,
-            Some(custom_fid),
-            &[],
-        );
+        let result = emit_drop_glue(&mut ctx, &mut module, &info, self_ty, Some(custom_fid), &[]);
 
-        assert!(result.is_some(), "must emit a function for a type with custom Drop");
+        assert!(
+            result.is_some(),
+            "must emit a function for a type with custom Drop"
+        );
         let glue_fid = result.unwrap();
 
         // Check the name.
@@ -353,7 +337,11 @@ mod tests {
         let custom_fn = llvm_ir::Function::new(
             "_ZN6MyType4dropE",
             fn_ty,
-            vec![llvm_ir::value::Argument { name: "self".to_string(), ty: ptr_ty, index: 0 }],
+            vec![llvm_ir::value::Argument {
+                name: "self".to_string(),
+                ty: ptr_ty,
+                index: 0,
+            }],
             Linkage::External,
         );
         let custom_fid = module.add_function(custom_fn);
@@ -365,25 +353,22 @@ mod tests {
             droppable_fields: vec![],
         };
 
-        let glue_fid = emit_drop_glue(
-            &mut ctx,
-            &mut module,
-            &info,
-            self_ty,
-            Some(custom_fid),
-            &[],
-        )
-        .expect("must emit glue");
+        let glue_fid = emit_drop_glue(&mut ctx, &mut module, &info, self_ty, Some(custom_fid), &[])
+            .expect("must emit glue");
 
         // Inspect instructions: entry block must contain a Call.
         let func = module.function(glue_fid);
         let entry_bid = llvm_ir::context::BlockId(0);
         let entry_bb = func.block(entry_bid);
 
-        let has_call = entry_bb.body.iter().any(|&iid| {
-            matches!(func.instr(iid).kind, InstrKind::Call { .. })
-        });
-        assert!(has_call, "glue function entry block must contain a call instruction");
+        let has_call = entry_bb
+            .body
+            .iter()
+            .any(|&iid| matches!(func.instr(iid).kind, InstrKind::Call { .. }));
+        assert!(
+            has_call,
+            "glue function entry block must contain a call instruction"
+        );
     }
 
     #[test]
@@ -398,7 +383,11 @@ mod tests {
         let field_fn = llvm_ir::Function::new(
             "__drop_glue_FieldType",
             fn_ty,
-            vec![llvm_ir::value::Argument { name: "self".to_string(), ty: ptr_ty, index: 0 }],
+            vec![llvm_ir::value::Argument {
+                name: "self".to_string(),
+                ty: ptr_ty,
+                index: 0,
+            }],
             Linkage::External,
         );
         let field_fid = module.add_function(field_fn);
@@ -427,10 +416,14 @@ mod tests {
         let entry_bid = llvm_ir::context::BlockId(0);
         let entry_bb = func.block(entry_bid);
 
-        let has_gep = entry_bb.body.iter().any(|&iid| {
-            matches!(func.instr(iid).kind, InstrKind::GetElementPtr { .. })
-        });
-        assert!(has_gep, "glue for droppable fields must emit a GEP instruction");
+        let has_gep = entry_bb
+            .body
+            .iter()
+            .any(|&iid| matches!(func.instr(iid).kind, InstrKind::GetElementPtr { .. }));
+        assert!(
+            has_gep,
+            "glue for droppable fields must emit a GEP instruction"
+        );
     }
 
     #[test]
@@ -467,7 +460,11 @@ mod tests {
         let drop_fn = llvm_ir::Function::new(
             "__drop_glue_SomeType",
             drop_fn_ty,
-            vec![llvm_ir::value::Argument { name: "self".to_string(), ty: ptr_ty, index: 0 }],
+            vec![llvm_ir::value::Argument {
+                name: "self".to_string(),
+                ty: ptr_ty,
+                index: 0,
+            }],
             Linkage::External,
         );
         let drop_fid = module.add_function(drop_fn);
@@ -479,7 +476,9 @@ mod tests {
         // Verify the cleanup block ends with a Br to `next`.
         let func = module.function(fid);
         let cleanup_bb = func.block(cleanup_bid);
-        let term_id = cleanup_bb.terminator.expect("cleanup block must have a terminator");
+        let term_id = cleanup_bb
+            .terminator
+            .expect("cleanup block must have a terminator");
         let term = func.instr(term_id);
 
         assert!(

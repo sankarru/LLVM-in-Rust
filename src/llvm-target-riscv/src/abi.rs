@@ -51,7 +51,9 @@ pub const FP_RET: PReg = FP_RET_REG;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::regs::{F10, F11, F12, F13, F14, F15, F16, F17, X10, X11, X12, X13, X14, X15, X16, X17};
+    use crate::regs::{
+        F10, F11, F12, F13, F14, F15, F16, F17, X10, X11, X12, X13, X14, X15, X16, X17,
+    };
 
     #[test]
     fn first_eight_go_to_a0_a7() {

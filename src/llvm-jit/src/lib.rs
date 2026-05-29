@@ -12,8 +12,10 @@
 use llvm_codegen::{
     emit_object,
     isel::IselBackend,
-    regalloc::{allocate_registers, apply_allocation, compute_live_intervals, insert_spill_reloads,
-               RegAllocStrategy},
+    regalloc::{
+        allocate_registers, apply_allocation, compute_live_intervals, insert_spill_reloads,
+        RegAllocStrategy,
+    },
     ObjectFormat,
 };
 use llvm_ir::{Context, Module};
@@ -133,7 +135,13 @@ impl ExecPage {
     /// Switch the page to `PROT_READ | PROT_EXEC` (removes write permission).
     fn make_exec(&self) -> Result<(), JitError> {
         // SAFETY: self.base and self.size describe the exact mapping we created.
-        let rc = unsafe { libc::mprotect(self.base as *mut libc::c_void, self.size, libc::PROT_READ | libc::PROT_EXEC) };
+        let rc = unsafe {
+            libc::mprotect(
+                self.base as *mut libc::c_void,
+                self.size,
+                libc::PROT_READ | libc::PROT_EXEC,
+            )
+        };
         if rc != 0 {
             Err(JitError::AllocationFailed)
         } else {
@@ -244,9 +252,20 @@ impl ExecutionEngine for SimpleJit {
             let mut mf = backend.lower_function(ctx, module, func);
 
             let intervals = compute_live_intervals(&mf);
-            let mut result =
-                allocate_registers(&intervals, &mf.allocatable_pregs, &mf.allocatable_fp_pregs, RegAllocStrategy::LinearScan);
-            insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+            let mut result = allocate_registers(
+                &intervals,
+                &mf.allocatable_pregs,
+                &mf.allocatable_fp_pregs,
+                RegAllocStrategy::LinearScan,
+            );
+            insert_spill_reloads(
+                &mut mf,
+                &mut result,
+                MOV_LOAD_MR,
+                MOV_STORE_RM,
+                MOV_LOAD_MR,
+                MOV_STORE_RM,
+            );
             apply_allocation(&mut mf, &result);
 
             let mut emitter = X86Emitter::new(fmt);
@@ -313,7 +332,8 @@ mod tests {
     fn jit_from_src(src: &str) -> SimpleJit {
         let (mut ctx, mut module) = parse(src).expect("parse failed");
         let mut jit = SimpleJit::new();
-        jit.add_module(&mut ctx, &mut module).expect("add_module failed");
+        jit.add_module(&mut ctx, &mut module)
+            .expect("add_module failed");
         jit
     }
 
@@ -329,7 +349,8 @@ entry:
 "#;
         let (mut ctx, mut module) = parse(src).expect("parse failed");
         let mut jit = SimpleJit::new();
-        jit.add_module(&mut ctx, &mut module).expect("add_module failed");
+        jit.add_module(&mut ctx, &mut module)
+            .expect("add_module failed");
         // At least one symbol must have been registered.
         assert!(jit.get_function_ptr("answer").is_some());
     }
@@ -457,7 +478,8 @@ declare i32 @printf(i8*, ...)
 "#;
         let (mut ctx, mut module) = parse(src).expect("parse failed");
         let mut jit = SimpleJit::new();
-        jit.add_module(&mut ctx, &mut module).expect("add_module should succeed");
+        jit.add_module(&mut ctx, &mut module)
+            .expect("add_module should succeed");
         assert!(jit.get_function_ptr("printf").is_none());
     }
 }

@@ -127,12 +127,7 @@ impl FunctionPass for SlpVectorizer {
 }
 
 impl SlpVectorizer {
-    fn process_block(
-        &mut self,
-        ctx: &mut Context,
-        func: &mut Function,
-        bid: BlockId,
-    ) -> bool {
+    fn process_block(&mut self, ctx: &mut Context, func: &mut Function, bid: BlockId) -> bool {
         // Collect instruction ids in this block (body only, not terminator).
         let body: Vec<InstrId> = func.blocks[bid.0 as usize].body.clone();
 
@@ -172,16 +167,14 @@ impl SlpVectorizer {
                 };
 
             // Check seed lhs and rhs are loads whose ptrs are GEPs.
-            let (lhs_base_0, lhs_idx_0) =
-                match load_gep_info(ctx, func, seed_lhs) {
-                    Some(x) => x,
-                    None => continue,
-                };
-            let (rhs_base_0, rhs_idx_0) =
-                match load_gep_info(ctx, func, seed_rhs) {
-                    Some(x) => x,
-                    None => continue,
-                };
+            let (lhs_base_0, lhs_idx_0) = match load_gep_info(ctx, func, seed_lhs) {
+                Some(x) => x,
+                None => continue,
+            };
+            let (rhs_base_0, rhs_idx_0) = match load_gep_info(ctx, func, seed_rhs) {
+                Some(x) => x,
+                None => continue,
+            };
 
             // Accumulate a group of `min_width` ops.
             let mut ops = vec![seed];
@@ -197,11 +190,10 @@ impl SlpVectorizer {
                     continue 'outer;
                 }
 
-                let (c_op, c_lhs, c_rhs, c_ty) =
-                    match unpack_fp_instr_typed(func, ctx, candidate) {
-                        Some(x) => x,
-                        None => continue 'outer,
-                    };
+                let (c_op, c_lhs, c_rhs, c_ty) = match unpack_fp_instr_typed(func, ctx, candidate) {
+                    Some(x) => x,
+                    None => continue 'outer,
+                };
 
                 if c_op != seed_op || c_ty != seed_ty {
                     continue 'outer;
@@ -369,8 +361,7 @@ fn apply_group(ctx: &mut Context, func: &mut Function, bid: BlockId, group: &Slp
             .position(|&id| id == group.ops[0])
             .unwrap()
             + 2;
-        let rhs_gep_id =
-            alloc_and_insert(func, bid, insert_pos, None, ptr_ty, rhs_gep_kind);
+        let rhs_gep_id = alloc_and_insert(func, bid, insert_pos, None, ptr_ty, rhs_gep_kind);
 
         let rhs_load_kind = InstrKind::Load {
             ty: vec_ty,
@@ -456,8 +447,12 @@ fn apply_group(ctx: &mut Context, func: &mut Function, bid: BlockId, group: &Slp
 
     // --- Rewrite uses of the old scalar ops throughout the block ---
     // Build a replacement map: old scalar op InstrId → new extract InstrId.
-    let replacements: HashMap<InstrId, InstrId> =
-        group.ops.iter().copied().zip(extract_ids.iter().copied()).collect();
+    let replacements: HashMap<InstrId, InstrId> = group
+        .ops
+        .iter()
+        .copied()
+        .zip(extract_ids.iter().copied())
+        .collect();
 
     // Rewrite all instructions in the block.
     rewrite_uses_in_block(func, bid, &replacements);
@@ -585,13 +580,23 @@ fn rewrite_kind(kind: InstrKind, rep: &HashMap<InstrId, InstrId>) -> InstrKind {
             lhs: rw(lhs, rep),
             rhs: rw(rhs, rep),
         },
-        InstrKind::Store { val, ptr, align, volatile } => InstrKind::Store {
+        InstrKind::Store {
+            val,
+            ptr,
+            align,
+            volatile,
+        } => InstrKind::Store {
             val: rw(val, rep),
             ptr: rw(ptr, rep),
             align,
             volatile,
         },
-        InstrKind::Load { ty, ptr, align, volatile } => InstrKind::Load {
+        InstrKind::Load {
+            ty,
+            ptr,
+            align,
+            volatile,
+        } => InstrKind::Load {
             ty,
             ptr: rw(ptr, rep),
             align,
@@ -616,7 +621,12 @@ fn rewrite_kind(kind: InstrKind, rep: &HashMap<InstrId, InstrId>) -> InstrKind {
             lhs: rw(lhs, rep),
             rhs: rw(rhs, rep),
         },
-        InstrKind::FCmp { flags, pred, lhs, rhs } => InstrKind::FCmp {
+        InstrKind::FCmp {
+            flags,
+            pred,
+            lhs,
+            rhs,
+        } => InstrKind::FCmp {
             flags,
             pred,
             lhs: rw(lhs, rep),
@@ -760,8 +770,8 @@ fn instr_id_of(vref: ValueRef) -> Option<InstrId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use llvm_ir::{Builder, Context, Linkage, Module};
     use llvm_ir::types::TypeData;
+    use llvm_ir::{Builder, Context, Linkage, Module};
 
     /// Build a function that loads 4 f64 values at consecutive GEP offsets
     /// and fadds each pair. Verify that SLP produces a vector load + vector
@@ -826,7 +836,11 @@ mod tests {
 
         // Build 4 fadds and store results so DCE cannot eliminate the computation.
         for i in 0..4i64 {
-            let r = b.build_fadd(format!("r{}", i), a_loads[i as usize], b_loads_vec[i as usize]);
+            let r = b.build_fadd(
+                format!("r{}", i),
+                a_loads[i as usize],
+                b_loads_vec[i as usize],
+            );
             let idx = ValueRef::Constant(b.ctx.const_int(i64_ty, i as u64));
             let gep_out = b.build_gep_inbounds(format!("out{}", i), f64_ty, out_ptr, vec![idx]);
             b.build_store(r, gep_out);
@@ -991,7 +1005,10 @@ mod tests {
         let changed = pass.run_on_function(&mut ctx, &mut module.functions[0]);
         // Total FP ops = 4, but they are split between f32 and f64, so no valid
         // group of 4 with uniform type exists.
-        assert!(!changed, "mixed-type pairs below min_width must not vectorize");
+        assert!(
+            !changed,
+            "mixed-type pairs below min_width must not vectorize"
+        );
     }
 
     /// O2 pipeline with sequential f64 array adds must produce vector IR.
@@ -1008,9 +1025,10 @@ mod tests {
         pm.run_until_fixed_point(&mut ctx, &mut module, 8);
 
         let func = &module.functions[0];
-        let has_vector_ty = func.instructions.iter().any(|instr| {
-            matches!(ctx.get_type(instr.ty), TypeData::Vector { .. })
-        });
+        let has_vector_ty = func
+            .instructions
+            .iter()
+            .any(|instr| matches!(ctx.get_type(instr.ty), TypeData::Vector { .. }));
         assert!(
             has_vector_ty,
             "after O2+SLP, function should contain at least one instruction with vector type"

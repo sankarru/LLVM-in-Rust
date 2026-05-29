@@ -401,9 +401,7 @@ fn instrument_memory_accesses(
                 }
                 InstrKind::Store { val, .. } => {
                     let val_ty = value_type(func, *val);
-                    let bytes = val_ty
-                        .and_then(|ty| type_size_bytes(ctx, ty))
-                        .unwrap_or(4);
+                    let bytes = val_ty.and_then(|ty| type_size_bytes(ctx, ty)).unwrap_or(4);
                     accesses.push(MemAccess {
                         block_idx: bi,
                         body_pos: pos,
@@ -873,6 +871,9 @@ mod tests {
             .iter()
             .filter(|f| f.name == "__asan_module_ctor")
             .count();
-        assert_eq!(ctor_count_1, ctor_count_2, "module ctor must not be duplicated");
+        assert_eq!(
+            ctor_count_1, ctor_count_2,
+            "module ctor must not be duplicated"
+        );
     }
 }

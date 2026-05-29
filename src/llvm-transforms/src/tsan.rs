@@ -314,9 +314,7 @@ fn instrument_memory_accesses(
                 }
                 InstrKind::Store { val, ptr, .. } => {
                     let val_ty = value_type(func, *val);
-                    let bytes = val_ty
-                        .and_then(|ty| type_size_bytes(ctx, ty))
-                        .unwrap_or(4);
+                    let bytes = val_ty.and_then(|ty| type_size_bytes(ctx, ty)).unwrap_or(4);
                     let skip = is_alloca_derived(func, *ptr, alloca_vrefs);
                     accesses.push(MemAccess {
                         block_idx: bi,
@@ -590,7 +588,10 @@ mod tests {
         pass.run_on_module(&mut ctx, &mut module);
         // f is function index 0
         let count = count_calls_to(&module, 0, "__tsan_read8");
-        assert!(count >= 1, "__tsan_read8 should be called at least once, got {count}");
+        assert!(
+            count >= 1,
+            "__tsan_read8 should be called at least once, got {count}"
+        );
     }
 
     #[test]
@@ -599,7 +600,10 @@ mod tests {
         let mut pass = TsanPass;
         pass.run_on_module(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__tsan_write8");
-        assert!(count >= 1, "__tsan_write8 should be called at least once, got {count}");
+        assert!(
+            count >= 1,
+            "__tsan_write8 should be called at least once, got {count}"
+        );
     }
 
     #[test]
@@ -633,7 +637,10 @@ mod tests {
         let entry_count = count_calls_to(&module, 0, "__tsan_func_entry");
         let exit_count = count_calls_to(&module, 0, "__tsan_func_exit");
         assert!(entry_count >= 1, "__tsan_func_entry must be inserted");
-        assert!(exit_count >= 1, "__tsan_func_exit must be inserted before ret");
+        assert!(
+            exit_count >= 1,
+            "__tsan_func_exit must be inserted before ret"
+        );
     }
 
     #[test]

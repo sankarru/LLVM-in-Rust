@@ -46,25 +46,26 @@ pub enum ControlNode {
 pub fn build_control_tree(func: &Function) -> ControlNode {
     if func.blocks.is_empty() {
         // Degenerate: return a sentinel node that callers can ignore.
-        return ControlNode::Simple { id: BlockId(0), next: None };
+        return ControlNode::Simple {
+            id: BlockId(0),
+            next: None,
+        };
     }
 
     // Step 1: compute RPO order (entry block first).
     let rpo = compute_rpo(func);
 
     // Step 2: build RPO-index map.
-    let rpo_index: HashMap<BlockId, usize> = rpo
-        .iter()
-        .enumerate()
-        .map(|(i, &b)| (b, i))
-        .collect();
+    let rpo_index: HashMap<BlockId, usize> = rpo.iter().enumerate().map(|(i, &b)| (b, i)).collect();
 
     // Step 3: detect which blocks are loop headers (back-edge targets).
     let loop_headers: HashSet<BlockId> = detect_loop_headers(func, &rpo_index);
 
     // Step 4: recursively build the tree over the RPO block sequence.
-    build_tree(func, &rpo, 0, &rpo_index, &loop_headers)
-        .unwrap_or(ControlNode::Simple { id: BlockId(0), next: None })
+    build_tree(func, &rpo, 0, &rpo_index, &loop_headers).unwrap_or(ControlNode::Simple {
+        id: BlockId(0),
+        next: None,
+    })
 }
 
 /// Returns `true` if a switch with the given case values should use a `br_table`
@@ -131,14 +132,13 @@ fn block_successors(func: &Function, bid: BlockId) -> Vec<BlockId> {
 
 /// Detect loop headers: a block H is a loop header iff there exists an edge
 /// A→H where `rpo_index[A] >= rpo_index[H]` (i.e. H appears earlier in RPO).
-fn detect_loop_headers(
-    func: &Function,
-    rpo_index: &HashMap<BlockId, usize>,
-) -> HashSet<BlockId> {
+fn detect_loop_headers(func: &Function, rpo_index: &HashMap<BlockId, usize>) -> HashSet<BlockId> {
     let mut headers = HashSet::new();
     for (i, bb) in func.blocks.iter().enumerate() {
         let src = BlockId(i as u32);
-        let Some(&src_rpo) = rpo_index.get(&src) else { continue };
+        let Some(&src_rpo) = rpo_index.get(&src) else {
+            continue;
+        };
         if let Some(tid) = bb.terminator {
             for dst in func.instr(tid).successors() {
                 if let Some(&dst_rpo) = rpo_index.get(&dst) {
@@ -249,7 +249,10 @@ fn build_tree(
 
         return Some(ControlNode::Loop {
             header: bid,
-            body: Box::new(body_node.unwrap_or(ControlNode::Simple { id: bid, next: None })),
+            body: Box::new(body_node.unwrap_or(ControlNode::Simple {
+                id: bid,
+                next: None,
+            })),
             next: next.map(Box::new),
         });
     }
@@ -298,13 +301,7 @@ fn build_tree(
             } else if then_start > else_start {
                 // else comes before then; then_start is join
                 // then branch is empty from else's perspective — emit a simple node
-                build_tree_over_slice(
-                    func,
-                    &rpo[then_start..],
-                    0,
-                    rpo_index,
-                    loop_headers,
-                )
+                build_tree_over_slice(func, &rpo[then_start..], 0, rpo_index, loop_headers)
             } else {
                 // Both branch to the same target — no then/else distinction.
                 None
@@ -319,13 +316,7 @@ fn build_tree(
                     loop_headers,
                 )
             } else if else_start > then_start {
-                build_tree_over_slice(
-                    func,
-                    &rpo[else_start..],
-                    0,
-                    rpo_index,
-                    loop_headers,
-                )
+                build_tree_over_slice(func, &rpo[else_start..], 0, rpo_index, loop_headers)
             } else {
                 None
             };
@@ -334,9 +325,10 @@ fn build_tree(
 
             return Some(ControlNode::Branch {
                 cond_block: bid,
-                then_node: Box::new(
-                    then_node.unwrap_or(ControlNode::Simple { id: then_dest, next: None }),
-                ),
+                then_node: Box::new(then_node.unwrap_or(ControlNode::Simple {
+                    id: then_dest,
+                    next: None,
+                })),
                 else_node: else_node.map(Box::new),
                 next: next.map(Box::new),
             });
@@ -378,14 +370,16 @@ fn build_tree_over_slice(
         let mut inner_headers = loop_headers.clone();
         inner_headers.remove(&bid);
 
-        let body_node =
-            build_tree_over_slice(func, &body_blocks, 0, rpo_index, &inner_headers);
+        let body_node = build_tree_over_slice(func, &body_blocks, 0, rpo_index, &inner_headers);
 
         let next = build_tree_over_slice(func, slice, after_loop, rpo_index, loop_headers);
 
         return Some(ControlNode::Loop {
             header: bid,
-            body: Box::new(body_node.unwrap_or(ControlNode::Simple { id: bid, next: None })),
+            body: Box::new(body_node.unwrap_or(ControlNode::Simple {
+                id: bid,
+                next: None,
+            })),
             next: next.map(Box::new),
         });
     }
@@ -424,10 +418,10 @@ fn build_tree_over_slice(
 
                 return Some(ControlNode::Branch {
                     cond_block: bid,
-                    then_node: Box::new(
-                        then_node
-                            .unwrap_or(ControlNode::Simple { id: then_dest, next: None }),
-                    ),
+                    then_node: Box::new(then_node.unwrap_or(ControlNode::Simple {
+                        id: then_dest,
+                        next: None,
+                    })),
                     else_node: else_node.map(Box::new),
                     next: next.map(Box::new),
                 });
@@ -472,7 +466,9 @@ mod tests {
             has_term[src] = true;
             let kind = match dsts {
                 [] => InstrKind::Unreachable,
-                [dst] => InstrKind::Br { dest: BlockId(*dst as u32) },
+                [dst] => InstrKind::Br {
+                    dest: BlockId(*dst as u32),
+                },
                 [t, f] => {
                     let cond = ValueRef::Constant(ctx.const_int(ctx.i1_ty, 0));
                     InstrKind::CondBr {
@@ -527,7 +523,12 @@ mod tests {
                     collect_variants_inner(n, out);
                 }
             }
-            ControlNode::Branch { then_node, else_node, next, .. } => {
+            ControlNode::Branch {
+                then_node,
+                else_node,
+                next,
+                ..
+            } => {
                 out.push("Branch");
                 collect_variants_inner(then_node, out);
                 if let Some(e) = else_node {
@@ -544,20 +545,35 @@ mod tests {
 
     fn has_loop_header(node: &ControlNode, header: BlockId) -> bool {
         match node {
-            ControlNode::Loop { header: h, body, next } => {
+            ControlNode::Loop {
+                header: h,
+                body,
+                next,
+            } => {
                 if *h == header {
                     return true;
                 }
                 has_loop_header(body, header)
-                    || next.as_deref().map_or(false, |n| has_loop_header(n, header))
+                    || next
+                        .as_deref()
+                        .map_or(false, |n| has_loop_header(n, header))
             }
-            ControlNode::Simple { next, .. } => {
-                next.as_deref().map_or(false, |n| has_loop_header(n, header))
-            }
-            ControlNode::Branch { then_node, else_node, next, .. } => {
+            ControlNode::Simple { next, .. } => next
+                .as_deref()
+                .map_or(false, |n| has_loop_header(n, header)),
+            ControlNode::Branch {
+                then_node,
+                else_node,
+                next,
+                ..
+            } => {
                 has_loop_header(then_node, header)
-                    || else_node.as_deref().map_or(false, |n| has_loop_header(n, header))
-                    || next.as_deref().map_or(false, |n| has_loop_header(n, header))
+                    || else_node
+                        .as_deref()
+                        .map_or(false, |n| has_loop_header(n, header))
+                    || next
+                        .as_deref()
+                        .map_or(false, |n| has_loop_header(n, header))
             }
         }
     }
@@ -566,20 +582,31 @@ mod tests {
 
     fn has_branch_at(node: &ControlNode, cond_block: BlockId) -> bool {
         match node {
-            ControlNode::Branch { cond_block: cb, then_node, else_node, next } => {
+            ControlNode::Branch {
+                cond_block: cb,
+                then_node,
+                else_node,
+                next,
+            } => {
                 if *cb == cond_block {
                     return true;
                 }
                 has_branch_at(then_node, cond_block)
-                    || else_node.as_deref().map_or(false, |n| has_branch_at(n, cond_block))
-                    || next.as_deref().map_or(false, |n| has_branch_at(n, cond_block))
+                    || else_node
+                        .as_deref()
+                        .map_or(false, |n| has_branch_at(n, cond_block))
+                    || next
+                        .as_deref()
+                        .map_or(false, |n| has_branch_at(n, cond_block))
             }
-            ControlNode::Simple { next, .. } => {
-                next.as_deref().map_or(false, |n| has_branch_at(n, cond_block))
-            }
+            ControlNode::Simple { next, .. } => next
+                .as_deref()
+                .map_or(false, |n| has_branch_at(n, cond_block)),
             ControlNode::Loop { body, next, .. } => {
                 has_branch_at(body, cond_block)
-                    || next.as_deref().map_or(false, |n| has_branch_at(n, cond_block))
+                    || next
+                        .as_deref()
+                        .map_or(false, |n| has_branch_at(n, cond_block))
             }
         }
     }
@@ -641,8 +668,7 @@ mod tests {
 
     #[test]
     fn if_else_detected_as_branch_node() {
-        let (_ctx, func) =
-            build_func(4, &[(0, &[1, 2]), (1, &[3]), (2, &[3]), (3, &[])]);
+        let (_ctx, func) = build_func(4, &[(0, &[1, 2]), (1, &[3]), (2, &[3]), (3, &[])]);
         let tree = build_control_tree(&func);
         assert!(
             has_branch_at(&tree, BlockId(0)),
@@ -657,10 +683,7 @@ mod tests {
 
     #[test]
     fn loop_with_exit_has_correct_structure() {
-        let (_ctx, func) = build_func(
-            4,
-            &[(0, &[1]), (1, &[2]), (2, &[1, 3]), (3, &[])],
-        );
+        let (_ctx, func) = build_func(4, &[(0, &[1]), (1, &[2]), (2, &[1, 3]), (3, &[])]);
         let tree = build_control_tree(&func);
         // Tree must contain a Loop node with header=1.
         assert!(
@@ -672,14 +695,20 @@ mod tests {
         fn has_simple_3(node: &ControlNode) -> bool {
             match node {
                 ControlNode::Simple { id, next } => {
-                    if *id == BlockId(3) { return true; }
+                    if *id == BlockId(3) {
+                        return true;
+                    }
                     next.as_deref().map_or(false, has_simple_3)
                 }
                 ControlNode::Loop { next, body, .. } => {
-                    has_simple_3(body)
-                        || next.as_deref().map_or(false, has_simple_3)
+                    has_simple_3(body) || next.as_deref().map_or(false, has_simple_3)
                 }
-                ControlNode::Branch { then_node, else_node, next, .. } => {
+                ControlNode::Branch {
+                    then_node,
+                    else_node,
+                    next,
+                    ..
+                } => {
                     has_simple_3(then_node)
                         || else_node.as_deref().map_or(false, has_simple_3)
                         || next.as_deref().map_or(false, has_simple_3)
@@ -700,10 +729,7 @@ mod tests {
 
     #[test]
     fn nested_loops_produce_nested_loop_nodes() {
-        let (_ctx, func) = build_func(
-            4,
-            &[(0, &[1]), (1, &[2]), (2, &[3]), (3, &[2, 1])],
-        );
+        let (_ctx, func) = build_func(4, &[(0, &[1]), (1, &[2]), (2, &[3]), (3, &[2, 1])]);
         let tree = build_control_tree(&func);
         // Must contain a Loop node at header 1 AND at header 2.
         assert!(

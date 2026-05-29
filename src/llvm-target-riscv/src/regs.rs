@@ -90,25 +90,25 @@ pub fn reg_enc(r: PReg) -> u8 {
 // ── F/D extension floating-point registers (F0-F31 = PReg(32)-PReg(63)) ────
 
 /// Public API for `F0` (ft0).
-pub const F0:  PReg = PReg(32);
+pub const F0: PReg = PReg(32);
 /// Public API for `F1` (ft1).
-pub const F1:  PReg = PReg(33);
+pub const F1: PReg = PReg(33);
 /// Public API for `F2` (ft2).
-pub const F2:  PReg = PReg(34);
+pub const F2: PReg = PReg(34);
 /// Public API for `F3` (ft3).
-pub const F3:  PReg = PReg(35);
+pub const F3: PReg = PReg(35);
 /// Public API for `F4` (ft4).
-pub const F4:  PReg = PReg(36);
+pub const F4: PReg = PReg(36);
 /// Public API for `F5` (ft5).
-pub const F5:  PReg = PReg(37);
+pub const F5: PReg = PReg(37);
 /// Public API for `F6` (ft6).
-pub const F6:  PReg = PReg(38);
+pub const F6: PReg = PReg(38);
 /// Public API for `F7` (ft7).
-pub const F7:  PReg = PReg(39);
+pub const F7: PReg = PReg(39);
 /// Public API for `F8` (fs0).
-pub const F8:  PReg = PReg(40);
+pub const F8: PReg = PReg(40);
 /// Public API for `F9` (fs1).
-pub const F9:  PReg = PReg(41);
+pub const F9: PReg = PReg(41);
 /// Public API for `F10` (fa0).
 pub const F10: PReg = PReg(42);
 /// Public API for `F11` (fa1).
@@ -169,9 +169,9 @@ pub const FP_CALLEE_SAVED: &[PReg] = &[F8, F9, F18, F19, F20, F21, F22, F23, F24
 /// ft8-ft11 (F28-F31, caller-saved temporaries).
 /// fs0-fs11 (F8-F9, F18-F27) are callee-saved and included for completeness.
 pub const FP_ALLOCATABLE: &[PReg] = &[
-    F0, F1, F2, F3, F4, F5, F6, F7,     // ft0-ft7 (caller-saved temporaries)
+    F0, F1, F2, F3, F4, F5, F6, F7, // ft0-ft7 (caller-saved temporaries)
     F10, F11, F12, F13, F14, F15, F16, F17, // fa0-fa7 (caller-saved args)
-    F28, F29, F30, F31,                   // ft8-ft11 (caller-saved temporaries)
+    F28, F29, F30, F31, // ft8-ft11 (caller-saved temporaries)
     F8, F9, F18, F19, F20, F21, F22, F23, F24, F25, F26, F27, // fs0-fs11 (callee-saved)
 ];
 

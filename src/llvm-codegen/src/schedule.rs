@@ -138,7 +138,10 @@ fn is_terminator(opcode: MOpcode) -> bool {
 /// Returns `true` if an instruction has a `Block` operand (targets a basic block),
 /// which is the target-independent signal for a branch instruction.
 fn has_block_operand(instr: &MInstr) -> bool {
-    instr.operands.iter().any(|op| matches!(op, MOperand::Block(_)))
+    instr
+        .operands
+        .iter()
+        .any(|op| matches!(op, MOperand::Block(_)))
 }
 
 // ── dependency DAG construction ────────────────────────────────────────────
@@ -151,10 +154,7 @@ fn has_block_operand(instr: &MInstr) -> bool {
 /// The `latency_fn` callback is called with the *producing* instruction's
 /// opcode to obtain the RAW latency for that edge.  WAR and WAW edges and
 /// conservative memory/control edges all use a latency of 1.
-pub fn build_dep_dag(
-    instrs: &[MInstr],
-    latency_fn: &dyn Fn(MOpcode) -> u32,
-) -> Vec<Vec<DepEdge>> {
+pub fn build_dep_dag(instrs: &[MInstr], latency_fn: &dyn Fn(MOpcode) -> u32) -> Vec<Vec<DepEdge>> {
     let n = instrs.len();
     let mut succ: Vec<Vec<DepEdge>> = vec![Vec::new(); n];
 
@@ -185,14 +185,22 @@ pub fn build_dep_dag(
             // WAW: both write the same register.
             let waw = wr[i].iter().any(|w| wr[j].contains(w));
             if waw {
-                succ[i].push(DepEdge { to: j, kind: DepKind::Waw, latency: 1 });
+                succ[i].push(DepEdge {
+                    to: j,
+                    kind: DepKind::Waw,
+                    latency: 1,
+                });
                 continue;
             }
 
             // WAR: i reads something that j writes.
             let war = rd[i].iter().any(|r| wr[j].contains(r));
             if war {
-                succ[i].push(DepEdge { to: j, kind: DepKind::War, latency: 1 });
+                succ[i].push(DepEdge {
+                    to: j,
+                    kind: DepKind::War,
+                    latency: 1,
+                });
                 // Still fall through to check Mem/Ctrl — they're orthogonal.
                 // But we skip adding another reg dep for the same pair.
                 continue;
@@ -200,13 +208,21 @@ pub fn build_dep_dag(
 
             // Mem: conservative — any two memory ops in order have a dependency.
             if is_mem[i] && is_mem[j] {
-                succ[i].push(DepEdge { to: j, kind: DepKind::Mem, latency: 1 });
+                succ[i].push(DepEdge {
+                    to: j,
+                    kind: DepKind::Mem,
+                    latency: 1,
+                });
                 continue;
             }
 
             // Ctrl: every prior instruction must precede a terminator.
             if is_ctrl[j] {
-                succ[i].push(DepEdge { to: j, kind: DepKind::Ctrl, latency: 1 });
+                succ[i].push(DepEdge {
+                    to: j,
+                    kind: DepKind::Ctrl,
+                    latency: 1,
+                });
             }
         }
     }
@@ -302,7 +318,11 @@ pub fn list_schedule(
 
     // Safety: if the DAG is acyclic (it always is by construction) every node
     // will have been scheduled.
-    debug_assert_eq!(order.len(), n, "list_schedule: not all instructions were scheduled");
+    debug_assert_eq!(
+        order.len(),
+        n,
+        "list_schedule: not all instructions were scheduled"
+    );
     order
 }
 
@@ -312,7 +332,11 @@ pub fn list_schedule(
 ///
 /// `order` must be a permutation of `0..block.instrs.len()`.
 pub fn apply_schedule(block: &mut MachineBlock, order: &[usize]) {
-    debug_assert_eq!(order.len(), block.instrs.len(), "order length must match instrs length");
+    debug_assert_eq!(
+        order.len(),
+        block.instrs.len(),
+        "order length must match instrs length"
+    );
     let old = std::mem::take(&mut block.instrs);
     block.instrs = order.iter().map(|&i| old[i].clone()).collect();
 }
@@ -440,7 +464,9 @@ mod tests {
     use crate::isel::{MInstr, MOpcode, MachineBlock, PReg, VReg};
 
     // A simple constant latency function for testing (every op = 1 cycle).
-    fn unit_latency(_: MOpcode) -> u32 { 1 }
+    fn unit_latency(_: MOpcode) -> u32 {
+        1
+    }
 
     // ── test 1: RAW dependency ─────────────────────────────────────────────
 
@@ -478,7 +504,7 @@ mod tests {
         // Instead: encode both as VReg reads/writes to share the key space.
         let v1 = VReg(100);
         let a2 = MInstr::new(MOpcode(0x00)).with_vreg(v1); // reads v1
-        let b2 = MInstr::new(MOpcode(0x00)).with_dst(v1);  // writes v1 → no operand read → WAR
+        let b2 = MInstr::new(MOpcode(0x00)).with_dst(v1); // writes v1 → no operand read → WAR
 
         // Actually WAR: a reads v1, b writes v1; since a has no dst we need
         // to check: writes(a2) is empty (no dst), reads(a2) = {v1}.
@@ -540,7 +566,7 @@ mod tests {
         // Three instructions: a, b, term (a branch that uses Block operand).
         let a = MInstr::new(MOpcode(0x10)); // ADD_RR (no deps)
         let b = MInstr::new(MOpcode(0x12)); // SUB_RR (no deps)
-        // Terminator: JMP (0x50) with a Block operand.
+                                            // Terminator: JMP (0x50) with a Block operand.
         let term = MInstr::new(MOpcode(0x50)).with_block(0);
 
         let instrs = vec![a, b, term];
@@ -598,7 +624,9 @@ mod tests {
 
         assert_eq!(order.len(), 3);
         // Find positions in the schedule.
-        let pos: Vec<usize> = (0..3).map(|i| order.iter().position(|&x| x == i).unwrap()).collect();
+        let pos: Vec<usize> = (0..3)
+            .map(|i| order.iter().position(|&x| x == i).unwrap())
+            .collect();
         assert!(pos[0] < pos[1], "A must come before B");
         assert!(pos[1] < pos[2], "B must come before C");
     }
@@ -625,13 +653,21 @@ mod tests {
 
         // a (index 1) has successors b→c, so CP should be ≥ 2.
         // d (index 0) has no successors, so CP = 0.
-        assert!(cp[1] >= 2, "chain head should have critical path >= 2, got {}", cp[1]);
+        assert!(
+            cp[1] >= 2,
+            "chain head should have critical path >= 2, got {}",
+            cp[1]
+        );
         assert_eq!(cp[0], 0, "independent instruction d should have CP = 0");
 
         let order = list_schedule(&instrs, &dag, &unit_latency);
         let pos_a = order.iter().position(|&x| x == 1).unwrap();
         let pos_d = order.iter().position(|&x| x == 0).unwrap();
-        assert!(pos_a < pos_d, "chain head 'a' (CP={}) should be scheduled before 'd' (CP=0)", cp[1]);
+        assert!(
+            pos_a < pos_d,
+            "chain head 'a' (CP={}) should be scheduled before 'd' (CP=0)",
+            cp[1]
+        );
     }
 
     // ── test 9: apply_schedule reorders block ──────────────────────────────

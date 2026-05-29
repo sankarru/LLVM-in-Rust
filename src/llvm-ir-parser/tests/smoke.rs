@@ -137,7 +137,10 @@ fn run_binary(path: &Path, label: &str, which: &str) -> Option<std::process::Out
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                eprintln!("[smoke/{label}] {which} timed out after {}s", timeout.as_secs());
+                eprintln!(
+                    "[smoke/{label}] {which} timed out after {}s",
+                    timeout.as_secs()
+                );
                 return None;
             }
             Err(e) => {
@@ -208,7 +211,14 @@ fn run_ours(ctx: &Context, module: &Module, label: &str) -> Option<RunResult> {
         &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
     let obj_format = match host_object_format() {
         Some(f) => f,

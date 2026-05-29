@@ -55,7 +55,8 @@ fn main() -> ExitCode {
             }
             "--predicate" => {
                 predicate = Some(
-                    args.next().unwrap_or_else(|| die("--predicate requires an argument")),
+                    args.next()
+                        .unwrap_or_else(|| die("--predicate requires an argument")),
                 );
             }
             s if s.starts_with("--predicate=") => {

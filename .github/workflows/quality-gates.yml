@@ -1,0 +1,33 @@
+name: Quality Gates
+
+# Release-blocking source-quality gates (roadmap Milestone V / issue #381).
+# Formatting is enforced here; clippy `-D warnings` is added in a follow-up
+# once the existing warnings are cleared.
+
+on:
+  push:
+    branches: [main, "fix/**", "feat/**", "feature/**"]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  rustfmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Rust stable toolchain with rustfmt
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable --component rustfmt
+          rustup default stable
+
+      - name: Check workspace formatting
+        run: cargo +stable fmt --all -- --check

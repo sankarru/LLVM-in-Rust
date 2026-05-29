@@ -128,7 +128,6 @@ entry:
 !12 = !DILocation(line: 42, column: 7, scope: !1)
 "#,
     },
-
 ];
 
 fn stable_hash_hex(data: &[u8]) -> String {
@@ -177,7 +176,14 @@ fn emit_case(case: GoldenCase) -> Vec<u8> {
         &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
 
     let mut emitter = X86Emitter::new(ObjectFormat::Elf);

@@ -41,12 +41,12 @@ pub mod gvn;
 pub mod inline_pass;
 /// Public API for `ipcp`.
 pub mod ipcp;
+/// Public API for `jump_threading`.
+pub mod jump_threading;
 /// Public API for `licm`.
 pub mod licm;
 /// Public API for `loop_unroll`.
 pub mod loop_unroll;
-/// Public API for `jump_threading`.
-pub mod jump_threading;
 /// Public API for `mem2reg`.
 pub mod mem2reg;
 /// Public API for `msan`.
@@ -55,6 +55,8 @@ pub mod msan;
 pub mod pass;
 /// Public API for `pipeline`.
 pub mod pipeline;
+/// Public API for `reassoc`.
+pub mod reassoc;
 /// Public API for `slp`.
 pub mod slp;
 /// Public API for `sroa`.
@@ -65,8 +67,6 @@ pub mod tailcall;
 pub mod tsan;
 /// Public API for `ubsan`.
 pub mod ubsan;
-/// Public API for `reassoc`.
-pub mod reassoc;
 mod value_rewrite;
 
 /// Public API for `re-export`.
@@ -90,11 +90,11 @@ pub use inline_pass::Inliner;
 /// Public API for `re-export`.
 pub use ipcp::Ipcp;
 /// Public API for `re-export`.
+pub use jump_threading::JumpThreading;
+/// Public API for `re-export`.
 pub use licm::Licm;
 /// Public API for `re-export`.
 pub use loop_unroll::LoopUnroll;
-/// Public API for `re-export`.
-pub use jump_threading::JumpThreading;
 /// Public API for `re-export`.
 pub use mem2reg::Mem2Reg;
 /// Public API for `re-export`.
@@ -103,6 +103,8 @@ pub use msan::MsanPass;
 pub use pass::{FunctionPass, ModulePass, PassManager};
 /// Public API for `re-export`.
 pub use pipeline::{build_pipeline, OptLevel};
+/// Public API for `re-export`.
+pub use reassoc::ReassocPass;
 /// Public API for `re-export`.
 pub use slp::SlpVectorizer;
 /// Public API for `re-export`.
@@ -113,5 +115,3 @@ pub use tailcall::TailCallOpt;
 pub use tsan::TsanPass;
 /// Public API for `re-export`.
 pub use ubsan::{UbsanModulePass, UbsanPass};
-/// Public API for `re-export`.
-pub use reassoc::ReassocPass;

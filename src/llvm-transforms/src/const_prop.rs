@@ -14,7 +14,10 @@
 
 use crate::constant_fold::{try_fold, try_fold_fp};
 use crate::pass::FunctionPass;
-use llvm_ir::{ConstantData, Context, FloatKind, Function, InstrId, InstrKind, LandingPadClause, TypeData, ValueRef};
+use llvm_ir::{
+    ConstantData, Context, FloatKind, Function, InstrId, InstrKind, LandingPadClause, TypeData,
+    ValueRef,
+};
 use std::collections::{HashMap, HashSet};
 
 /// Constant propagation / constant folding pass.

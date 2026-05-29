@@ -1,7 +1,7 @@
 //! Integration tests for the standalone codegen driver.
 
 use llvm_ir::{Builder, Context, Linkage, Module};
-use llvm_rustc_backend::driver::{CodegenOptions, TargetArch, codegen_module};
+use llvm_rustc_backend::driver::{codegen_module, CodegenOptions, TargetArch};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -59,7 +59,10 @@ fn make_decl_only() -> (Context, Module) {
 #[test]
 fn driver_emits_nonzero_bytes_for_trivial_function() {
     let (mut ctx, mut module) = make_ret42();
-    let opts = CodegenOptions { target: TargetArch::X86_64, opt_level: 0 };
+    let opts = CodegenOptions {
+        target: TargetArch::X86_64,
+        opt_level: 0,
+    };
     let bytes = codegen_module(&mut ctx, &mut module, &opts)
         .expect("codegen must succeed for trivial function");
     assert!(!bytes.is_empty(), "output must be non-empty");
@@ -68,7 +71,10 @@ fn driver_emits_nonzero_bytes_for_trivial_function() {
 #[test]
 fn driver_x86_elf_magic() {
     let (mut ctx, mut module) = make_ret42();
-    let opts = CodegenOptions { target: TargetArch::X86_64, opt_level: 0 };
+    let opts = CodegenOptions {
+        target: TargetArch::X86_64,
+        opt_level: 0,
+    };
     let bytes = codegen_module(&mut ctx, &mut module, &opts).expect("must compile");
     assert_eq!(&bytes[..4], b"\x7fELF", "x86-64 output must be an ELF file");
 }
@@ -76,7 +82,10 @@ fn driver_x86_elf_magic() {
 #[test]
 fn driver_x86_add_o0_compiles() {
     let (mut ctx, mut module) = make_add_fn();
-    let opts = CodegenOptions { target: TargetArch::X86_64, opt_level: 0 };
+    let opts = CodegenOptions {
+        target: TargetArch::X86_64,
+        opt_level: 0,
+    };
     let bytes = codegen_module(&mut ctx, &mut module, &opts).expect("add O0 must compile");
     assert!(!bytes.is_empty());
 }
@@ -84,7 +93,10 @@ fn driver_x86_add_o0_compiles() {
 #[test]
 fn driver_x86_add_o2_compiles() {
     let (mut ctx, mut module) = make_add_fn();
-    let opts = CodegenOptions { target: TargetArch::X86_64, opt_level: 2 };
+    let opts = CodegenOptions {
+        target: TargetArch::X86_64,
+        opt_level: 2,
+    };
     let bytes = codegen_module(&mut ctx, &mut module, &opts).expect("add O2 must compile");
     assert!(!bytes.is_empty());
 }
@@ -92,7 +104,10 @@ fn driver_x86_add_o2_compiles() {
 #[test]
 fn driver_x86_o3_pipeline_runs() {
     let (mut ctx, mut module) = make_add_fn();
-    let opts = CodegenOptions { target: TargetArch::X86_64, opt_level: 3 };
+    let opts = CodegenOptions {
+        target: TargetArch::X86_64,
+        opt_level: 3,
+    };
     let bytes = codegen_module(&mut ctx, &mut module, &opts).expect("O3 must compile");
     assert!(!bytes.is_empty());
 }
@@ -100,9 +115,15 @@ fn driver_x86_o3_pipeline_runs() {
 #[test]
 fn driver_declarations_only_returns_error() {
     let (mut ctx, mut module) = make_decl_only();
-    let opts = CodegenOptions { target: TargetArch::X86_64, opt_level: 0 };
+    let opts = CodegenOptions {
+        target: TargetArch::X86_64,
+        opt_level: 0,
+    };
     let result = codegen_module(&mut ctx, &mut module, &opts);
-    assert!(result.is_err(), "declarations-only module must return an error");
+    assert!(
+        result.is_err(),
+        "declarations-only module must return an error"
+    );
 }
 
 // ── AArch64 tests ─────────────────────────────────────────────────────────────
@@ -110,7 +131,10 @@ fn driver_declarations_only_returns_error() {
 #[test]
 fn driver_aarch64_emits_nonzero_bytes() {
     let (mut ctx, mut module) = make_ret42();
-    let opts = CodegenOptions { target: TargetArch::AArch64, opt_level: 0 };
+    let opts = CodegenOptions {
+        target: TargetArch::AArch64,
+        opt_level: 0,
+    };
     let bytes = codegen_module(&mut ctx, &mut module, &opts).expect("AArch64 codegen must succeed");
     assert!(!bytes.is_empty(), "AArch64 output must be non-empty");
 }
@@ -118,15 +142,25 @@ fn driver_aarch64_emits_nonzero_bytes() {
 #[test]
 fn driver_aarch64_elf_magic() {
     let (mut ctx, mut module) = make_ret42();
-    let opts = CodegenOptions { target: TargetArch::AArch64, opt_level: 0 };
+    let opts = CodegenOptions {
+        target: TargetArch::AArch64,
+        opt_level: 0,
+    };
     let bytes = codegen_module(&mut ctx, &mut module, &opts).expect("must compile");
-    assert_eq!(&bytes[..4], b"\x7fELF", "AArch64 ELF output must have ELF magic");
+    assert_eq!(
+        &bytes[..4],
+        b"\x7fELF",
+        "AArch64 ELF output must have ELF magic"
+    );
 }
 
 #[test]
 fn driver_aarch64_add_compiles() {
     let (mut ctx, mut module) = make_add_fn();
-    let opts = CodegenOptions { target: TargetArch::AArch64, opt_level: 1 };
+    let opts = CodegenOptions {
+        target: TargetArch::AArch64,
+        opt_level: 1,
+    };
     let bytes = codegen_module(&mut ctx, &mut module, &opts).expect("AArch64 add must compile");
     assert!(!bytes.is_empty());
 }
@@ -140,7 +174,14 @@ fn backend_pipeline_smoke_via_driver() {
     let mut module = Module::new("smoke");
     let mut b = Builder::new(&mut ctx, &mut module);
     let i32_ty = b.ctx.i32_ty;
-    b.add_function("square", i32_ty, vec![i32_ty], vec!["x".into()], false, Linkage::External);
+    b.add_function(
+        "square",
+        i32_ty,
+        vec![i32_ty],
+        vec!["x".into()],
+        false,
+        Linkage::External,
+    );
     let entry = b.add_block("entry");
     b.position_at_end(entry);
     let x = b.get_arg(0);
@@ -148,10 +189,15 @@ fn backend_pipeline_smoke_via_driver() {
     b.build_ret(r);
     drop(b);
 
-    let opts = CodegenOptions { target: TargetArch::X86_64, opt_level: 2 };
+    let opts = CodegenOptions {
+        target: TargetArch::X86_64,
+        opt_level: 2,
+    };
     let bytes = codegen_module(&mut ctx, &mut module, &opts).expect("smoke codegen must succeed");
     assert!(!bytes.is_empty(), "smoke test must emit non-empty object");
     // Symbol name must appear in the ELF string table.
-    let has_sym = bytes.windows(b"\x00square\x00".len()).any(|w| w == b"\x00square\x00");
+    let has_sym = bytes
+        .windows(b"\x00square\x00".len())
+        .any(|w| w == b"\x00square\x00");
     assert!(has_sym, "symbol 'square' must appear in ELF strtab");
 }

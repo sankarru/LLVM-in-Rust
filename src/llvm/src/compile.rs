@@ -17,7 +17,7 @@ use llvm_codegen::{
 };
 use llvm_ir_parser::parser::parse;
 use llvm_target_x86::{
-    instructions::{MOV_LOAD_MR, MOV_STORE_RM, MOVSD_LOAD_MR, MOVSD_STORE_RM},
+    instructions::{MOVSD_LOAD_MR, MOVSD_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM},
     X86Backend, X86Emitter,
 };
 use llvm_transforms::{build_pipeline, OptLevel};
@@ -36,8 +36,7 @@ pub fn compile_ir_to_object(
     opt_level: OptLevel,
     fmt: ObjectFormat,
 ) -> Result<Vec<u8>, String> {
-    let (mut ctx, mut module) =
-        parse(src).map_err(|e| format!("parse error: {e}"))?;
+    let (mut ctx, mut module) = parse(src).map_err(|e| format!("parse error: {e}"))?;
 
     let mut pm = build_pipeline(opt_level);
     pm.run_until_fixed_point(&mut ctx, &mut module, 8);
@@ -75,7 +74,14 @@ pub fn compile_ir_to_object(
             &mf.allocatable_fp_pregs,
             strategy,
         );
-        insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOVSD_LOAD_MR, MOVSD_STORE_RM);
+        insert_spill_reloads(
+            &mut mf,
+            &mut result,
+            MOV_LOAD_MR,
+            MOV_STORE_RM,
+            MOVSD_LOAD_MR,
+            MOVSD_STORE_RM,
+        );
         apply_allocation(&mut mf, &result);
 
         let mut emitter = X86Emitter::new(fmt);

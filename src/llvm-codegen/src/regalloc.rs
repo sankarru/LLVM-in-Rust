@@ -226,7 +226,9 @@ pub fn allocate_registers(
 ) -> RegAllocResult {
     // Fast path: no float VRegs present (common until FP backends land).
     // Avoids the partition + second linear-scan call entirely.
-    let has_float = intervals.iter().any(|iv| iv.vreg.class() == crate::isel::RegClass::Float);
+    let has_float = intervals
+        .iter()
+        .any(|iv| iv.vreg.class() == crate::isel::RegClass::Float);
     if !has_float {
         return match strategy {
             RegAllocStrategy::LinearScan => linear_scan(intervals, int_pregs),
@@ -235,8 +237,10 @@ pub fn allocate_registers(
     }
 
     // Partition live intervals by register class.
-    let (int_intervals, fp_intervals): (Vec<_>, Vec<_>) =
-        intervals.iter().cloned().partition(|iv| iv.vreg.class() == crate::isel::RegClass::Int);
+    let (int_intervals, fp_intervals): (Vec<_>, Vec<_>) = intervals
+        .iter()
+        .cloned()
+        .partition(|iv| iv.vreg.class() == crate::isel::RegClass::Int);
 
     let int_result = match strategy {
         RegAllocStrategy::LinearScan => linear_scan(&int_intervals, int_pregs),
@@ -327,9 +331,8 @@ pub fn linear_scan(intervals: &[LiveInterval], allocatable: &[PReg]) -> RegAlloc
             result.vreg_to_preg.insert(interval.vreg, pr);
             // Insert in sorted position to maintain the end-sorted invariant without
             // a full O(n log n) sort on every push.
-            let pos = active.partition_point(|&(e, vr, _)| {
-                (e, vr.0) <= (interval.end, interval.vreg.0)
-            });
+            let pos =
+                active.partition_point(|&(e, vr, _)| (e, vr.0) <= (interval.end, interval.vreg.0));
             active.insert(pos, (interval.end, interval.vreg, pr));
         }
     }
@@ -396,7 +399,11 @@ pub fn insert_spill_reloads(
                             (load_op, mf.fresh_vreg())
                         };
                         // Insert LOAD before this instruction.
-                        new_instrs.push(MInstr::new(chosen_load).with_dst(fresh).with_imm(slot as i64));
+                        new_instrs.push(
+                            MInstr::new(chosen_load)
+                                .with_dst(fresh)
+                                .with_imm(slot as i64),
+                        );
                         *op = MOperand::VReg(fresh);
                     }
                 }
@@ -423,7 +430,11 @@ pub fn insert_spill_reloads(
             new_instrs.push(instr);
 
             if let Some((fresh, slot, chosen_store)) = store_after {
-                new_instrs.push(MInstr::new(chosen_store).with_imm(slot as i64).with_vreg(fresh));
+                new_instrs.push(
+                    MInstr::new(chosen_store)
+                        .with_imm(slot as i64)
+                        .with_vreg(fresh),
+                );
             }
         }
 
@@ -554,7 +565,6 @@ mod tests {
             end,
         }
     }
-
 
     #[test]
     fn compute_intervals_returns_deterministic_order_for_equal_starts() {
@@ -890,11 +900,27 @@ mod tests {
         let int_pool = vec![PReg(0), PReg(1)];
         let fp_pool: Vec<PReg> = vec![];
         let intervals = vec![
-            LiveInterval { vreg: VReg::new_int(0), start: 0, end: 4 },
-            LiveInterval { vreg: VReg::new_int(1), start: 1, end: 5 },
+            LiveInterval {
+                vreg: VReg::new_int(0),
+                start: 0,
+                end: 4,
+            },
+            LiveInterval {
+                vreg: VReg::new_int(1),
+                start: 1,
+                end: 5,
+            },
         ];
-        let result = allocate_registers(&intervals, &int_pool, &fp_pool, RegAllocStrategy::LinearScan);
-        assert!(result.spilled.is_empty(), "no spills expected with 2 regs for 2 int VRegs");
+        let result = allocate_registers(
+            &intervals,
+            &int_pool,
+            &fp_pool,
+            RegAllocStrategy::LinearScan,
+        );
+        assert!(
+            result.spilled.is_empty(),
+            "no spills expected with 2 regs for 2 int VRegs"
+        );
         // Both assignments must be in the int pool.
         for (vr, pr) in &result.vreg_to_preg {
             assert!(
@@ -911,11 +937,27 @@ mod tests {
         let int_pool = vec![PReg(0), PReg(1)];
         let fp_pool = vec![PReg(16), PReg(17)]; // simulate XMM0/XMM1
         let intervals = vec![
-            LiveInterval { vreg: VReg::new_float(0), start: 0, end: 4 },
-            LiveInterval { vreg: VReg::new_float(1), start: 1, end: 5 },
+            LiveInterval {
+                vreg: VReg::new_float(0),
+                start: 0,
+                end: 4,
+            },
+            LiveInterval {
+                vreg: VReg::new_float(1),
+                start: 1,
+                end: 5,
+            },
         ];
-        let result = allocate_registers(&intervals, &int_pool, &fp_pool, RegAllocStrategy::LinearScan);
-        assert!(result.spilled.is_empty(), "no spills: 2 FP regs for 2 float VRegs");
+        let result = allocate_registers(
+            &intervals,
+            &int_pool,
+            &fp_pool,
+            RegAllocStrategy::LinearScan,
+        );
+        assert!(
+            result.spilled.is_empty(),
+            "no spills: 2 FP regs for 2 float VRegs"
+        );
         for (vr, pr) in &result.vreg_to_preg {
             assert!(
                 fp_pool.contains(pr),
@@ -934,13 +976,37 @@ mod tests {
         let int_pool = vec![PReg(0), PReg(1)];
         let fp_pool = vec![PReg(16), PReg(17)];
         let intervals = vec![
-            LiveInterval { vreg: VReg::new_int(0),   start: 0, end: 6 },
-            LiveInterval { vreg: VReg::new_int(1),   start: 1, end: 7 },
-            LiveInterval { vreg: VReg::new_float(2), start: 2, end: 8 },
-            LiveInterval { vreg: VReg::new_float(3), start: 3, end: 9 },
+            LiveInterval {
+                vreg: VReg::new_int(0),
+                start: 0,
+                end: 6,
+            },
+            LiveInterval {
+                vreg: VReg::new_int(1),
+                start: 1,
+                end: 7,
+            },
+            LiveInterval {
+                vreg: VReg::new_float(2),
+                start: 2,
+                end: 8,
+            },
+            LiveInterval {
+                vreg: VReg::new_float(3),
+                start: 3,
+                end: 9,
+            },
         ];
-        let result = allocate_registers(&intervals, &int_pool, &fp_pool, RegAllocStrategy::LinearScan);
-        assert!(result.spilled.is_empty(), "no spills: 2+2 regs for 2+2 VRegs");
+        let result = allocate_registers(
+            &intervals,
+            &int_pool,
+            &fp_pool,
+            RegAllocStrategy::LinearScan,
+        );
+        assert!(
+            result.spilled.is_empty(),
+            "no spills: 2+2 regs for 2+2 VRegs"
+        );
         assert_eq!(result.vreg_to_preg.len(), 4, "all 4 VRegs must be assigned");
 
         for (vr, pr) in &result.vreg_to_preg {

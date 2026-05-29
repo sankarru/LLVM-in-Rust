@@ -143,8 +143,7 @@ entry:
     let printed = Printer::new(&ctx).print_module(&module);
     assert!(printed.contains("fence seq_cst"), "{printed}");
     assert!(
-        printed
-            .contains("%cas = cmpxchg ptr %p, i32 %cmp, i32 %new acq_rel acquire"),
+        printed.contains("%cas = cmpxchg ptr %p, i32 %cmp, i32 %new acq_rel acquire"),
         "{printed}"
     );
     assert!(
@@ -274,7 +273,10 @@ entry:
 
     let hoisted = f.instr(bb.body[0]);
     assert!(
-        matches!(hoisted.kind, InstrKind::GetElementPtr { inbounds: true, .. }),
+        matches!(
+            hoisted.kind,
+            InstrKind::GetElementPtr { inbounds: true, .. }
+        ),
         "first instruction should be a hoisted inbounds GEP, got {:?}",
         hoisted.kind
     );
@@ -397,10 +399,7 @@ fn parse_constexpr_gep_in_global_initializer() {
         ConstantData::Expr { op, operands, .. } => {
             assert!(matches!(
                 op,
-                ConstExprOp::GetElementPtr {
-                    inbounds: true,
-                    ..
-                }
+                ConstExprOp::GetElementPtr { inbounds: true, .. }
             ));
             assert_eq!(operands.len(), 3, "base + 2 indices");
         }
@@ -408,8 +407,9 @@ fn parse_constexpr_gep_in_global_initializer() {
     }
     let printed = Printer::new(&ctx).print_module(&module);
     assert!(
-        printed
-            .contains("@p3 = constant ptr getelementptr inbounds ([4 x i32], ptr @base, i64 0, i64 3)"),
+        printed.contains(
+            "@p3 = constant ptr getelementptr inbounds ([4 x i32], ptr @base, i64 0, i64 3)"
+        ),
         "constexpr GEP did not print in canonical form:\n{printed}"
     );
 
@@ -447,7 +447,10 @@ fn parse_constexpr_casts_in_global_initializer() {
     ));
 
     let printed = Printer::new(&ctx).print_module(&module);
-    assert!(printed.contains("@bc = constant ptr bitcast (ptr @h to ptr)"), "{printed}");
+    assert!(
+        printed.contains("@bc = constant ptr bitcast (ptr @h to ptr)"),
+        "{printed}"
+    );
     assert!(
         printed.contains("@itp = constant ptr inttoptr (i64 4096 to ptr)"),
         "{printed}"
@@ -471,8 +474,15 @@ lpad:
 }
 "#;
     let (ctx, module) = parse(src).expect("parse failed");
-    let f = module.functions.iter().find(|f| f.name == "f").expect("function f");
-    match &f.instr(f.blocks[0].terminator.expect("entry terminator")).kind {
+    let f = module
+        .functions
+        .iter()
+        .find(|f| f.name == "f")
+        .expect("function f");
+    match &f
+        .instr(f.blocks[0].terminator.expect("entry terminator"))
+        .kind
+    {
         InstrKind::Invoke {
             normal_dest,
             unwind_dest,
@@ -488,7 +498,10 @@ lpad:
             cleanup, clauses, ..
         } => {
             assert!(*cleanup);
-            assert!(matches!(clauses.as_slice(), [LandingPadClause::Catch { .. }]));
+            assert!(matches!(
+                clauses.as_slice(),
+                [LandingPadClause::Catch { .. }]
+            ));
         }
         other => panic!("expected landingpad, got {other:?}"),
     }
@@ -705,7 +718,11 @@ exit:
     // Should have three blocks: entry, loop, exit.
     assert_eq!(f.blocks.len(), 3);
     // The loop block must contain the phi as its first body instruction.
-    let loop_block = f.blocks.iter().find(|b| b.name == "loop").expect("loop block");
+    let loop_block = f
+        .blocks
+        .iter()
+        .find(|b| b.name == "loop")
+        .expect("loop block");
     let phi_instr = f.instr(loop_block.body[0]);
     assert_eq!(phi_instr.kind.opcode(), "phi");
     // Verify both incoming entries were parsed (entry and loop back-edge).
@@ -750,10 +767,22 @@ exit:
 "#;
     let (_ctx, module) = parse(src).expect("adler32 multi-phi parse failed");
     let f = &module.functions[0];
-    assert_eq!(f.blocks.len(), 4, "expected entry, loop, body, exit — got {}", f.blocks.len());
-    let loop_block = f.blocks.iter().find(|b| b.name == "loop").expect("loop block");
+    assert_eq!(
+        f.blocks.len(),
+        4,
+        "expected entry, loop, body, exit — got {}",
+        f.blocks.len()
+    );
+    let loop_block = f
+        .blocks
+        .iter()
+        .find(|b| b.name == "loop")
+        .expect("loop block");
     // First three body instructions in loop are phi nodes.
-    assert!(loop_block.body.len() >= 3, "loop block should have at least 3 body instrs (3 phis)");
+    assert!(
+        loop_block.body.len() >= 3,
+        "loop block should have at least 3 body instrs (3 phis)"
+    );
     for idx in 0..3 {
         let instr = f.instr(loop_block.body[idx]);
         assert_eq!(

@@ -41,12 +41,12 @@ pub mod instruction;
 pub mod module;
 /// Public API for `printer`.
 pub mod printer;
+/// IR minimizer (delta debugging style).
+pub mod reduce;
 /// Public API for `types`.
 pub mod types;
 /// Public API for `value`.
 pub mod value;
-/// IR minimizer (delta debugging style).
-pub mod reduce;
 
 // Re-export key types at crate root for ergonomic use.
 /// Public API for `re-export`.
@@ -61,16 +61,16 @@ pub use context::{
 pub use function::Function;
 /// Public API for `re-export`.
 pub use instruction::{
-    ExactFlag, FastMathFlags, FloatPredicate, InstrKind, Instruction, IntArithFlags, IntPredicate,
-    InstrprofIntrinsic, LandingPadClause, MemOrdering, RmwOp, TailCallKind, VpIntrinsic,
+    ExactFlag, FastMathFlags, FloatPredicate, InstrKind, InstrprofIntrinsic, Instruction,
+    IntArithFlags, IntPredicate, LandingPadClause, MemOrdering, RmwOp, TailCallKind, VpIntrinsic,
 };
 /// Public API for `re-export`.
 pub use module::{DebugLocation, Module};
 /// Public API for `re-export`.
 pub use printer::Printer;
 /// Public API for `re-export`.
+pub use reduce::{ContainsPredicate, Predicate, Reducer};
+/// Public API for `re-export`.
 pub use types::{FloatKind, FunctionType, StructType, TypeData};
 /// Public API for `re-export`.
 pub use value::{Argument, ConstExprOp, ConstantData, GlobalVariable, Linkage};
-/// Public API for `re-export`.
-pub use reduce::{ContainsPredicate, Predicate, Reducer};

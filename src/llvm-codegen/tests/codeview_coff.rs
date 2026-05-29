@@ -37,7 +37,14 @@ fn emits_codeview_debug_s_for_coff_when_dbg_metadata_present() {
         &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    llvm_codegen::regalloc::insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
 
     let mut emitter = X86Emitter::new(ObjectFormat::Coff);
@@ -84,7 +91,14 @@ fn build_coff_cv_obj() -> (Vec<u8>, Vec<u8>) {
         &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    llvm_codegen::regalloc::insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
 
     let mut emitter = X86Emitter::new(ObjectFormat::Coff);
@@ -109,7 +123,10 @@ fn debug_s_contains_s_gproc32_record() {
 
     // Scan for S_GPROC32 record type bytes [0x10, 0x11] (little-endian 0x1110).
     let has_gproc32 = cv.windows(2).any(|w| w == [0x10, 0x11]);
-    assert!(has_gproc32, ".debug$S must contain S_GPROC32 (0x1110) record");
+    assert!(
+        has_gproc32,
+        ".debug$S must contain S_GPROC32 (0x1110) record"
+    );
 }
 
 #[test]
@@ -138,7 +155,10 @@ fn debug_s_contains_debug_s_lines_subsection() {
     let has_lines = cv
         .windows(4)
         .any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 0xF2);
-    assert!(has_lines, ".debug$S must contain DEBUG_S_LINES (0xF2) subsection");
+    assert!(
+        has_lines,
+        ".debug$S must contain DEBUG_S_LINES (0xF2) subsection"
+    );
 }
 
 #[test]
@@ -148,7 +168,10 @@ fn debug_s_contains_filechksms_subsection() {
     let has_chksm = cv
         .windows(4)
         .any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 0xF4);
-    assert!(has_chksm, ".debug$S must contain DEBUG_S_FILECHKSMS (0xF4) subsection");
+    assert!(
+        has_chksm,
+        ".debug$S must contain DEBUG_S_FILECHKSMS (0xF4) subsection"
+    );
 }
 
 #[test]
@@ -158,5 +181,8 @@ fn debug_s_contains_stringtable_subsection() {
     let has_strtab = cv
         .windows(4)
         .any(|w| u32::from_le_bytes(w.try_into().unwrap()) == 0xF3);
-    assert!(has_strtab, ".debug$S must contain DEBUG_S_STRINGTABLE (0xF3) subsection");
+    assert!(
+        has_strtab,
+        ".debug$S must contain DEBUG_S_STRINGTABLE (0xF3) subsection"
+    );
 }

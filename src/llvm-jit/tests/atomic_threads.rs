@@ -61,7 +61,11 @@ entry:
         // SAFETY: ptr points to JIT-compiled x86-64 `void @increment(ptr %ctr)`.
         let f: fn(*mut i32) = unsafe { std::mem::transmute(ptr) };
         f(ctr_ptr);
-        assert_eq!(counter.load(Ordering::SeqCst), 1, "single call should increment by 1");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "single call should increment by 1"
+        );
         for _ in 0..999 {
             f(ctr_ptr);
         }

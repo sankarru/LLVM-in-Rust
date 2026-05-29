@@ -26,7 +26,9 @@
 
 use crate::pass::FunctionPass;
 use llvm_analysis::{Cfg, DomTree, LoopInfo};
-use llvm_ir::{BasicBlock, BlockId, Context, Function, InstrId, InstrKind, Instruction, TypeId, ValueRef};
+use llvm_ir::{
+    BasicBlock, BlockId, Context, Function, InstrId, InstrKind, Instruction, TypeId, ValueRef,
+};
 use std::collections::HashSet;
 
 /// Loop-Invariant Code Motion pass.
@@ -62,8 +64,7 @@ impl FunctionPass for Licm {
 
         for loop_idx in loop_order {
             let header = li.loops()[loop_idx].header;
-            let loop_body: HashSet<BlockId> =
-                li.loops()[loop_idx].body.iter().copied().collect();
+            let loop_body: HashSet<BlockId> = li.loops()[loop_idx].body.iter().copied().collect();
 
             // Find or create the preheader once per loop.
             let preheader = ensure_preheader(func, &cfg, header, &loop_body);
@@ -207,9 +208,7 @@ fn is_loop_invariant(
             ValueRef::Constant(_) | ValueRef::Argument(_) | ValueRef::Global(_) => {}
             ValueRef::Instruction(def_iid) => {
                 // Look up which block defines this instruction.
-                let def_block = instr_to_block
-                    .get(def_iid.0 as usize)
-                    .and_then(|b| *b);
+                let def_block = instr_to_block.get(def_iid.0 as usize).and_then(|b| *b);
                 match def_block {
                     // Defined outside loop — OK.
                     Some(b) if !loop_body.contains(&b) => {}
@@ -342,9 +341,7 @@ fn ensure_preheader(
     // now come from `preheader_id`.
     let header_body: Vec<InstrId> = func.blocks[header.0 as usize].body.clone();
     for iid in header_body {
-        if let InstrKind::Phi { incoming, .. } =
-            &mut func.instructions[iid.0 as usize].kind
-        {
+        if let InstrKind::Phi { incoming, .. } = &mut func.instructions[iid.0 as usize].kind {
             for (_, pred_bid) in incoming.iter_mut() {
                 if outside_preds.contains(pred_bid) {
                     *pred_bid = preheader_id;
@@ -369,12 +366,7 @@ fn find_void_ty(func: &Function) -> TypeId {
 
 /// Rewrite all branch targets equal to `old_target` in `block`'s terminator
 /// to point to `new_target` instead.
-fn redirect_branch(
-    func: &mut Function,
-    block: BlockId,
-    old_target: BlockId,
-    new_target: BlockId,
-) {
+fn redirect_branch(func: &mut Function, block: BlockId, old_target: BlockId, new_target: BlockId) {
     let tid = match func.blocks[block.0 as usize].terminator {
         Some(t) => t,
         None => return,
@@ -759,7 +751,13 @@ mod tests {
                 b.ctx.i32_ty, // cv
                 b.ctx.i32_ty, // dv
             ],
-            vec!["n".into(), "a".into(), "bv".into(), "cv".into(), "dv".into()],
+            vec![
+                "n".into(),
+                "a".into(),
+                "bv".into(),
+                "cv".into(),
+                "dv".into(),
+            ],
             false,
             Linkage::External,
         );
@@ -840,8 +838,16 @@ mod tests {
 
         // Before LICM.
         let func = &module.functions[0];
-        assert_eq!(body_len(func, outer_body), 1, "outer_body: 1 instr before LICM");
-        assert_eq!(body_len(func, inner_body), 2, "inner_body: 2 instrs before LICM");
+        assert_eq!(
+            body_len(func, outer_body),
+            1,
+            "outer_body: 1 instr before LICM"
+        );
+        assert_eq!(
+            body_len(func, inner_body),
+            2,
+            "inner_body: 2 instrs before LICM"
+        );
 
         let mut pass = Licm;
         let changed = pass.run_on_function(&mut ctx, &mut module.functions[0]);
@@ -851,13 +857,17 @@ mod tests {
         let func = &module.functions[0];
         let inner_inv_id = func.value_names["inner_inv"];
         assert!(
-            !func.blocks[inner_body.0 as usize].body.contains(&inner_inv_id),
+            !func.blocks[inner_body.0 as usize]
+                .body
+                .contains(&inner_inv_id),
             "%inner_inv must be hoisted out of inner_body"
         );
 
         let outer_inv_id = func.value_names["outer_inv"];
         assert!(
-            !func.blocks[outer_body.0 as usize].body.contains(&outer_inv_id),
+            !func.blocks[outer_body.0 as usize]
+                .body
+                .contains(&outer_inv_id),
             "%outer_inv must be hoisted out of outer_body"
         );
     }

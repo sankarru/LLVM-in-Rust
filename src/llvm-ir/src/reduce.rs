@@ -22,7 +22,7 @@
 use crate::basic_block::BasicBlock;
 use crate::context::{BlockId, ConstId, InstrId, TypeId, ValueRef};
 use crate::function::Function;
-use crate::instruction::{Instruction, InstrKind};
+use crate::instruction::{InstrKind, Instruction};
 use crate::module::Module;
 use crate::printer::Printer;
 use crate::Context;
@@ -88,12 +88,7 @@ impl Reducer {
     /// still satisfies `pred`.
     ///
     /// Returns the reduced `(Context, Module)`.
-    pub fn reduce(
-        &self,
-        ctx: Context,
-        module: Module,
-        pred: &dyn Predicate,
-    ) -> (Context, Module) {
+    pub fn reduce(&self, ctx: Context, module: Module, pred: &dyn Predicate) -> (Context, Module) {
         // Verify that the predicate holds on the original input.
         if !pred.test(&ctx, &module) {
             // Predicate does not hold; return as-is.
@@ -141,11 +136,7 @@ impl Reducer {
 
 /// Try to remove each non-entry, non-main function.  A function is kept if
 /// removing it causes the predicate to return `false`.
-fn reduce_functions(
-    ctx: Context,
-    module: Module,
-    pred: &dyn Predicate,
-) -> (bool, Context, Module) {
+fn reduce_functions(ctx: Context, module: Module, pred: &dyn Predicate) -> (bool, Context, Module) {
     // Collect indices to try removing (in reverse so indices stay valid if we
     // rebuild from scratch each time).
     let n = module.functions.len();
@@ -185,7 +176,11 @@ fn reduce_functions(
 }
 
 /// Clone the module but skip function at index `skip_idx`.
-fn clone_module_without_function(ctx: &Context, module: &Module, skip_idx: usize) -> (Context, Module) {
+fn clone_module_without_function(
+    ctx: &Context,
+    module: &Module,
+    skip_idx: usize,
+) -> (Context, Module) {
     let new_ctx = ctx.clone();
     let mut new_module = module_header_clone(module);
 
@@ -207,11 +202,7 @@ fn clone_module_without_function(ctx: &Context, module: &Module, skip_idx: usize
 /// means replacing it with an unconditional branch to the entry block for any
 /// predecessor that referred to it, and removing all phi incoming edges that
 /// reference the block.  The block's body is simply dropped.
-fn reduce_blocks(
-    ctx: Context,
-    module: Module,
-    pred: &dyn Predicate,
-) -> (bool, Context, Module) {
+fn reduce_blocks(ctx: Context, module: Module, pred: &dyn Predicate) -> (bool, Context, Module) {
     let mut changed = false;
     let mut ctx = ctx;
     let mut module = module;
@@ -229,8 +220,7 @@ fn reduce_blocks(
         while bi > 1 {
             bi -= 1;
             // Try removing block bi from function fi.
-            let (trial_ctx, trial_module) =
-                clone_module_without_block(&ctx, &module, fi, bi);
+            let (trial_ctx, trial_module) = clone_module_without_block(&ctx, &module, fi, bi);
             if pred.test(&trial_ctx, &trial_module) {
                 ctx = trial_ctx;
                 module = trial_module;
@@ -285,7 +275,8 @@ fn clone_module_without_block(
         // Re-allocate instructions with adjusted block/value refs.
         // We need to remap InstrIds because some instructions in the removed
         // block will be gone.  Collect which InstrIds are kept.
-        let mut kept_instr_ids: std::collections::HashSet<InstrId> = std::collections::HashSet::new();
+        let mut kept_instr_ids: std::collections::HashSet<InstrId> =
+            std::collections::HashSet::new();
         for (bi, bb) in func.blocks.iter().enumerate() {
             if bi == skip_bid {
                 continue;
@@ -634,12 +625,7 @@ fn module_header_clone(module: &Module) -> Module {
 /// Clone the signature (name, type, args, linkage flags) of a function
 /// without blocks or instructions.
 fn function_signature_clone(func: &Function) -> Function {
-    let mut new_func = Function::new(
-        func.name.clone(),
-        func.ty,
-        func.args.clone(),
-        func.linkage,
-    );
+    let mut new_func = Function::new(func.name.clone(), func.ty, func.args.clone(), func.linkage);
     new_func.is_declaration = func.is_declaration;
     new_func
 }
@@ -671,7 +657,10 @@ fn remap_instr_kind(
         }
     };
     let remap_bid = |b: BlockId| -> BlockId {
-        bid_map.get(b.0 as usize).and_then(|opt| *opt).unwrap_or(fallback_bid)
+        bid_map
+            .get(b.0 as usize)
+            .and_then(|opt| *opt)
+            .unwrap_or(fallback_bid)
     };
 
     match kind {
@@ -701,7 +690,11 @@ fn remap_instr_kind(
             then_dest: remap_bid(*then_dest),
             else_dest: remap_bid(*else_dest),
         },
-        InstrKind::Switch { val, default, cases } => InstrKind::Switch {
+        InstrKind::Switch {
+            val,
+            default,
+            cases,
+        } => InstrKind::Switch {
             val: remap_vref(*val),
             default: remap_bid(*default),
             cases: cases
@@ -737,70 +730,211 @@ where
 {
     use InstrKind::*;
     match kind {
-        Add { flags, lhs, rhs } => Add { flags: *flags, lhs: f(*lhs), rhs: f(*rhs) },
-        Sub { flags, lhs, rhs } => Sub { flags: *flags, lhs: f(*lhs), rhs: f(*rhs) },
-        Mul { flags, lhs, rhs } => Mul { flags: *flags, lhs: f(*lhs), rhs: f(*rhs) },
-        UDiv { exact, lhs, rhs } => UDiv { exact: *exact, lhs: f(*lhs), rhs: f(*rhs) },
-        SDiv { exact, lhs, rhs } => SDiv { exact: *exact, lhs: f(*lhs), rhs: f(*rhs) },
-        URem { lhs, rhs } => URem { lhs: f(*lhs), rhs: f(*rhs) },
-        SRem { lhs, rhs } => SRem { lhs: f(*lhs), rhs: f(*rhs) },
-        And { lhs, rhs } => And { lhs: f(*lhs), rhs: f(*rhs) },
-        Or { lhs, rhs } => Or { lhs: f(*lhs), rhs: f(*rhs) },
-        Xor { lhs, rhs } => Xor { lhs: f(*lhs), rhs: f(*rhs) },
-        Shl { flags, lhs, rhs } => Shl { flags: *flags, lhs: f(*lhs), rhs: f(*rhs) },
-        LShr { exact, lhs, rhs } => LShr { exact: *exact, lhs: f(*lhs), rhs: f(*rhs) },
-        AShr { exact, lhs, rhs } => AShr { exact: *exact, lhs: f(*lhs), rhs: f(*rhs) },
-        FAdd { flags, lhs, rhs } => FAdd { flags: *flags, lhs: f(*lhs), rhs: f(*rhs) },
-        FSub { flags, lhs, rhs } => FSub { flags: *flags, lhs: f(*lhs), rhs: f(*rhs) },
-        FMul { flags, lhs, rhs } => FMul { flags: *flags, lhs: f(*lhs), rhs: f(*rhs) },
-        FDiv { flags, lhs, rhs } => FDiv { flags: *flags, lhs: f(*lhs), rhs: f(*rhs) },
-        FRem { flags, lhs, rhs } => FRem { flags: *flags, lhs: f(*lhs), rhs: f(*rhs) },
-        FNeg { flags, operand } => FNeg { flags: *flags, operand: f(*operand) },
-        ICmp { pred, lhs, rhs } => ICmp { pred: *pred, lhs: f(*lhs), rhs: f(*rhs) },
-        FCmp { flags, pred, lhs, rhs } => FCmp {
+        Add { flags, lhs, rhs } => Add {
+            flags: *flags,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        Sub { flags, lhs, rhs } => Sub {
+            flags: *flags,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        Mul { flags, lhs, rhs } => Mul {
+            flags: *flags,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        UDiv { exact, lhs, rhs } => UDiv {
+            exact: *exact,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        SDiv { exact, lhs, rhs } => SDiv {
+            exact: *exact,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        URem { lhs, rhs } => URem {
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        SRem { lhs, rhs } => SRem {
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        And { lhs, rhs } => And {
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        Or { lhs, rhs } => Or {
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        Xor { lhs, rhs } => Xor {
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        Shl { flags, lhs, rhs } => Shl {
+            flags: *flags,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        LShr { exact, lhs, rhs } => LShr {
+            exact: *exact,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        AShr { exact, lhs, rhs } => AShr {
+            exact: *exact,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        FAdd { flags, lhs, rhs } => FAdd {
+            flags: *flags,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        FSub { flags, lhs, rhs } => FSub {
+            flags: *flags,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        FMul { flags, lhs, rhs } => FMul {
+            flags: *flags,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        FDiv { flags, lhs, rhs } => FDiv {
+            flags: *flags,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        FRem { flags, lhs, rhs } => FRem {
+            flags: *flags,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        FNeg { flags, operand } => FNeg {
+            flags: *flags,
+            operand: f(*operand),
+        },
+        ICmp { pred, lhs, rhs } => ICmp {
+            pred: *pred,
+            lhs: f(*lhs),
+            rhs: f(*rhs),
+        },
+        FCmp {
+            flags,
+            pred,
+            lhs,
+            rhs,
+        } => FCmp {
             flags: *flags,
             pred: *pred,
             lhs: f(*lhs),
             rhs: f(*rhs),
         },
-        Alloca { alloc_ty, num_elements, align } => Alloca {
+        Alloca {
+            alloc_ty,
+            num_elements,
+            align,
+        } => Alloca {
             alloc_ty: *alloc_ty,
             num_elements: num_elements.map(|v| f(v)),
             align: *align,
         },
-        Load { ty, ptr, align, volatile } => Load {
+        Load {
+            ty,
+            ptr,
+            align,
+            volatile,
+        } => Load {
             ty: *ty,
             ptr: f(*ptr),
             align: *align,
             volatile: *volatile,
         },
-        Store { val, ptr, align, volatile } => Store {
+        Store {
+            val,
+            ptr,
+            align,
+            volatile,
+        } => Store {
             val: f(*val),
             ptr: f(*ptr),
             align: *align,
             volatile: *volatile,
         },
-        GetElementPtr { inbounds, base_ty, ptr, indices } => GetElementPtr {
+        GetElementPtr {
+            inbounds,
+            base_ty,
+            ptr,
+            indices,
+        } => GetElementPtr {
             inbounds: *inbounds,
             base_ty: *base_ty,
             ptr: f(*ptr),
             indices: indices.iter().map(|&i| f(i)).collect(),
         },
-        Trunc { val, to } => Trunc { val: f(*val), to: *to },
-        ZExt { val, to } => ZExt { val: f(*val), to: *to },
-        SExt { val, to } => SExt { val: f(*val), to: *to },
-        FPTrunc { val, to } => FPTrunc { val: f(*val), to: *to },
-        FPExt { val, to } => FPExt { val: f(*val), to: *to },
-        FPToUI { val, to } => FPToUI { val: f(*val), to: *to },
-        FPToSI { val, to } => FPToSI { val: f(*val), to: *to },
-        UIToFP { val, to } => UIToFP { val: f(*val), to: *to },
-        SIToFP { val, to } => SIToFP { val: f(*val), to: *to },
-        PtrToInt { val, to } => PtrToInt { val: f(*val), to: *to },
-        IntToPtr { val, to } => IntToPtr { val: f(*val), to: *to },
-        BitCast { val, to } => BitCast { val: f(*val), to: *to },
-        AddrSpaceCast { val, to } => AddrSpaceCast { val: f(*val), to: *to },
+        Trunc { val, to } => Trunc {
+            val: f(*val),
+            to: *to,
+        },
+        ZExt { val, to } => ZExt {
+            val: f(*val),
+            to: *to,
+        },
+        SExt { val, to } => SExt {
+            val: f(*val),
+            to: *to,
+        },
+        FPTrunc { val, to } => FPTrunc {
+            val: f(*val),
+            to: *to,
+        },
+        FPExt { val, to } => FPExt {
+            val: f(*val),
+            to: *to,
+        },
+        FPToUI { val, to } => FPToUI {
+            val: f(*val),
+            to: *to,
+        },
+        FPToSI { val, to } => FPToSI {
+            val: f(*val),
+            to: *to,
+        },
+        UIToFP { val, to } => UIToFP {
+            val: f(*val),
+            to: *to,
+        },
+        SIToFP { val, to } => SIToFP {
+            val: f(*val),
+            to: *to,
+        },
+        PtrToInt { val, to } => PtrToInt {
+            val: f(*val),
+            to: *to,
+        },
+        IntToPtr { val, to } => IntToPtr {
+            val: f(*val),
+            to: *to,
+        },
+        BitCast { val, to } => BitCast {
+            val: f(*val),
+            to: *to,
+        },
+        AddrSpaceCast { val, to } => AddrSpaceCast {
+            val: f(*val),
+            to: *to,
+        },
         Freeze { val } => Freeze { val: f(*val) },
-        Select { cond, then_val, else_val } => Select {
+        Select {
+            cond,
+            then_val,
+            else_val,
+        } => Select {
             cond: f(*cond),
             then_val: f(*then_val),
             else_val: f(*else_val),
@@ -809,7 +943,11 @@ where
             aggregate: f(*aggregate),
             indices: indices.clone(),
         },
-        InsertValue { aggregate, val, indices } => InsertValue {
+        InsertValue {
+            aggregate,
+            val,
+            indices,
+        } => InsertValue {
             aggregate: f(*aggregate),
             val: f(*val),
             indices: indices.clone(),
@@ -828,13 +966,23 @@ where
             v2: f(*v2),
             mask: mask.clone(),
         },
-        Call { tail, callee_ty, callee, args } => Call {
+        Call {
+            tail,
+            callee_ty,
+            callee,
+            args,
+        } => Call {
             tail: *tail,
             callee_ty: *callee_ty,
             callee: f(*callee),
             args: args.iter().map(|&a| f(a)).collect(),
         },
-        LandingPad { result_ty, personality_fn, cleanup, clauses } => LandingPad {
+        LandingPad {
+            result_ty,
+            personality_fn,
+            cleanup,
+            clauses,
+        } => LandingPad {
             result_ty: *result_ty,
             personality_fn: personality_fn.map(|v| f(v)),
             cleanup: *cleanup,
@@ -842,23 +990,45 @@ where
                 .iter()
                 .map(|c| match c {
                     crate::instruction::LandingPadClause::Catch { ty, value } => {
-                        crate::instruction::LandingPadClause::Catch { ty: *ty, value: f(*value) }
+                        crate::instruction::LandingPadClause::Catch {
+                            ty: *ty,
+                            value: f(*value),
+                        }
                     }
                     crate::instruction::LandingPadClause::Filter { ty, value } => {
-                        crate::instruction::LandingPadClause::Filter { ty: *ty, value: f(*value) }
+                        crate::instruction::LandingPadClause::Filter {
+                            ty: *ty,
+                            value: f(*value),
+                        }
                     }
                 })
                 .collect(),
         },
-        InlineAsm { asm_string, constraints, side_effect, align_stack, args } => InlineAsm {
+        InlineAsm {
+            asm_string,
+            constraints,
+            side_effect,
+            align_stack,
+            args,
+        } => InlineAsm {
             asm_string: asm_string.clone(),
             constraints: constraints.clone(),
             side_effect: *side_effect,
             align_stack: *align_stack,
             args: args.iter().map(|&a| f(a)).collect(),
         },
-        Fence { ordering } => Fence { ordering: *ordering },
-        CmpXchg { ptr, cmp, new_val, success_ord, fail_ord, weak, volatile } => CmpXchg {
+        Fence { ordering } => Fence {
+            ordering: *ordering,
+        },
+        CmpXchg {
+            ptr,
+            cmp,
+            new_val,
+            success_ord,
+            fail_ord,
+            weak,
+            volatile,
+        } => CmpXchg {
             ptr: f(*ptr),
             cmp: f(*cmp),
             new_val: f(*new_val),
@@ -867,26 +1037,48 @@ where
             weak: *weak,
             volatile: *volatile,
         },
-        AtomicRmw { op, ptr, val, ordering, volatile } => AtomicRmw {
+        AtomicRmw {
+            op,
+            ptr,
+            val,
+            ordering,
+            volatile,
+        } => AtomicRmw {
             op: *op,
             ptr: f(*ptr),
             val: f(*val),
             ordering: *ordering,
             volatile: *volatile,
         },
-        Ret { val } => Ret { val: val.map(|v| f(v)) },
+        Ret { val } => Ret {
+            val: val.map(|v| f(v)),
+        },
         Br { dest } => Br { dest: *dest },
-        CondBr { cond, then_dest, else_dest } => CondBr {
+        CondBr {
+            cond,
+            then_dest,
+            else_dest,
+        } => CondBr {
             cond: f(*cond),
             then_dest: *then_dest,
             else_dest: *else_dest,
         },
-        Switch { val, default, cases } => Switch {
+        Switch {
+            val,
+            default,
+            cases,
+        } => Switch {
             val: f(*val),
             default: *default,
             cases: cases.iter().map(|(v, b)| (f(*v), *b)).collect(),
         },
-        Invoke { callee_ty, callee, args, normal_dest, unwind_dest } => Invoke {
+        Invoke {
+            callee_ty,
+            callee,
+            args,
+            normal_dest,
+            unwind_dest,
+        } => Invoke {
             callee_ty: *callee_ty,
             callee: f(*callee),
             args: args.iter().map(|&a| f(a)).collect(),
@@ -907,16 +1099,26 @@ where
             parent: parent.map(|v| f(v)),
             args: args.iter().map(|&a| f(a)).collect(),
         },
-        CatchSwitch { parent, handlers, default } => CatchSwitch {
+        CatchSwitch {
+            parent,
+            handlers,
+            default,
+        } => CatchSwitch {
             parent: parent.map(|v| f(v)),
             handlers: handlers.clone(),
             default: *default,
         },
-        CatchRet { catch_pad, successor } => CatchRet {
+        CatchRet {
+            catch_pad,
+            successor,
+        } => CatchRet {
             catch_pad: f(*catch_pad),
             successor: *successor,
         },
-        CleanupRet { cleanup_pad, unwind_dest } => CleanupRet {
+        CleanupRet {
+            cleanup_pad,
+            unwind_dest,
+        } => CleanupRet {
             cleanup_pad: f(*cleanup_pad),
             unwind_dest: *unwind_dest,
         },
@@ -969,8 +1171,16 @@ mod tests {
         // Function foo
         let foo_ty = ctx.mk_fn_type(ctx.i32_ty, vec![ctx.i32_ty, ctx.i32_ty], false);
         let foo_args = vec![
-            Argument { name: "a".into(), ty: ctx.i32_ty, index: 0 },
-            Argument { name: "b".into(), ty: ctx.i32_ty, index: 1 },
+            Argument {
+                name: "a".into(),
+                ty: ctx.i32_ty,
+                index: 0,
+            },
+            Argument {
+                name: "b".into(),
+                ty: ctx.i32_ty,
+                index: 1,
+            },
         ];
         let mut foo = Function::new("foo", foo_ty, foo_args, Linkage::External);
         let a_ref = ValueRef::Argument(ArgId(0));
@@ -978,12 +1188,18 @@ mod tests {
         let add_id = foo.alloc_instr(Instruction::new(
             Some("r".into()),
             ctx.i32_ty,
-            InstrKind::Add { flags: IntArithFlags::default(), lhs: a_ref, rhs: b_ref },
+            InstrKind::Add {
+                flags: IntArithFlags::default(),
+                lhs: a_ref,
+                rhs: b_ref,
+            },
         ));
         let ret_id = foo.alloc_instr(Instruction::new(
             None,
             ctx.void_ty,
-            InstrKind::Ret { val: Some(ValueRef::Instruction(add_id)) },
+            InstrKind::Ret {
+                val: Some(ValueRef::Instruction(add_id)),
+            },
         ));
         let mut entry_foo = BasicBlock::new("entry");
         entry_foo.append_instr(add_id);
@@ -997,7 +1213,9 @@ mod tests {
         let bar_ret_id = bar.alloc_instr(Instruction::new(
             None,
             ctx.void_ty,
-            InstrKind::Ret { val: Some(ValueRef::Constant(c42)) },
+            InstrKind::Ret {
+                val: Some(ValueRef::Constant(c42)),
+            },
         ));
         let mut entry_bar = BasicBlock::new("entry");
         entry_bar.set_terminator(bar_ret_id);
@@ -1021,7 +1239,9 @@ mod tests {
 
         // Predicate: IR must contain "foo" (the first function).
         // The second function "bar" is not required.
-        let pred = ContainsPredicate { substring: "@foo".to_string() };
+        let pred = ContainsPredicate {
+            substring: "@foo".to_string(),
+        };
         let reducer = Reducer::new();
         let (_ctx2, module2) = reducer.reduce(ctx, module, &pred);
 
@@ -1049,13 +1269,21 @@ mod tests {
         //   }
         let mut ctx = Context::new();
         let fn_ty = ctx.mk_fn_type(ctx.i32_ty, vec![ctx.i32_ty], false);
-        let args = vec![Argument { name: "x".into(), ty: ctx.i32_ty, index: 0 }];
+        let args = vec![Argument {
+            name: "x".into(),
+            ty: ctx.i32_ty,
+            index: 0,
+        }];
         let mut func = Function::new("compute", fn_ty, args, Linkage::External);
         let x_ref = ValueRef::Argument(ArgId(0));
         let dead_id = func.alloc_instr(Instruction::new(
             Some("dead".into()),
             ctx.i32_ty,
-            InstrKind::Mul { flags: IntArithFlags::default(), lhs: x_ref, rhs: x_ref },
+            InstrKind::Mul {
+                flags: IntArithFlags::default(),
+                lhs: x_ref,
+                rhs: x_ref,
+            },
         ));
         let ret_id = func.alloc_instr(Instruction::new(
             None,
@@ -1071,13 +1299,18 @@ mod tests {
         module.add_function(func);
 
         // Predicate: IR must contain "ret".  The dead mul is not needed.
-        let pred = ContainsPredicate { substring: "ret".to_string() };
+        let pred = ContainsPredicate {
+            substring: "ret".to_string(),
+        };
         let reducer = Reducer::new();
         let (_ctx2, module2) = reducer.reduce(ctx, module, &pred);
 
         // The dead mul should have been removed.
         let f = &module2.functions[0];
-        let has_mul = f.instructions.iter().any(|i| matches!(i.kind, InstrKind::Mul { .. }));
+        let has_mul = f
+            .instructions
+            .iter()
+            .any(|i| matches!(i.kind, InstrKind::Mul { .. }));
         assert!(!has_mul, "expected dead mul to be removed");
     }
 
@@ -1111,7 +1344,9 @@ mod tests {
         let ret_id = func.alloc_instr(Instruction::new(
             None,
             ctx.void_ty,
-            InstrKind::Ret { val: Some(ValueRef::Constant(c0)) },
+            InstrKind::Ret {
+                val: Some(ValueRef::Constant(c0)),
+            },
         ));
         let mut entry = BasicBlock::new("entry");
         entry.append_instr(add_id);
@@ -1121,13 +1356,18 @@ mod tests {
         let mut module = Module::new("test");
         module.add_function(func);
 
-        let pred = ContainsPredicate { substring: "ret".to_string() };
+        let pred = ContainsPredicate {
+            substring: "ret".to_string(),
+        };
         let reducer = Reducer::new();
         let (_ctx2, module2) = reducer.reduce(ctx, module, &pred);
 
         // The add should have been removed (its result was never used).
         let f = &module2.functions[0];
-        let has_add = f.instructions.iter().any(|i| matches!(i.kind, InstrKind::Add { .. }));
+        let has_add = f
+            .instructions
+            .iter()
+            .any(|i| matches!(i.kind, InstrKind::Add { .. }));
         assert!(!has_add, "expected add instruction to be removed");
     }
 
@@ -1146,18 +1386,28 @@ mod tests {
         // and remove the add (since ret i32 0 still satisfies the predicate).
         let mut ctx = Context::new();
         let fn_ty = ctx.mk_fn_type(ctx.i32_ty, vec![ctx.i32_ty], false);
-        let args = vec![Argument { name: "x".into(), ty: ctx.i32_ty, index: 0 }];
+        let args = vec![Argument {
+            name: "x".into(),
+            ty: ctx.i32_ty,
+            index: 0,
+        }];
         let mut func = Function::new("foo", fn_ty, args, Linkage::External);
         let x_ref = ValueRef::Argument(ArgId(0));
         let add_id = func.alloc_instr(Instruction::new(
             Some("a".into()),
             ctx.i32_ty,
-            InstrKind::Add { flags: IntArithFlags::default(), lhs: x_ref, rhs: x_ref },
+            InstrKind::Add {
+                flags: IntArithFlags::default(),
+                lhs: x_ref,
+                rhs: x_ref,
+            },
         ));
         let ret_id = func.alloc_instr(Instruction::new(
             None,
             ctx.void_ty,
-            InstrKind::Ret { val: Some(ValueRef::Instruction(add_id)) },
+            InstrKind::Ret {
+                val: Some(ValueRef::Instruction(add_id)),
+            },
         ));
         let mut entry = BasicBlock::new("entry");
         entry.append_instr(add_id);
@@ -1167,13 +1417,18 @@ mod tests {
         let mut module = Module::new("test");
         module.add_function(func);
 
-        let pred = ContainsPredicate { substring: "ret".to_string() };
+        let pred = ContainsPredicate {
+            substring: "ret".to_string(),
+        };
         let reducer = Reducer::new();
         let (_ctx2, module2) = reducer.reduce(ctx, module, &pred);
 
         // The add should have been reduced away (replaced by constant zero).
         let f = &module2.functions[0];
-        let has_add = f.instructions.iter().any(|i| matches!(i.kind, InstrKind::Add { .. }));
+        let has_add = f
+            .instructions
+            .iter()
+            .any(|i| matches!(i.kind, InstrKind::Add { .. }));
         assert!(!has_add, "expected add to be replaced by constant");
     }
 
@@ -1186,7 +1441,9 @@ mod tests {
         let (ctx, module) = two_function_module();
 
         // Predicate: contains "foo".
-        let pred = ContainsPredicate { substring: "@foo".to_string() };
+        let pred = ContainsPredicate {
+            substring: "@foo".to_string(),
+        };
         let reducer = Reducer::new();
         let (ctx1, module1) = reducer.reduce(ctx, module, &pred);
 
@@ -1195,7 +1452,10 @@ mod tests {
         let (ctx2, module2) = reducer.reduce(ctx1, module1, &pred);
         let text2 = Printer::new(&ctx2).print_module(&module2);
 
-        assert_eq!(text1, text2, "second reduction pass changed the output (not at fixed point)");
+        assert_eq!(
+            text1, text2,
+            "second reduction pass changed the output (not at fixed point)"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1206,7 +1466,9 @@ mod tests {
     fn reduce_preserves_predicate() {
         let (ctx, module) = two_function_module();
 
-        let pred = ContainsPredicate { substring: "@foo".to_string() };
+        let pred = ContainsPredicate {
+            substring: "@foo".to_string(),
+        };
         let reducer = Reducer::new();
         let (ctx2, module2) = reducer.reduce(ctx, module, &pred);
 
@@ -1227,8 +1489,16 @@ mod tests {
         let mut ctx = Context::new();
         let fn_ty = ctx.mk_fn_type(ctx.i32_ty, vec![ctx.i32_ty, ctx.i32_ty], false);
         let args = vec![
-            Argument { name: "a".into(), ty: ctx.i32_ty, index: 0 },
-            Argument { name: "b".into(), ty: ctx.i32_ty, index: 1 },
+            Argument {
+                name: "a".into(),
+                ty: ctx.i32_ty,
+                index: 0,
+            },
+            Argument {
+                name: "b".into(),
+                ty: ctx.i32_ty,
+                index: 1,
+            },
         ];
         let mut func = Function::new("add", fn_ty, args, Linkage::External);
         let a_ref = ValueRef::Argument(ArgId(0));
@@ -1236,12 +1506,18 @@ mod tests {
         let add_id = func.alloc_instr(Instruction::new(
             Some("r".into()),
             ctx.i32_ty,
-            InstrKind::Add { flags: IntArithFlags::default(), lhs: a_ref, rhs: b_ref },
+            InstrKind::Add {
+                flags: IntArithFlags::default(),
+                lhs: a_ref,
+                rhs: b_ref,
+            },
         ));
         let ret_id = func.alloc_instr(Instruction::new(
             None,
             ctx.void_ty,
-            InstrKind::Ret { val: Some(ValueRef::Instruction(add_id)) },
+            InstrKind::Ret {
+                val: Some(ValueRef::Instruction(add_id)),
+            },
         ));
         let mut entry = BasicBlock::new("entry");
         entry.append_instr(add_id);
@@ -1251,13 +1527,17 @@ mod tests {
         let mut module = Module::new("test");
         module.add_function(func);
 
-        let pred = ContainsPredicate { substring: "add".to_string() };
+        let pred = ContainsPredicate {
+            substring: "add".to_string(),
+        };
         assert!(
             pred.test(&ctx, &module),
             "ContainsPredicate should return true when module has an add instruction"
         );
 
-        let pred_false = ContainsPredicate { substring: "nonexistent_xyz".to_string() };
+        let pred_false = ContainsPredicate {
+            substring: "nonexistent_xyz".to_string(),
+        };
         assert!(
             !pred_false.test(&ctx, &module),
             "ContainsPredicate should return false for absent substring"

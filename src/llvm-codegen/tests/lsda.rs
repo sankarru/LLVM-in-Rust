@@ -204,8 +204,11 @@ fn lsda_cs_table_length_field_correct() {
     let (cs_table_len, advance) = decode_uleb128(&bytes[3..]);
     let table_start = 3 + advance;
     let table_end = bytes.len();
-    assert_eq!(cs_table_len as usize, table_end - table_start,
-        "cs_table_length field must match actual call-site table byte count");
+    assert_eq!(
+        cs_table_len as usize,
+        table_end - table_start,
+        "cs_table_length field must match actual call-site table byte count"
+    );
 }
 
 // ── XdataBuilder tests ────────────────────────────────────────────────────

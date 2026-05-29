@@ -80,7 +80,14 @@ fn emit_host_obj_x86(
         &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    llvm_codegen::regalloc::insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
     let mut emitter = X86Emitter::new(obj_format);
     let obj = emit_object(&mf, &mut emitter);
@@ -110,7 +117,14 @@ fn emit_host_obj_aarch64(
         &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, LDR_FP, STR_FP, LDR_FP, STR_FP);
+    llvm_codegen::regalloc::insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        LDR_FP,
+        STR_FP,
+        LDR_FP,
+        STR_FP,
+    );
     apply_allocation(&mut mf, &result);
     let mut emitter = AArch64Emitter::new(obj_format);
     let obj = emit_object(&mf, &mut emitter);
@@ -314,7 +328,9 @@ fn coff_object_main_symbol_visible() {
 fn tool_presence_report_is_accessible() {
     // Lightweight smoke to keep path used in CI logs if desired.
     let mut tools = Vec::<(&str, bool)>::new();
-    for t in ["cc", "ld", "lld", "lld-link", "readelf", "nm", "llvm-nm", "objdump", "otool"] {
+    for t in [
+        "cc", "ld", "lld", "lld-link", "readelf", "nm", "llvm-nm", "objdump", "otool",
+    ] {
         tools.push((t, have_tool(t)));
     }
     assert!(!tools.is_empty());

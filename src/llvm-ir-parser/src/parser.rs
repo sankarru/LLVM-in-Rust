@@ -286,7 +286,7 @@ impl<'src> Parser<'src> {
                         }
                         Token::LocalIdent(s) if s == "comdat" => {
                             self.lex.next()?; // consume `comdat`
-                            // Optional `($name)`.
+                                              // Optional `($name)`.
                             if matches!(self.lex.peek()?, Token::LParen) {
                                 self.skip_balanced_parens()?;
                             }
@@ -784,7 +784,8 @@ impl<'src> Parser<'src> {
         if !self.staged_phi_patches.is_empty() {
             let staged = std::mem::take(&mut self.staged_phi_patches);
             for (incoming_idx, local_name) in staged {
-                self.pending_phi_patches.push((iid, incoming_idx, local_name));
+                self.pending_phi_patches
+                    .push((iid, incoming_idx, local_name));
             }
         }
 
@@ -1002,18 +1003,17 @@ impl<'src> Parser<'src> {
                 // num_elements), the comma is already consumed so we must NOT
                 // go through parse_optional_align (which expects its own
                 // leading comma).
-                let (num_elements, comma_before_align_consumed) =
-                    if self.lex.eat(&Token::Comma) {
-                        match self.lex.peek()? {
-                            Token::Kw(Keyword::Align) => (None, true),
-                            _ => {
-                                let (ne, _) = self.parse_typed_value()?;
-                                (Some(ne), false)
-                            }
+                let (num_elements, comma_before_align_consumed) = if self.lex.eat(&Token::Comma) {
+                    match self.lex.peek()? {
+                        Token::Kw(Keyword::Align) => (None, true),
+                        _ => {
+                            let (ne, _) = self.parse_typed_value()?;
+                            (Some(ne), false)
                         }
-                    } else {
-                        (None, false)
-                    };
+                    }
+                } else {
+                    (None, false)
+                };
                 let align = if comma_before_align_consumed {
                     // Comma was already consumed; parse `align N` directly.
                     if self.lex.eat_kw(Keyword::Align) {
@@ -1686,15 +1686,26 @@ impl<'src> Parser<'src> {
                 self.lex.expect_kw(&Keyword::Unwind)?;
                 let default = self.parse_unwind_dest()?;
                 let ptr_ty = self.ctx.ptr_ty;
-                Ok((InstrKind::CatchSwitch { parent, handlers, default }, ptr_ty))
+                Ok((
+                    InstrKind::CatchSwitch {
+                        parent,
+                        handlers,
+                        default,
+                    },
+                    ptr_ty,
+                ))
             }
             Token::Kw(Keyword::Catchret) => {
                 // catchret from %tok to label %cont
                 self.lex.next()?;
                 // "from" keyword (optional for robustness)
                 match self.lex.peek()?.clone() {
-                    Token::Kw(Keyword::From) => { self.lex.next()?; }
-                    Token::LocalIdent(ref s) if s == "from" => { self.lex.next()?; }
+                    Token::Kw(Keyword::From) => {
+                        self.lex.next()?;
+                    }
+                    Token::LocalIdent(ref s) if s == "from" => {
+                        self.lex.next()?;
+                    }
                     _ => {}
                 }
                 let catch_pad = self.parse_value_untyped()?;
@@ -1703,22 +1714,38 @@ impl<'src> Parser<'src> {
                 let bname = self.lex.expect_local_ident()?;
                 let successor = self.get_or_create_block(&bname)?;
                 let ptr_ty = self.ctx.ptr_ty;
-                Ok((InstrKind::CatchRet { catch_pad, successor }, ptr_ty))
+                Ok((
+                    InstrKind::CatchRet {
+                        catch_pad,
+                        successor,
+                    },
+                    ptr_ty,
+                ))
             }
             Token::Kw(Keyword::Cleanupret) => {
                 // cleanupret from %tok unwind to caller  OR  unwind label %dest
                 self.lex.next()?;
                 // "from" keyword (optional for robustness)
                 match self.lex.peek()?.clone() {
-                    Token::Kw(Keyword::From) => { self.lex.next()?; }
-                    Token::LocalIdent(ref s) if s == "from" => { self.lex.next()?; }
+                    Token::Kw(Keyword::From) => {
+                        self.lex.next()?;
+                    }
+                    Token::LocalIdent(ref s) if s == "from" => {
+                        self.lex.next()?;
+                    }
                     _ => {}
                 }
                 let cleanup_pad = self.parse_value_untyped()?;
                 self.lex.expect_kw(&Keyword::Unwind)?;
                 let unwind_dest = self.parse_unwind_dest()?;
                 let ptr_ty = self.ctx.ptr_ty;
-                Ok((InstrKind::CleanupRet { cleanup_pad, unwind_dest }, ptr_ty))
+                Ok((
+                    InstrKind::CleanupRet {
+                        cleanup_pad,
+                        unwind_dest,
+                    },
+                    ptr_ty,
+                ))
             }
             _ => {
                 let t = self.lex.next()?;
@@ -1810,7 +1837,10 @@ impl<'src> Parser<'src> {
                 let vref = self.parse_value_untyped()?;
                 Ok(Some(vref))
             }
-            t => Err(self.err(format!("expected 'none' or local ident after 'within', got {:?}", t))),
+            t => Err(self.err(format!(
+                "expected 'none' or local ident after 'within', got {:?}",
+                t
+            ))),
         }
     }
 
@@ -1868,7 +1898,10 @@ impl<'src> Parser<'src> {
                 self.lex.next()?;
                 Ok(None)
             }
-            t => Err(self.err(format!("expected 'to caller' or 'label' after 'unwind', got {:?}", t))),
+            t => Err(self.err(format!(
+                "expected 'to caller' or 'label' after 'unwind', got {:?}",
+                t
+            ))),
         }
     }
 
@@ -1965,8 +1998,9 @@ impl<'src> Parser<'src> {
             // variant; until then they error out cleanly.
             Token::Kw(Keyword::Getelementptr) => self.parse_constexpr_gep_as_instr(),
             Token::Kw(Keyword::Bitcast) => {
-                self.parse_constexpr_cast_as_instr(Keyword::Bitcast, |val, to| {
-                    InstrKind::BitCast { val, to }
+                self.parse_constexpr_cast_as_instr(Keyword::Bitcast, |val, to| InstrKind::BitCast {
+                    val,
+                    to,
                 })
             }
             Token::Kw(Keyword::Inttoptr) => {
@@ -1979,24 +2013,26 @@ impl<'src> Parser<'src> {
                     InstrKind::PtrToInt { val, to }
                 })
             }
-            Token::Kw(Keyword::Addrspacecast) => {
-                self.parse_constexpr_cast_as_instr(Keyword::Addrspacecast, |val, to| {
+            Token::Kw(Keyword::Addrspacecast) => self
+                .parse_constexpr_cast_as_instr(Keyword::Addrspacecast, |val, to| {
                     InstrKind::AddrSpaceCast { val, to }
-                })
-            }
+                }),
             Token::Kw(Keyword::Trunc) => {
-                self.parse_constexpr_cast_as_instr(Keyword::Trunc, |val, to| {
-                    InstrKind::Trunc { val, to }
+                self.parse_constexpr_cast_as_instr(Keyword::Trunc, |val, to| InstrKind::Trunc {
+                    val,
+                    to,
                 })
             }
             Token::Kw(Keyword::Zext) => {
-                self.parse_constexpr_cast_as_instr(Keyword::Zext, |val, to| {
-                    InstrKind::ZExt { val, to }
+                self.parse_constexpr_cast_as_instr(Keyword::Zext, |val, to| InstrKind::ZExt {
+                    val,
+                    to,
                 })
             }
             Token::Kw(Keyword::Sext) => {
-                self.parse_constexpr_cast_as_instr(Keyword::Sext, |val, to| {
-                    InstrKind::SExt { val, to }
+                self.parse_constexpr_cast_as_instr(Keyword::Sext, |val, to| InstrKind::SExt {
+                    val,
+                    to,
                 })
             }
             _ => {
@@ -2025,11 +2061,7 @@ impl<'src> Parser<'src> {
 
     /// Parse `{ <ty> <v>, <ty> <v>, ... }` as an anonymous (or named) struct
     /// constant.  The result `TypeId` is the surrounding context's type.
-    fn parse_struct_constant(
-        &mut self,
-        ty: TypeId,
-        _packed: bool,
-    ) -> Result<ValueRef, ParseError> {
+    fn parse_struct_constant(&mut self, ty: TypeId, _packed: bool) -> Result<ValueRef, ParseError> {
         self.lex.expect(&Token::LBrace)?;
         let mut fields = Vec::new();
         if !matches!(self.lex.peek()?, Token::RBrace) {
@@ -2152,8 +2184,7 @@ impl<'src> Parser<'src> {
 
         if let (Some(fid), Some(bid)) = (self.current_func, self.current_block) {
             let kind = make_kind(val, dst_ty);
-            let iid =
-                self.module.functions[fid].alloc_instr(Instruction::new(None, dst_ty, kind));
+            let iid = self.module.functions[fid].alloc_instr(Instruction::new(None, dst_ty, kind));
             self.module.functions[fid].block_mut(bid).append_instr(iid);
             Ok(ValueRef::Instruction(iid))
         } else {
@@ -2166,9 +2197,7 @@ impl<'src> Parser<'src> {
                 Keyword::Zext => ConstExprOp::ZExt,
                 Keyword::Sext => ConstExprOp::SExt,
                 other => {
-                    return Err(
-                        self.err(format!("unsupported constexpr cast keyword: {:?}", other))
-                    )
+                    return Err(self.err(format!("unsupported constexpr cast keyword: {:?}", other)))
                 }
             };
             let operand_const = self.value_ref_to_const_id(val)?;
@@ -2280,7 +2309,10 @@ impl<'src> Parser<'src> {
         for (instr_id, incoming_idx, name) in patches {
             let vref = self.resolve_local(&name)?;
             let instr = self.module.functions[fid].instr_mut(instr_id);
-            if let InstrKind::Phi { ref mut incoming, .. } = instr.kind {
+            if let InstrKind::Phi {
+                ref mut incoming, ..
+            } = instr.kind
+            {
                 if let Some(entry) = incoming.get_mut(incoming_idx) {
                     entry.0 = vref;
                 }
@@ -2779,7 +2811,9 @@ impl<'src> Parser<'src> {
         //   !llvm.dbg.cu = !{!0}
         self.lex.expect(&Token::Bang)?;
         let lhs = match self.lex.peek()? {
-            Token::IntLit(_) | Token::UIntLit(_) => Some((Some(self.lex.expect_uint_lit()? as u32), None)),
+            Token::IntLit(_) | Token::UIntLit(_) => {
+                Some((Some(self.lex.expect_uint_lit()? as u32), None))
+            }
             Token::LocalIdent(_) => Some((None, Some(self.lex.expect_local_ident()?))),
             _ => {
                 self.skip_one_metadata_value()?;
@@ -2949,7 +2983,12 @@ impl<'src> Parser<'src> {
         }
         if matches!(
             cur,
-            Token::Comma | Token::Colon | Token::RParen | Token::RBracket | Token::RBrace | Token::RAngle
+            Token::Comma
+                | Token::Colon
+                | Token::RParen
+                | Token::RBracket
+                | Token::RBrace
+                | Token::RAngle
         ) {
             return false;
         }
@@ -3163,7 +3202,6 @@ impl<'src> Parser<'src> {
         let _ = self.parse_metadata_value_text()?;
         Ok(())
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -3309,10 +3347,7 @@ entry:
         let loc = module.debug_location(12).expect("dilocation");
         assert_eq!(loc.line, 27);
         assert_eq!(loc.column, 3);
-        assert_eq!(
-            module.metadata_node(14),
-            Some("!{!\"int\",!15}")
-        );
+        assert_eq!(module.metadata_node(14), Some("!{!\"int\",!15}"));
     }
 
     #[test]
@@ -3334,9 +3369,20 @@ entry:
             module2.named_metadata,
             vec![("llvm.dbg.cu".to_string(), "!{!0}".to_string())]
         );
-        assert_eq!(module2.metadata_node(0).map(|s| s.contains("DICompileUnit")), Some(true));
-        assert_eq!(module2.metadata_node(1).map(|s| s.contains("DIFile")), Some(true));
-        assert_eq!(module2.metadata_node(12), Some("!DILocation(line:7,column:2,scope:!0)"));
+        assert_eq!(
+            module2
+                .metadata_node(0)
+                .map(|s| s.contains("DICompileUnit")),
+            Some(true)
+        );
+        assert_eq!(
+            module2.metadata_node(1).map(|s| s.contains("DIFile")),
+            Some(true)
+        );
+        assert_eq!(
+            module2.metadata_node(12),
+            Some("!DILocation(line:7,column:2,scope:!0)")
+        );
         let loc = module2.debug_location(12).expect("dilocation");
         assert_eq!(loc.line, 7);
         assert_eq!(loc.column, 2);

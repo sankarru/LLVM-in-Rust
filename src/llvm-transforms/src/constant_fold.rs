@@ -10,7 +10,9 @@
 //! The functions are pure: they only read `ctx` and `kind`; new constants are
 //! allocated with `ctx.const_int` / `ctx.const_float`.
 
-use llvm_ir::{ConstId, ConstantData, Context, FloatKind, InstrKind, IntPredicate, TypeData, ValueRef};
+use llvm_ir::{
+    ConstId, ConstantData, Context, FloatKind, InstrKind, IntPredicate, TypeData, ValueRef,
+};
 
 /// Try to constant-fold `kind`.
 ///

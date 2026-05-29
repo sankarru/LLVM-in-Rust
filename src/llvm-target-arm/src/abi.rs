@@ -151,8 +151,8 @@ fn field_hfa_kind(ctx: &Context, ty: TypeId) -> Option<(FloatKind, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::regs::{X0, X1, X2, X3, X4, X5, X6, X7};
     use crate::regs::{D0, D1, D2, D7};
+    use crate::regs::{X0, X1, X2, X3, X4, X5, X6, X7};
     use llvm_ir::{Context, FloatKind};
 
     #[test]
@@ -255,10 +255,7 @@ mod tests {
     fn hfa_double_x5_not_hfa() {
         let mut ctx = Context::new();
         let f64_ty = ctx.f64_ty;
-        let ty = ctx.mk_struct_anon(
-            vec![f64_ty, f64_ty, f64_ty, f64_ty, f64_ty],
-            false,
-        );
+        let ty = ctx.mk_struct_anon(vec![f64_ty, f64_ty, f64_ty, f64_ty, f64_ty], false);
         assert_eq!(detect_hfa(&ctx, ty), None);
     }
 

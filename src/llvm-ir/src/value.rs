@@ -178,7 +178,6 @@ impl Linkage {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

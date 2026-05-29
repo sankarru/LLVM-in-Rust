@@ -200,12 +200,7 @@ impl FunctionPass for JumpThreading {
 /// unreachable a later dead-block prune drops it.  We skip adding a duplicate
 /// when `succ` already lists `new_pred` as an incoming edge (the degenerate
 /// case where `new_pred` reaches `succ` via two edges).
-fn add_phi_edge_for_bypass(
-    func: &mut Function,
-    empty: BlockId,
-    succ: BlockId,
-    new_pred: BlockId,
-) {
+fn add_phi_edge_for_bypass(func: &mut Function, empty: BlockId, succ: BlockId, new_pred: BlockId) {
     // `empty` must itself be a pure pass-through (no body) for this to be a
     // value-preserving bypass; `bypass_if_empty` already guaranteed that.
     let body = func.blocks[succ.0 as usize].body.clone();
@@ -317,7 +312,9 @@ mod tests {
         let mut pass = JumpThreading;
         assert!(pass.run_on_function(&mut ctx, func));
 
-        let term = func.blocks[entry.0 as usize].terminator.expect("terminator");
+        let term = func.blocks[entry.0 as usize]
+            .terminator
+            .expect("terminator");
         match &func.instr(term).kind {
             InstrKind::Br { dest } => assert_eq!(*dest, then_b),
             other => panic!("expected Br after threading, got {other:?}"),
@@ -374,14 +371,7 @@ mod tests {
         let mut ctx = Context::new();
         let mut module = Module::new("jt_phi_true");
         let mut b = Builder::new(&mut ctx, &mut module);
-        b.add_function(
-            "f",
-            b.ctx.void_ty,
-            vec![],
-            vec![],
-            false,
-            Linkage::External,
-        );
+        b.add_function("f", b.ctx.void_ty, vec![], vec![], false, Linkage::External);
 
         let pred_true = b.add_block("pred_true");
         let pred_false = b.add_block("pred_false");
@@ -440,14 +430,7 @@ mod tests {
         let mut ctx = Context::new();
         let mut module = Module::new("jt_phi_false");
         let mut b = Builder::new(&mut ctx, &mut module);
-        b.add_function(
-            "g",
-            b.ctx.void_ty,
-            vec![],
-            vec![],
-            false,
-            Linkage::External,
-        );
+        b.add_function("g", b.ctx.void_ty, vec![], vec![], false, Linkage::External);
 
         let pred_true = b.add_block("pred_true");
         let join = b.add_block("join");
@@ -566,11 +549,7 @@ mod tests {
 
         b.position_at_end(join);
         // Both incoming values are arguments (not constants) → no threading.
-        let phi = b.build_phi(
-            "c",
-            b.ctx.i1_ty,
-            vec![(arg_a, pred_a), (arg_b, pred_b)],
-        );
+        let phi = b.build_phi("c", b.ctx.i1_ty, vec![(arg_a, pred_a), (arg_b, pred_b)]);
         b.build_cond_br(phi, then_b, else_b);
 
         b.position_at_end(then_b);

@@ -5,8 +5,8 @@ use llvm_ir::value::Argument;
 use llvm_ir::{
     ArgId, BasicBlock, BlockId, ConstId, ConstantData, Context, FastMathFlags, FloatKind,
     FloatPredicate, Function, GlobalId, GlobalVariable, InstrId, InstrKind, Instruction,
-    IntArithFlags, IntPredicate, Linkage, MemOrdering, Module, RmwOp, TailCallKind,
-    TypeData, TypeId, ValueRef,
+    IntArithFlags, IntPredicate, Linkage, MemOrdering, Module, RmwOp, TailCallKind, TypeData,
+    TypeId, ValueRef,
 };
 
 /// Magic bytes for the LRIR format.
@@ -1289,17 +1289,27 @@ fn decode_instr(
                 handlers.push(BlockId(r.u32()?));
             }
             let default = decode_opt_u32(r)?.map(BlockId);
-            InstrKind::CatchSwitch { parent, handlers, default }
+            InstrKind::CatchSwitch {
+                parent,
+                handlers,
+                default,
+            }
         }
         instr_tag::CATCHRET => {
             let catch_pad = decode_vref(r)?;
             let successor = BlockId(r.u32()?);
-            InstrKind::CatchRet { catch_pad, successor }
+            InstrKind::CatchRet {
+                catch_pad,
+                successor,
+            }
         }
         instr_tag::CLEANUPRET => {
             let cleanup_pad = decode_vref(r)?;
             let unwind_dest = decode_opt_u32(r)?.map(BlockId);
-            InstrKind::CleanupRet { cleanup_pad, unwind_dest }
+            InstrKind::CleanupRet {
+                cleanup_pad,
+                unwind_dest,
+            }
         }
         other => return Err(BitcodeError::UnsupportedRecord(other)),
     };

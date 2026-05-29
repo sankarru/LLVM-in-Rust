@@ -6,7 +6,7 @@
 //! shims pass, the backend pipeline is correct enough to wire up to rustc once
 //! the nightly interface is available.
 
-use llvm_codegen::{emit_object, IselBackend, ObjectFormat, ObjectFile, Reloc, Section, Symbol};
+use llvm_codegen::{emit_object, IselBackend, ObjectFile, ObjectFormat, Reloc, Section, Symbol};
 use llvm_ir::{Context, Module};
 use llvm_ir_parser::parser::parse;
 use llvm_target_x86::{TargetFeatures, X86Backend, X86Emitter};
@@ -40,7 +40,11 @@ pub fn emit_module_to_bytes(
     module: &Module,
     fmt: ObjectFormat,
 ) -> Result<Vec<u8>, String> {
-    let text_name = if fmt == ObjectFormat::MachO { "__text" } else { ".text" };
+    let text_name = if fmt == ObjectFormat::MachO {
+        "__text"
+    } else {
+        ".text"
+    };
 
     let mut merged_text: Vec<u8> = Vec::new();
     let mut merged_symbols: Vec<Symbol> = Vec::new();
@@ -61,7 +65,11 @@ pub fn emit_module_to_bytes(
         let sym_base = merged_symbols.len();
 
         // Find the text section and accumulate.
-        if let Some(sec) = obj.sections.iter().find(|s| s.name == ".text" || s.name == "__text") {
+        if let Some(sec) = obj
+            .sections
+            .iter()
+            .find(|s| s.name == ".text" || s.name == "__text")
+        {
             for mut r in sec.relocs.iter().cloned() {
                 r.symbol += sym_base;
                 r.offset += text_off as u64;
@@ -169,14 +177,13 @@ mod tests {
 
     #[test]
     fn shim_multi_func_cgu_emits_both_symbols() {
-        let bytes =
-            compile_to_elf(MULTI_FUNC, OptLevel::O0).expect("multi-func must compile");
+        let bytes = compile_to_elf(MULTI_FUNC, OptLevel::O0).expect("multi-func must compile");
         // ELF strtab stores null-terminated symbol names; match the null bytes on
         // both sides to avoid false positives from section headers or other data.
         let has = |name: &[u8]| {
-            bytes.windows(name.len() + 2).any(|w| {
-                w[0] == 0 && &w[1..name.len() + 1] == name && w[name.len() + 1] == 0
-            })
+            bytes
+                .windows(name.len() + 2)
+                .any(|w| w[0] == 0 && &w[1..name.len() + 1] == name && w[name.len() + 1] == 0)
         };
         assert!(has(b"square"), "symbol 'square' must appear in strtab");
         assert!(has(b"main"), "symbol 'main' must appear in strtab");
@@ -207,7 +214,10 @@ mod tests {
     fn shim_declarations_only_returns_error() {
         let ir = "declare i32 @printf(i8*, ...)";
         let result = compile_to_elf(ir, OptLevel::O0);
-        assert!(result.is_err(), "declarations-only module must return an error");
+        assert!(
+            result.is_err(),
+            "declarations-only module must return an error"
+        );
     }
 
     // CGU idempotency: running the pipeline twice must not change function count.
@@ -236,7 +246,11 @@ mod tests {
         let bytes = emit_module_to_bytes(&ctx, &module, ObjectFormat::MachO)
             .expect("Mach-O emit must succeed");
         // Mach-O magic: 0xCFFAEDFE (little-endian 64-bit)
-        assert_eq!(&bytes[..4], b"\xcf\xfa\xed\xfe", "Mach-O magic must be present");
+        assert_eq!(
+            &bytes[..4],
+            b"\xcf\xfa\xed\xfe",
+            "Mach-O magic must be present"
+        );
     }
 
     #[test]
@@ -247,7 +261,11 @@ mod tests {
         let bytes = emit_module_to_bytes(&ctx, &module, ObjectFormat::Coff)
             .expect("COFF emit must succeed");
         // COFF x86-64 machine type: 0x8664 (little-endian)
-        assert_eq!(&bytes[..2], b"\x64\x86", "COFF x86-64 magic must be present");
+        assert_eq!(
+            &bytes[..2],
+            b"\x64\x86",
+            "COFF x86-64 magic must be present"
+        );
     }
 
     #[test]

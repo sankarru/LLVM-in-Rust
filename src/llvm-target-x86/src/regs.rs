@@ -81,12 +81,10 @@ pub const XMM15: PReg = PReg(31);
 
 /// Caller-saved XMM registers available for FP allocation (System V AMD64).
 /// XMM0–XMM7 are caller-saved; XMM8–XMM15 are callee-saved under Win64.
-pub const FP_ALLOCATABLE: &[PReg] =
-    &[XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7];
+pub const FP_ALLOCATABLE: &[PReg] = &[XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7];
 
 /// Callee-saved XMM registers under Windows x64 ABI.
-pub const FP_CALLEE_SAVED_WIN64: &[PReg] =
-    &[XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15];
+pub const FP_CALLEE_SAVED_WIN64: &[PReg] = &[XMM8, XMM9, XMM10, XMM11, XMM12, XMM13, XMM14, XMM15];
 
 /// Whether `r` is an XMM (FP/SIMD) register.
 #[inline]

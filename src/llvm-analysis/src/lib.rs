@@ -14,8 +14,8 @@ pub mod use_def;
 
 /// Public API for `re-export`.
 pub use alias::{
-    AliasAnalysis, AliasResult, BasicAliasAnalysis, CombinedAliasAnalysis, MemAccess,
-    TbaaAccessTag, TbaaHierarchy, TbaaNode, UnderlyingObject, underlying_object,
+    underlying_object, AliasAnalysis, AliasResult, BasicAliasAnalysis, CombinedAliasAnalysis,
+    MemAccess, TbaaAccessTag, TbaaHierarchy, TbaaNode, UnderlyingObject,
 };
 /// Public API for `re-export`.
 pub use call_graph::{CallEdge, CallEdgeKind, CallGraph};

@@ -1,6 +1,9 @@
 //! RV64 encoder and object emission.
 
-use crate::{instructions::*, regs::{fp_enc, is_fp_reg}};
+use crate::{
+    instructions::*,
+    regs::{fp_enc, is_fp_reg},
+};
 use llvm_codegen::emit::{DebugLineRow, Emitter, ObjectFormat, Section};
 use llvm_codegen::isel::{MInstr, MOpcode, MOperand, MachineFunction, PReg, VReg};
 
@@ -122,7 +125,11 @@ fn fp_reg_of_dst(v: VReg) -> u8 {
     // Post-allocation: v.0 = PReg.0 (8-bit physical reg number stored in u32).
     // FP regs: PReg(32..63) → fp_enc = PReg.0 - 32.
     let raw = (v.0 & 0xFF) as u8;
-    if raw >= 32 { raw - 32 } else { raw }
+    if raw >= 32 {
+        raw - 32
+    } else {
+        raw
+    }
 }
 
 /// Extract the 5-bit hardware FP register number from a PReg operand.
@@ -135,7 +142,11 @@ fn fp_reg_of_op(op: &MOperand) -> Option<u8> {
             let raw = (*v & 0xFF) as u8;
             // If it was an FP VReg, the bit pattern in the class-bit was stripped
             // by apply_allocation, so use raw directly.
-            if raw >= 32 { Some(raw - 32) } else { Some(raw) }
+            if raw >= 32 {
+                Some(raw - 32)
+            } else {
+                Some(raw)
+            }
         }
         _ => None,
     }
@@ -150,12 +161,7 @@ fn imm_of_op(op: Option<&MOperand>) -> i32 {
 }
 
 fn enc_r(f7: u32, rs2: u8, rs1: u8, f3: u32, rd: u8, opc: u32) -> u32 {
-    (f7 << 25)
-        | ((rs2 as u32) << 20)
-        | ((rs1 as u32) << 15)
-        | (f3 << 12)
-        | ((rd as u32) << 7)
-        | opc
+    (f7 << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | (f3 << 12) | ((rd as u32) << 7) | opc
 }
 
 fn enc_i(imm: i32, rs1: u8, f3: u32, rd: u8, opc: u32) -> u32 {
@@ -167,12 +173,7 @@ fn enc_s(imm: i32, rs2: u8, rs1: u8, f3: u32, opc: u32) -> u32 {
     let i = (imm as u32) & 0xFFF;
     let hi = (i >> 5) & 0x7F;
     let lo = i & 0x1F;
-    (hi << 25)
-        | ((rs2 as u32) << 20)
-        | ((rs1 as u32) << 15)
-        | (f3 << 12)
-        | (lo << 7)
-        | opc
+    (hi << 25) | ((rs2 as u32) << 20) | ((rs1 as u32) << 15) | (f3 << 12) | (lo << 7) | opc
 }
 
 fn enc_b(imm: i32, rs2: u8, rs1: u8, f3: u32, opc: u32) -> u32 {
@@ -266,9 +267,16 @@ fn encode_instr(instr: &MInstr) -> u32 {
 
         JAL => enc_j(imm_of_op(instr.operands.first()), rd, 0x6F),
         JALR => {
-            let d = instr.dst.map(reg_of_dst).unwrap_or_else(|| instr.operands.first().and_then(reg_of_op).unwrap_or(0));
+            let d = instr
+                .dst
+                .map(reg_of_dst)
+                .unwrap_or_else(|| instr.operands.first().and_then(reg_of_op).unwrap_or(0));
             let base_idx = if instr.dst.is_some() { 0 } else { 1 };
-            let base = instr.operands.get(base_idx).and_then(reg_of_op).unwrap_or(0);
+            let base = instr
+                .operands
+                .get(base_idx)
+                .and_then(reg_of_op)
+                .unwrap_or(0);
             let imm = imm_of_op(instr.operands.get(base_idx + 1));
             enc_i(imm, base, 0x0, d, 0x67)
         }
@@ -285,26 +293,58 @@ fn encode_instr(instr: &MInstr) -> u32 {
         LR_D => enc_amo(0b00010, true, true, 0, rs1 as u32, 0b011, rd as u32),
 
         // SC.W / SC.D: operands[0]=rs1(ptr), operands[1]=rs2(new value)
-        SC_W => enc_amo(0b00011, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
-        SC_D => enc_amo(0b00011, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
+        SC_W => enc_amo(
+            0b00011, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32,
+        ),
+        SC_D => enc_amo(
+            0b00011, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32,
+        ),
 
         // AMO word variants
-        AMOADD_W  => enc_amo(0b00000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
-        AMOSWAP_W => enc_amo(0b00001, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
-        AMOXOR_W  => enc_amo(0b00100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
-        AMOAND_W  => enc_amo(0b01100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
-        AMOOR_W   => enc_amo(0b01000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
-        AMOMIN_W  => enc_amo(0b10000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
-        AMOMAX_W  => enc_amo(0b10100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
-        AMOMINU_W => enc_amo(0b11000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
-        AMOMAXU_W => enc_amo(0b11100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32),
+        AMOADD_W => enc_amo(
+            0b00000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32,
+        ),
+        AMOSWAP_W => enc_amo(
+            0b00001, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32,
+        ),
+        AMOXOR_W => enc_amo(
+            0b00100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32,
+        ),
+        AMOAND_W => enc_amo(
+            0b01100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32,
+        ),
+        AMOOR_W => enc_amo(
+            0b01000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32,
+        ),
+        AMOMIN_W => enc_amo(
+            0b10000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32,
+        ),
+        AMOMAX_W => enc_amo(
+            0b10100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32,
+        ),
+        AMOMINU_W => enc_amo(
+            0b11000, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32,
+        ),
+        AMOMAXU_W => enc_amo(
+            0b11100, true, true, rs2 as u32, rs1 as u32, 0b010, rd as u32,
+        ),
 
         // AMO doubleword variants
-        AMOADD_D  => enc_amo(0b00000, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
-        AMOSWAP_D => enc_amo(0b00001, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
-        AMOXOR_D  => enc_amo(0b00100, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
-        AMOAND_D  => enc_amo(0b01100, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
-        AMOOR_D   => enc_amo(0b01000, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32),
+        AMOADD_D => enc_amo(
+            0b00000, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32,
+        ),
+        AMOSWAP_D => enc_amo(
+            0b00001, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32,
+        ),
+        AMOXOR_D => enc_amo(
+            0b00100, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32,
+        ),
+        AMOAND_D => enc_amo(
+            0b01100, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32,
+        ),
+        AMOOR_D => enc_amo(
+            0b01000, true, true, rs2 as u32, rs1 as u32, 0b011, rd as u32,
+        ),
 
         // ── non-promotable alloca frame-slot access ────────────────────────
         // ADDI_FP_SLOT: addi rd, s0(x8), -(slot_idx+1)*8
@@ -442,7 +482,7 @@ fn encode_instr(instr: &MInstr) -> u32 {
             let rd = fp_reg_of_dst(instr.dst.unwrap_or(VReg(0)));
             let slot = imm_of_op(instr.operands.first());
             let byte_off = slot * 8; // slot index → byte offset
-            // Use x8 (s0/fp) as frame pointer, same as integer spill reloads.
+                                     // Use x8 (s0/fp) as frame pointer, same as integer spill reloads.
             enc_i(byte_off, 8, 0x3, rd, 0x07)
         }
         // FP_STORE_RM: FP spill save — FSD Fs, slot*8(sp)
@@ -567,35 +607,65 @@ mod tests {
     }
 
     #[test]
-    fn enc_r_add() { assert_eq!(encode_instr(&rr(ADD_RR)), enc_r(0x00, 2, 1, 0, 3, 0x33)); }
+    fn enc_r_add() {
+        assert_eq!(encode_instr(&rr(ADD_RR)), enc_r(0x00, 2, 1, 0, 3, 0x33));
+    }
     #[test]
-    fn enc_r_sub() { assert_eq!(encode_instr(&rr(SUB_RR)), enc_r(0x20, 2, 1, 0, 3, 0x33)); }
+    fn enc_r_sub() {
+        assert_eq!(encode_instr(&rr(SUB_RR)), enc_r(0x20, 2, 1, 0, 3, 0x33));
+    }
     #[test]
-    fn enc_r_mul() { assert_eq!(encode_instr(&rr(MUL_RR)), enc_r(0x01, 2, 1, 0, 3, 0x33)); }
+    fn enc_r_mul() {
+        assert_eq!(encode_instr(&rr(MUL_RR)), enc_r(0x01, 2, 1, 0, 3, 0x33));
+    }
     #[test]
-    fn enc_r_div() { assert_eq!(encode_instr(&rr(DIV_RR)), enc_r(0x01, 2, 1, 4, 3, 0x33)); }
+    fn enc_r_div() {
+        assert_eq!(encode_instr(&rr(DIV_RR)), enc_r(0x01, 2, 1, 4, 3, 0x33));
+    }
     #[test]
-    fn enc_r_udiv() { assert_eq!(encode_instr(&rr(UDIV_RR)), enc_r(0x01, 2, 1, 5, 3, 0x33)); }
+    fn enc_r_udiv() {
+        assert_eq!(encode_instr(&rr(UDIV_RR)), enc_r(0x01, 2, 1, 5, 3, 0x33));
+    }
     #[test]
-    fn enc_r_rem() { assert_eq!(encode_instr(&rr(REM_RR)), enc_r(0x01, 2, 1, 6, 3, 0x33)); }
+    fn enc_r_rem() {
+        assert_eq!(encode_instr(&rr(REM_RR)), enc_r(0x01, 2, 1, 6, 3, 0x33));
+    }
     #[test]
-    fn enc_r_urem() { assert_eq!(encode_instr(&rr(UREM_RR)), enc_r(0x01, 2, 1, 7, 3, 0x33)); }
+    fn enc_r_urem() {
+        assert_eq!(encode_instr(&rr(UREM_RR)), enc_r(0x01, 2, 1, 7, 3, 0x33));
+    }
     #[test]
-    fn enc_r_and() { assert_eq!(encode_instr(&rr(AND_RR)), enc_r(0x00, 2, 1, 7, 3, 0x33)); }
+    fn enc_r_and() {
+        assert_eq!(encode_instr(&rr(AND_RR)), enc_r(0x00, 2, 1, 7, 3, 0x33));
+    }
     #[test]
-    fn enc_r_or() { assert_eq!(encode_instr(&rr(OR_RR)), enc_r(0x00, 2, 1, 6, 3, 0x33)); }
+    fn enc_r_or() {
+        assert_eq!(encode_instr(&rr(OR_RR)), enc_r(0x00, 2, 1, 6, 3, 0x33));
+    }
     #[test]
-    fn enc_r_xor() { assert_eq!(encode_instr(&rr(XOR_RR)), enc_r(0x00, 2, 1, 4, 3, 0x33)); }
+    fn enc_r_xor() {
+        assert_eq!(encode_instr(&rr(XOR_RR)), enc_r(0x00, 2, 1, 4, 3, 0x33));
+    }
     #[test]
-    fn enc_r_sll() { assert_eq!(encode_instr(&rr(SLL_RR)), enc_r(0x00, 2, 1, 1, 3, 0x33)); }
+    fn enc_r_sll() {
+        assert_eq!(encode_instr(&rr(SLL_RR)), enc_r(0x00, 2, 1, 1, 3, 0x33));
+    }
     #[test]
-    fn enc_r_srl() { assert_eq!(encode_instr(&rr(SRL_RR)), enc_r(0x00, 2, 1, 5, 3, 0x33)); }
+    fn enc_r_srl() {
+        assert_eq!(encode_instr(&rr(SRL_RR)), enc_r(0x00, 2, 1, 5, 3, 0x33));
+    }
     #[test]
-    fn enc_r_sra() { assert_eq!(encode_instr(&rr(SRA_RR)), enc_r(0x20, 2, 1, 5, 3, 0x33)); }
+    fn enc_r_sra() {
+        assert_eq!(encode_instr(&rr(SRA_RR)), enc_r(0x20, 2, 1, 5, 3, 0x33));
+    }
     #[test]
-    fn enc_r_slt() { assert_eq!(encode_instr(&rr(SLT_RR)), enc_r(0x00, 2, 1, 2, 3, 0x33)); }
+    fn enc_r_slt() {
+        assert_eq!(encode_instr(&rr(SLT_RR)), enc_r(0x00, 2, 1, 2, 3, 0x33));
+    }
     #[test]
-    fn enc_r_sltu() { assert_eq!(encode_instr(&rr(SLTU_RR)), enc_r(0x00, 2, 1, 3, 3, 0x33)); }
+    fn enc_r_sltu() {
+        assert_eq!(encode_instr(&rr(SLTU_RR)), enc_r(0x00, 2, 1, 3, 3, 0x33));
+    }
 
     #[test]
     fn enc_mov_rr() {
@@ -615,69 +685,110 @@ mod tests {
 
     #[test]
     fn enc_i_addi() {
-        let mi = MInstr::new(ADDI).with_dst(VReg(1)).with_preg(PReg(2)).with_imm(7);
+        let mi = MInstr::new(ADDI)
+            .with_dst(VReg(1))
+            .with_preg(PReg(2))
+            .with_imm(7);
         assert_eq!(encode_instr(&mi), enc_i(7, 2, 0, 1, 0x13));
     }
     #[test]
     fn enc_i_xori() {
-        let mi = MInstr::new(XORI).with_dst(VReg(1)).with_preg(PReg(2)).with_imm(1);
+        let mi = MInstr::new(XORI)
+            .with_dst(VReg(1))
+            .with_preg(PReg(2))
+            .with_imm(1);
         assert_eq!(encode_instr(&mi), enc_i(1, 2, 4, 1, 0x13));
     }
     #[test]
     fn enc_i_sltiu() {
-        let mi = MInstr::new(SLTIU).with_dst(VReg(1)).with_preg(PReg(2)).with_imm(1);
+        let mi = MInstr::new(SLTIU)
+            .with_dst(VReg(1))
+            .with_preg(PReg(2))
+            .with_imm(1);
         assert_eq!(encode_instr(&mi), enc_i(1, 2, 3, 1, 0x13));
     }
 
     #[test]
     fn enc_i_lw() {
-        let mi = MInstr::new(LW).with_dst(VReg(3)).with_preg(PReg(1)).with_preg(PReg(0)).with_imm(16);
+        let mi = MInstr::new(LW)
+            .with_dst(VReg(3))
+            .with_preg(PReg(1))
+            .with_preg(PReg(0))
+            .with_imm(16);
         assert_eq!(encode_instr(&mi), enc_i(16, 1, 2, 3, 0x03));
     }
     #[test]
     fn enc_i_ld() {
-        let mi = MInstr::new(LD).with_dst(VReg(3)).with_preg(PReg(1)).with_preg(PReg(0)).with_imm(24);
+        let mi = MInstr::new(LD)
+            .with_dst(VReg(3))
+            .with_preg(PReg(1))
+            .with_preg(PReg(0))
+            .with_imm(24);
         assert_eq!(encode_instr(&mi), enc_i(24, 1, 3, 3, 0x03));
     }
     #[test]
     fn enc_s_sw() {
-        let mi = MInstr::new(SW).with_preg(PReg(1)).with_preg(PReg(2)).with_imm(20);
+        let mi = MInstr::new(SW)
+            .with_preg(PReg(1))
+            .with_preg(PReg(2))
+            .with_imm(20);
         assert_eq!(encode_instr(&mi), enc_s(20, 2, 1, 2, 0x23));
     }
     #[test]
     fn enc_s_sd() {
-        let mi = MInstr::new(SD).with_preg(PReg(1)).with_preg(PReg(2)).with_imm(28);
+        let mi = MInstr::new(SD)
+            .with_preg(PReg(1))
+            .with_preg(PReg(2))
+            .with_imm(28);
         assert_eq!(encode_instr(&mi), enc_s(28, 2, 1, 3, 0x23));
     }
 
     #[test]
     fn enc_b_beq() {
-        let mi = MInstr::new(BEQ).with_preg(PReg(1)).with_preg(PReg(2)).with_imm(16);
+        let mi = MInstr::new(BEQ)
+            .with_preg(PReg(1))
+            .with_preg(PReg(2))
+            .with_imm(16);
         assert_eq!(encode_instr(&mi), enc_b(16, 2, 1, 0, 0x63));
     }
     #[test]
     fn enc_b_bne() {
-        let mi = MInstr::new(BNE).with_preg(PReg(1)).with_preg(PReg(2)).with_imm(16);
+        let mi = MInstr::new(BNE)
+            .with_preg(PReg(1))
+            .with_preg(PReg(2))
+            .with_imm(16);
         assert_eq!(encode_instr(&mi), enc_b(16, 2, 1, 1, 0x63));
     }
     #[test]
     fn enc_b_blt() {
-        let mi = MInstr::new(BLT).with_preg(PReg(1)).with_preg(PReg(2)).with_imm(16);
+        let mi = MInstr::new(BLT)
+            .with_preg(PReg(1))
+            .with_preg(PReg(2))
+            .with_imm(16);
         assert_eq!(encode_instr(&mi), enc_b(16, 2, 1, 4, 0x63));
     }
     #[test]
     fn enc_b_bge() {
-        let mi = MInstr::new(BGE).with_preg(PReg(1)).with_preg(PReg(2)).with_imm(16);
+        let mi = MInstr::new(BGE)
+            .with_preg(PReg(1))
+            .with_preg(PReg(2))
+            .with_imm(16);
         assert_eq!(encode_instr(&mi), enc_b(16, 2, 1, 5, 0x63));
     }
     #[test]
     fn enc_b_bltu() {
-        let mi = MInstr::new(BLTU).with_preg(PReg(1)).with_preg(PReg(2)).with_imm(16);
+        let mi = MInstr::new(BLTU)
+            .with_preg(PReg(1))
+            .with_preg(PReg(2))
+            .with_imm(16);
         assert_eq!(encode_instr(&mi), enc_b(16, 2, 1, 6, 0x63));
     }
     #[test]
     fn enc_b_bgeu() {
-        let mi = MInstr::new(BGEU).with_preg(PReg(1)).with_preg(PReg(2)).with_imm(16);
+        let mi = MInstr::new(BGEU)
+            .with_preg(PReg(1))
+            .with_preg(PReg(2))
+            .with_imm(16);
         assert_eq!(encode_instr(&mi), enc_b(16, 2, 1, 7, 0x63));
     }
 
@@ -688,11 +799,16 @@ mod tests {
     }
     #[test]
     fn enc_i_jalr() {
-        let mi = MInstr::new(JALR).with_dst(VReg(1)).with_preg(PReg(2)).with_imm(12);
+        let mi = MInstr::new(JALR)
+            .with_dst(VReg(1))
+            .with_preg(PReg(2))
+            .with_imm(12);
         assert_eq!(encode_instr(&mi), enc_i(12, 2, 0, 1, 0x67));
     }
     #[test]
-    fn enc_ret() { assert_eq!(encode_instr(&MInstr::new(RET)), enc_i(0, 1, 0, 0, 0x67)); }
+    fn enc_ret() {
+        assert_eq!(encode_instr(&MInstr::new(RET)), enc_i(0, 1, 0, 0, 0x67));
+    }
 
     #[test]
     fn enc_u_lui() {
@@ -706,15 +822,28 @@ mod tests {
     }
 
     #[test]
-    fn helper_i_sign_wrap() { assert_eq!(enc_i(-1, 1, 0, 2, 0x13) >> 20, 0xFFF); }
+    fn helper_i_sign_wrap() {
+        assert_eq!(enc_i(-1, 1, 0, 2, 0x13) >> 20, 0xFFF);
+    }
     #[test]
-    fn helper_s_splits_imm() { assert_eq!((enc_s(0x7F, 2, 1, 0, 0x23) >> 7) & 0x1F, 0x1F); }
+    fn helper_s_splits_imm() {
+        assert_eq!((enc_s(0x7F, 2, 1, 0, 0x23) >> 7) & 0x1F, 0x1F);
+    }
     #[test]
-    fn helper_b_encodes_bit11() { assert_eq!((enc_b(0x800, 2, 1, 0, 0x63) >> 7) & 1, 1); }
+    fn helper_b_encodes_bit11() {
+        assert_eq!((enc_b(0x800, 2, 1, 0, 0x63) >> 7) & 1, 1);
+    }
     #[test]
-    fn helper_j_encodes_bit20() { assert_eq!((enc_j(0x100000, 1, 0x6F) >> 31) & 1, 1); }
+    fn helper_j_encodes_bit20() {
+        assert_eq!((enc_j(0x100000, 1, 0x6F) >> 31) & 1, 1);
+    }
     #[test]
-    fn helper_u_keeps_upper_20() { assert_eq!(enc_u(0xABCD1000u32 as i32, 1, 0x37) & 0xFFFFF000, 0xABCD1000); }
+    fn helper_u_keeps_upper_20() {
+        assert_eq!(
+            enc_u(0xABCD1000u32 as i32, 1, 0x37) & 0xFFFFF000,
+            0xABCD1000
+        );
+    }
 
     #[test]
     fn emitter_outputs_words() {
@@ -771,7 +900,10 @@ mod tests {
     #[test]
     fn enc_amo_amoadd_w() {
         // amoadd.w.aqrl rd=x1, rs2=x2, (rs1=x3)
-        let mi = MInstr::new(AMOADD_W).with_dst(VReg(1)).with_preg(PReg(3)).with_preg(PReg(2));
+        let mi = MInstr::new(AMOADD_W)
+            .with_dst(VReg(1))
+            .with_preg(PReg(3))
+            .with_preg(PReg(2));
         let expected = enc_amo(0b00000, true, true, 2, 3, 0b010, 1);
         assert_eq!(encode_instr(&mi), expected, "amoadd.w encoding mismatch");
     }
@@ -787,7 +919,10 @@ mod tests {
     #[test]
     fn enc_amo_sc_w() {
         // sc.w.aqrl rd=x1, rs2=x2, (rs1=x3)
-        let mi = MInstr::new(SC_W).with_dst(VReg(1)).with_preg(PReg(3)).with_preg(PReg(2));
+        let mi = MInstr::new(SC_W)
+            .with_dst(VReg(1))
+            .with_preg(PReg(3))
+            .with_preg(PReg(2));
         let expected = enc_amo(0b00011, true, true, 2, 3, 0b010, 1);
         assert_eq!(encode_instr(&mi), expected);
     }
@@ -795,56 +930,80 @@ mod tests {
     #[test]
     fn enc_amo_amoswap_d() {
         // amoswap.d.aqrl rd=x1, rs2=x3, (rs1=x2) — 64-bit variant
-        let mi = MInstr::new(AMOSWAP_D).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+        let mi = MInstr::new(AMOSWAP_D)
+            .with_dst(VReg(1))
+            .with_preg(PReg(2))
+            .with_preg(PReg(3));
         let expected = enc_amo(0b00001, true, true, 3, 2, 0b011, 1);
         assert_eq!(encode_instr(&mi), expected);
     }
 
     #[test]
     fn enc_amo_amoxor_w() {
-        let mi = MInstr::new(AMOXOR_W).with_dst(VReg(2)).with_preg(PReg(4)).with_preg(PReg(5));
+        let mi = MInstr::new(AMOXOR_W)
+            .with_dst(VReg(2))
+            .with_preg(PReg(4))
+            .with_preg(PReg(5));
         let expected = enc_amo(0b00100, true, true, 5, 4, 0b010, 2);
         assert_eq!(encode_instr(&mi), expected);
     }
 
     #[test]
     fn enc_amo_amoand_w() {
-        let mi = MInstr::new(AMOAND_W).with_dst(VReg(3)).with_preg(PReg(1)).with_preg(PReg(2));
+        let mi = MInstr::new(AMOAND_W)
+            .with_dst(VReg(3))
+            .with_preg(PReg(1))
+            .with_preg(PReg(2));
         let expected = enc_amo(0b01100, true, true, 2, 1, 0b010, 3);
         assert_eq!(encode_instr(&mi), expected);
     }
 
     #[test]
     fn enc_amo_amoor_w() {
-        let mi = MInstr::new(AMOOR_W).with_dst(VReg(4)).with_preg(PReg(5)).with_preg(PReg(6));
+        let mi = MInstr::new(AMOOR_W)
+            .with_dst(VReg(4))
+            .with_preg(PReg(5))
+            .with_preg(PReg(6));
         let expected = enc_amo(0b01000, true, true, 6, 5, 0b010, 4);
         assert_eq!(encode_instr(&mi), expected);
     }
 
     #[test]
     fn enc_amo_amomin_w() {
-        let mi = MInstr::new(AMOMIN_W).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+        let mi = MInstr::new(AMOMIN_W)
+            .with_dst(VReg(1))
+            .with_preg(PReg(2))
+            .with_preg(PReg(3));
         let expected = enc_amo(0b10000, true, true, 3, 2, 0b010, 1);
         assert_eq!(encode_instr(&mi), expected);
     }
 
     #[test]
     fn enc_amo_amomax_w() {
-        let mi = MInstr::new(AMOMAX_W).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+        let mi = MInstr::new(AMOMAX_W)
+            .with_dst(VReg(1))
+            .with_preg(PReg(2))
+            .with_preg(PReg(3));
         let expected = enc_amo(0b10100, true, true, 3, 2, 0b010, 1);
         assert_eq!(encode_instr(&mi), expected);
     }
 
     #[test]
     fn enc_amo_amominu_w() {
-        let mi = MInstr::new(AMOMINU_W).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+        let mi = MInstr::new(AMOMINU_W)
+            .with_dst(VReg(1))
+            .with_preg(PReg(2))
+            .with_preg(PReg(3));
         let expected = enc_amo(0b11000, true, true, 3, 2, 0b010, 1);
         assert_eq!(encode_instr(&mi), expected);
     }
 
     #[test]
     fn enc_amo_amomaxu_w() {
-        let mi = MInstr::new(AMOMAXU_W).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+        let mi = MInstr::new(AMOMAXU_W)
+            .with_dst(VReg(1))
+            .with_preg(PReg(2))
+            .with_preg(PReg(3));
         let expected = enc_amo(0b11100, true, true, 3, 2, 0b010, 1);
         assert_eq!(encode_instr(&mi), expected);
     }
@@ -858,7 +1017,10 @@ mod tests {
 
     #[test]
     fn enc_amo_sc_d() {
-        let mi = MInstr::new(SC_D).with_dst(VReg(1)).with_preg(PReg(3)).with_preg(PReg(2));
+        let mi = MInstr::new(SC_D)
+            .with_dst(VReg(1))
+            .with_preg(PReg(3))
+            .with_preg(PReg(2));
         let expected = enc_amo(0b00011, true, true, 2, 3, 0b011, 1);
         assert_eq!(encode_instr(&mi), expected);
     }
@@ -867,16 +1029,25 @@ mod tests {
     fn enc_amo_opcode_field() {
         // All AMO instructions must have opcode bits [6:0] = 0x2F
         let opcodes = [
-            FENCE, LR_W, SC_W, AMOADD_W, AMOSWAP_W, AMOXOR_W, AMOAND_W,
-            AMOOR_W, AMOMIN_W, AMOMAX_W, AMOMINU_W, AMOMAXU_W,
-            LR_D, SC_D, AMOADD_D, AMOSWAP_D, AMOXOR_D, AMOAND_D, AMOOR_D,
+            FENCE, LR_W, SC_W, AMOADD_W, AMOSWAP_W, AMOXOR_W, AMOAND_W, AMOOR_W, AMOMIN_W,
+            AMOMAX_W, AMOMINU_W, AMOMAXU_W, LR_D, SC_D, AMOADD_D, AMOSWAP_D, AMOXOR_D, AMOAND_D,
+            AMOOR_D,
         ];
         // FENCE is not an AMO instruction; skip it in this check
         let amo_opcodes = &opcodes[1..]; // skip FENCE
         for &op in amo_opcodes {
-            let mi = MInstr::new(op).with_dst(VReg(1)).with_preg(PReg(2)).with_preg(PReg(3));
+            let mi = MInstr::new(op)
+                .with_dst(VReg(1))
+                .with_preg(PReg(2))
+                .with_preg(PReg(3));
             let word = encode_instr(&mi);
-            assert_eq!(word & 0x7F, 0x2F, "opcode 0x{:X} should have AMO opcode 0x2F in bits[6:0], got 0x{:X}", op.0, word & 0x7F);
+            assert_eq!(
+                word & 0x7F,
+                0x2F,
+                "opcode 0x{:X} should have AMO opcode 0x2F in bits[6:0], got 0x{:X}",
+                op.0,
+                word & 0x7F
+            );
         }
     }
 
@@ -886,7 +1057,7 @@ mod tests {
     /// FP PRegs are offset by 32: PReg(32+fd), etc.
     fn fp_rr(op: llvm_codegen::isel::MOpcode, fd: u8, fs1: u8, fs2: u8) -> MInstr {
         MInstr::new(op)
-            .with_dst(VReg((32 + fd) as u32))  // post-regalloc: VReg holds PReg number
+            .with_dst(VReg((32 + fd) as u32)) // post-regalloc: VReg holds PReg number
             .with_preg(PReg(32 + fs1))
             .with_preg(PReg(32 + fs2))
     }
@@ -949,11 +1120,15 @@ mod tests {
     fn enc_fneg_d_uses_fsgnjn_encoding() {
         // fneg.d is FSGNJN.D rd, rs, rs: funct7=0x21, funct3=0x1, rs2=rs1
         let mi = MInstr::new(FNEG_D)
-            .with_dst(VReg(32 + 0))  // fd=f0
+            .with_dst(VReg(32 + 0)) // fd=f0
             .with_preg(PReg(32 + 1)) // rs1=f1
             .with_preg(PReg(32 + 1)); // rs2=f1 (same)
         let word = encode_instr(&mi);
-        assert_eq!((word >> 25) & 0x7F, 0x21, "fneg.d funct7 must be 0x21 (FSGNJN)");
+        assert_eq!(
+            (word >> 25) & 0x7F,
+            0x21,
+            "fneg.d funct7 must be 0x21 (FSGNJN)"
+        );
         assert_eq!((word >> 12) & 0x7, 0x1, "fneg.d funct3 must be 0x1");
         // rs1 == rs2 == 1
         assert_eq!((word >> 15) & 0x1F, 1, "rs1 must be f1");
@@ -964,7 +1139,7 @@ mod tests {
     fn enc_feq_d_produces_integer_dest() {
         // feq.d uses integer rd, FP rs1/rs2: funct7=0x51, funct3=0x2
         let mi = MInstr::new(FCMP_EQ_D)
-            .with_dst(VReg(3))       // integer rd=x3
+            .with_dst(VReg(3)) // integer rd=x3
             .with_preg(PReg(32 + 0)) // rs1=f0
             .with_preg(PReg(32 + 1)); // rs2=f1
         let word = encode_instr(&mi);
@@ -1001,7 +1176,7 @@ mod tests {
     fn enc_fcvt_l_d_funct7_and_rs2() {
         // fcvt.l.d: funct7=0x61, rs2=2 (L), rounding=RTZ=0x1
         let mi = MInstr::new(FCVT_L_D)
-            .with_dst(VReg(1))        // integer rd
+            .with_dst(VReg(1)) // integer rd
             .with_preg(PReg(32 + 0)); // fp rs1
         let word = encode_instr(&mi);
         assert_eq!((word >> 25) & 0x7F, 0x61, "fcvt.l.d funct7 must be 0x61");
@@ -1024,8 +1199,8 @@ mod tests {
     fn enc_fcvt_d_l_funct7_and_rs2() {
         // fcvt.d.l: funct7=0x69, rs2=2
         let mi = MInstr::new(FCVT_D_L)
-            .with_dst(VReg(32 + 0))  // fp rd
-            .with_preg(PReg(1));      // int rs1
+            .with_dst(VReg(32 + 0)) // fp rd
+            .with_preg(PReg(1)); // int rs1
         let word = encode_instr(&mi);
         assert_eq!((word >> 25) & 0x7F, 0x69, "fcvt.d.l funct7 must be 0x69");
         assert_eq!((word >> 20) & 0x1F, 2, "fcvt.d.l rs2 must be 2 (L)");
@@ -1050,7 +1225,11 @@ mod tests {
             .with_dst(VReg(32 + 5))
             .with_preg(PReg(32 + 6));
         let word = encode_instr(&mi);
-        assert_eq!((word >> 25) & 0x7F, 0x11, "fmv.d funct7 must be 0x11 (FSGNJ)");
+        assert_eq!(
+            (word >> 25) & 0x7F,
+            0x11,
+            "fmv.d funct7 must be 0x11 (FSGNJ)"
+        );
         assert_eq!((word >> 12) & 0x7, 0x0, "fmv.d funct3 must be 0x0");
         // Both rs1 and rs2 must be the same source register (f6=6)
         assert_eq!((word >> 15) & 0x1F, 6, "fmv.d rs1 must be f6");
@@ -1062,7 +1241,7 @@ mod tests {
         // fld f1, 8(x2): opcode=0x07, funct3=0x3
         let mi = MInstr::new(FLD)
             .with_dst(VReg(32 + 1)) // fd=f1
-            .with_preg(PReg(2))      // rs1=x2
+            .with_preg(PReg(2)) // rs1=x2
             .with_imm(8);
         let word = encode_instr(&mi);
         assert_eq!(word & 0x7F, 0x07, "fld opcode must be 0x07");
@@ -1077,8 +1256,8 @@ mod tests {
     fn enc_fsd_s_type_opcode_and_funct3() {
         // fsd f2, 16(x3): opcode=0x27, funct3=0x3
         let mi = MInstr::new(FSD)
-            .with_preg(PReg(3))       // rs1=x3 (base)
-            .with_preg(PReg(32 + 2))  // rs2=f2 (source)
+            .with_preg(PReg(3)) // rs1=x3 (base)
+            .with_preg(PReg(32 + 2)) // rs2=f2 (source)
             .with_imm(16);
         let word = encode_instr(&mi);
         assert_eq!(word & 0x7F, 0x27, "fsd opcode must be 0x27");
@@ -1091,14 +1270,15 @@ mod tests {
     fn enc_fp_arith_all_have_opcode_53() {
         // All FP arithmetic instructions must have opcode 0x53.
         let fp_arith_ops = [
-            FADD_D, FSUB_D, FMUL_D, FDIV_D, FSQRT_D, FNEG_D,
-            FCMP_EQ_D, FCMP_LT_D, FCMP_LE_D,
-            FADD_S, FSUB_S, FMUL_S, FDIV_S, FNEG_S,
-            FCMP_EQ_S, FCMP_LT_S, FCMP_LE_S,
+            FADD_D, FSUB_D, FMUL_D, FDIV_D, FSQRT_D, FNEG_D, FCMP_EQ_D, FCMP_LT_D, FCMP_LE_D,
+            FADD_S, FSUB_S, FMUL_S, FDIV_S, FNEG_S, FCMP_EQ_S, FCMP_LT_S, FCMP_LE_S,
         ];
         for &op in &fp_arith_ops {
             // Build a generic instruction: for compare ops dst is int, for arith dst is fp.
-            let mi = if matches!(op, FCMP_EQ_D | FCMP_LT_D | FCMP_LE_D | FCMP_EQ_S | FCMP_LT_S | FCMP_LE_S) {
+            let mi = if matches!(
+                op,
+                FCMP_EQ_D | FCMP_LT_D | FCMP_LE_D | FCMP_EQ_S | FCMP_LT_S | FCMP_LE_S
+            ) {
                 MInstr::new(op)
                     .with_dst(VReg(1))
                     .with_preg(PReg(32))
@@ -1106,9 +1286,15 @@ mod tests {
             } else if matches!(op, FSQRT_D) {
                 MInstr::new(op).with_dst(VReg(32)).with_preg(PReg(33))
             } else if matches!(op, FNEG_D | FNEG_S) {
-                MInstr::new(op).with_dst(VReg(32)).with_preg(PReg(33)).with_preg(PReg(33))
+                MInstr::new(op)
+                    .with_dst(VReg(32))
+                    .with_preg(PReg(33))
+                    .with_preg(PReg(33))
             } else {
-                MInstr::new(op).with_dst(VReg(32)).with_preg(PReg(33)).with_preg(PReg(34))
+                MInstr::new(op)
+                    .with_dst(VReg(32))
+                    .with_preg(PReg(33))
+                    .with_preg(PReg(34))
             };
             let word = encode_instr(&mi);
             assert_eq!(word & 0x7F, 0x53, "FP op {:?} must have opcode 0x53", op);
@@ -1150,7 +1336,11 @@ entry:
         let func = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, func);
-        let has_fadd = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FADD_D);
+        let has_fadd = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FADD_D);
         assert!(has_fadd, "fadd double must lower to FADD_D");
     }
 
@@ -1168,7 +1358,11 @@ entry:
         let func = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, func);
-        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FSUB_D);
+        let has = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FSUB_D);
         assert!(has, "fsub double must lower to FSUB_D");
     }
 
@@ -1186,7 +1380,11 @@ entry:
         let func = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, func);
-        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FMUL_D);
+        let has = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FMUL_D);
         assert!(has, "fmul double must lower to FMUL_D");
     }
 
@@ -1204,7 +1402,11 @@ entry:
         let func = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, func);
-        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FDIV_D);
+        let has = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FDIV_D);
         assert!(has, "fdiv double must lower to FDIV_D");
     }
 
@@ -1222,7 +1424,11 @@ entry:
         let func = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, func);
-        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FNEG_D);
+        let has = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FNEG_D);
         assert!(has, "fneg double must lower to FNEG_D");
     }
 
@@ -1240,7 +1446,11 @@ entry:
         let func = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, func);
-        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FCMP_EQ_D);
+        let has = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FCMP_EQ_D);
         assert!(has, "fcmp oeq double must lower to FCMP_EQ_D");
     }
 
@@ -1258,7 +1468,11 @@ entry:
         let func = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, func);
-        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FCMP_LT_D);
+        let has = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FCMP_LT_D);
         assert!(has, "fcmp olt double must lower to FCMP_LT_D");
     }
 
@@ -1276,7 +1490,11 @@ entry:
         let func = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, func);
-        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FCVT_D_L);
+        let has = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FCVT_D_L);
         assert!(has, "sitofp i64 to double must lower to FCVT_D_L");
     }
 
@@ -1294,7 +1512,11 @@ entry:
         let func = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, func);
-        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FCVT_L_D);
+        let has = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FCVT_L_D);
         assert!(has, "fptosi double to i64 must lower to FCVT_L_D");
     }
 
@@ -1312,7 +1534,11 @@ entry:
         let func = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, func);
-        let has = mf.blocks.iter().flat_map(|b| b.instrs.iter()).any(|i| i.opcode == FADD_S);
+        let has = mf
+            .blocks
+            .iter()
+            .flat_map(|b| b.instrs.iter())
+            .any(|i| i.opcode == FADD_S);
         assert!(has, "fadd float must lower to FADD_S");
     }
 

@@ -22,10 +22,10 @@
 
 use llvm_codegen::{emit_object, IselBackend, ObjectFile, ObjectFormat, Reloc, Section, Symbol};
 use llvm_ir::{Context, Module};
-use llvm_transforms::{build_pipeline, OptLevel};
-use llvm_target_x86::{TargetFeatures, X86Backend, X86Emitter};
-use llvm_target_arm::lower::{AArch64Backend, AArch64Features};
 use llvm_target_arm::encode::AArch64Emitter;
+use llvm_target_arm::lower::{AArch64Backend, AArch64Features};
+use llvm_target_x86::{TargetFeatures, X86Backend, X86Emitter};
+use llvm_transforms::{build_pipeline, OptLevel};
 
 /// Target architecture for code generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,7 +93,11 @@ pub fn codegen_module(
     pm.run_until_fixed_point(ctx, module, 8);
 
     let fmt = opts.object_format();
-    let text_name = if fmt == ObjectFormat::MachO { "__text" } else { ".text" };
+    let text_name = if fmt == ObjectFormat::MachO {
+        "__text"
+    } else {
+        ".text"
+    };
 
     // 2 + 3. Lower each function and merge.
     let mut merged_text: Vec<u8> = Vec::new();
@@ -129,7 +133,11 @@ pub fn codegen_module(
         let text_off = merged_text.len();
         let sym_base = merged_symbols.len();
 
-        if let Some(sec) = obj.sections.iter().find(|s| s.name == ".text" || s.name == "__text") {
+        if let Some(sec) = obj
+            .sections
+            .iter()
+            .find(|s| s.name == ".text" || s.name == "__text")
+        {
             for mut r in sec.relocs.iter().cloned() {
                 r.symbol += sym_base;
                 r.offset += text_off as u64;
