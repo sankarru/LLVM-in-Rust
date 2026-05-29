@@ -8,6 +8,9 @@ Issue #186 tracks the operator and contributor playbooks for running LLVM-in-Rus
 - **Contributors** triaging parser, optimizer, codegen, performance, or compatibility reports.
 - **Release owners** connecting incident response back to RC and rollback decisions.
 
+Before using this guide for a production pilot, review the scoped support
+contract in [`docs/production_support_boundaries.md`](production_support_boundaries.md).
+
 ## Build and validation quick start
 
 Use locked dependencies and the same gates CI runs:
@@ -116,6 +119,7 @@ Minimize with `scripts/reduce_ci_failure.sh`, attach the evidence package, and s
 
 ## Runbook index
 
+- Production support boundaries: `docs/production_support_boundaries.md`
 - Release artifacts: `docs/release_artifact_pipeline.md`
 - RC and rollback: `docs/release_candidate_protocol.md`
 - Crash and miscompilation triage: `docs/crash_triage_runbook.md`

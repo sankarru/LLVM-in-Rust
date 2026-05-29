@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Release-readiness documentation for the first public crate release.
 - A SemVer policy covering the pre-1.0 series, the 1.0 readiness bar, and post-1.0 compatibility rules.
+- Production support-boundary documentation covering constrained pilots, unsupported general LLVM replacement use, unsupported untrusted-input use, backend/platform limits, and the pre-1.0 API stability matrix.
+- Documentation-truth checks for stale README/changelog status markers and release metadata.
 
 ### Milestone L — API & documentation polish
 
@@ -22,7 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added `hello_world.rs` and `opt_pipeline.rs` examples to the `llvm-in-rust` crate (`src/llvm/examples/`).
 - Added a "Quick Start" section to `README.md` with a 30-line end-to-end builder + optimizer snippet.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-05-13
 
 Initial public release candidate for the safe-Rust LLVM pipeline.
 

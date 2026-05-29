@@ -6,6 +6,8 @@ license = "Apache-2.0"
 publish = false
 
 description = "Differential fuzzing harness: random IR generation + JIT output comparison."
+repository = "https://github.com/yudongusa/LLVM-in-Rust"
+homepage = "https://github.com/yudongusa/LLVM-in-Rust"
 
 [lib]
 name = "fuzz_diff"

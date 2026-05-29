@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 publish = false
+description = "Criterion benchmark harness for LLVM-in-Rust pipeline stages."
+repository = "https://github.com/yudongusa/LLVM-in-Rust"
+homepage = "https://github.com/yudongusa/LLVM-in-Rust"
 
 [lib]
 name = "llvm_bench"
