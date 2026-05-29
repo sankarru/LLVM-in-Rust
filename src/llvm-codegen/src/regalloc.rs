@@ -430,34 +430,61 @@ pub fn insert_spill_reloads(
         mf.blocks[bi].instrs = new_instrs;
     }
 
-    // Second allocation pass for the fresh VRegs just created.
-    // Use the class-split allocator so fresh Float VRegs go to the FP pool.
-    let fresh_intervals = compute_live_intervals(mf);
-    // Only allocate the truly-fresh VRegs (those not yet in result).
-    let fresh_only: Vec<LiveInterval> = fresh_intervals
-        .into_iter()
-        .filter(|iv| !result.vreg_to_preg.contains_key(&iv.vreg))
-        .collect();
+    // Second allocation pass for the fresh reload/spill VRegs just created.
+    //
+    // These fresh VRegs have tiny live ranges (a reload immediately before a
+    // use, or a store immediately after a def), but they are interleaved with
+    // the *already-allocated* original VRegs.  The second pass must therefore
+    // avoid the physical registers those originals occupy at overlapping
+    // program points — otherwise a reload can be assigned the same register as
+    // another operand of the same instruction.  (Concretely: `icmp %n, 1`
+    // where `%n` was spilled would reload `%n` into the very register holding
+    // the constant `1`, producing `cmp rcx, rcx` — see jit_fibonacci.)
+    //
+    // We recompute intervals over the rewritten instruction stream, split them
+    // into "pre-colored" (already assigned in `result`) and "fresh", then
+    // assign each fresh VReg the first pool register of its class that does not
+    // conflict with any overlapping pre-colored or already-assigned-fresh
+    // interval.
+    let all_intervals = compute_live_intervals(mf);
+    let int_alloc = mf.allocatable_pregs.clone();
+    let fp_alloc = mf.allocatable_fp_pregs.clone();
 
-    if !fresh_only.is_empty() {
-        let int_alloc = mf.allocatable_pregs.clone();
-        let fp_alloc = mf.allocatable_fp_pregs.clone();
-        let second = allocate_registers(&fresh_only, &int_alloc, &fp_alloc, RegAllocStrategy::LinearScan);
-        // Merge — fresh VRegs should not spill given their tiny intervals.
-        for (vr, pr) in second.vreg_to_preg {
-            result.vreg_to_preg.insert(vr, pr);
+    let mut precolored: Vec<(usize, usize, PReg)> = Vec::new();
+    let mut fresh: Vec<LiveInterval> = Vec::new();
+    for iv in all_intervals {
+        if let Some(&pr) = result.vreg_to_preg.get(&iv.vreg) {
+            precolored.push((iv.start, iv.end, pr));
+        } else {
+            fresh.push(iv);
         }
-        // Any unexpected spills from fresh VRegs: assign first pool register by class.
-        if !second.spilled.is_empty() {
-            for vr in second.spilled {
-                let fallback = if vr.class() == crate::isel::RegClass::Float {
-                    fp_alloc.first().copied().unwrap_or(PReg(0))
-                } else {
-                    int_alloc.first().copied().unwrap_or(PReg(0))
-                };
-                result.vreg_to_preg.entry(vr).or_insert(fallback);
-            }
-        }
+    }
+    fresh.sort_by_key(|i| (i.start, i.end, i.vreg.0));
+
+    // Already-assigned fresh ranges, so later fresh VRegs avoid earlier ones.
+    let mut assigned_fresh: Vec<(usize, usize, PReg)> = Vec::new();
+
+    for iv in &fresh {
+        let pool = if iv.vreg.class() == crate::isel::RegClass::Float {
+            &fp_alloc
+        } else {
+            &int_alloc
+        };
+        // Half-open interval overlap test.
+        let occupied: std::collections::HashSet<PReg> = precolored
+            .iter()
+            .chain(assigned_fresh.iter())
+            .filter(|&&(s, e, _)| iv.start < e && s < iv.end)
+            .map(|&(_, _, pr)| pr)
+            .collect();
+        let chosen = pool
+            .iter()
+            .copied()
+            .find(|pr| !occupied.contains(pr))
+            .or_else(|| pool.first().copied())
+            .unwrap_or(PReg(0));
+        result.vreg_to_preg.insert(iv.vreg, chosen);
+        assigned_fresh.push((iv.start, iv.end, chosen));
     }
 }
 
@@ -797,6 +824,61 @@ mod tests {
                 "unused callee-saved PReg must not appear in mf.used_callee_saved"
             );
         }
+    }
+
+    /// Regression for the `jit_fibonacci` codegen half (roadmap Milestone V /
+    /// issue #381): when a spilled VReg is reloaded for use in an instruction,
+    /// the reload register must differ from the registers of the instruction's
+    /// other, still-live operands.  Before the fix the reload's second
+    /// allocation pass ignored the already-assigned originals, so `cmp %n, 1`
+    /// with a spilled `%n` reloaded `%n` into the very register holding `1`,
+    /// emitting `cmp rcx, rcx`.
+    #[test]
+    fn reload_does_not_collide_with_live_operand_register() {
+        use crate::isel::{MInstr, MOpcode, MachineFunction};
+        const LOAD_OP: MOpcode = MOpcode(0xA0);
+        const STORE_OP: MOpcode = MOpcode(0xA1);
+        const CMP: MOpcode = MOpcode(0x2);
+
+        let mut mf = MachineFunction::new("reload_collide".into());
+        mf.allocatable_pregs = vec![PReg(0), PReg(1)];
+        let b = mf.add_block("entry");
+
+        let v_const = mf.fresh_vreg(); // plays the role of the constant `1`
+        let v_n = mf.fresh_vreg(); // the value that gets spilled
+        mf.push(b, MInstr::new(MOpcode(1)).with_dst(v_const));
+        mf.push(b, MInstr::new(MOpcode(1)).with_dst(v_n));
+        // cmp v_n, v_const — both operands live at this instruction.
+        mf.push(b, MInstr::new(CMP).with_vreg(v_n).with_vreg(v_const));
+
+        // Craft an allocation: v_const lives in PReg(0); v_n is spilled.
+        let mut result = RegAllocResult::default();
+        result.vreg_to_preg.insert(v_const, PReg(0));
+        result.spilled.push(v_n);
+
+        insert_spill_reloads(&mut mf, &mut result, LOAD_OP, STORE_OP, LOAD_OP, STORE_OP);
+
+        // The CMP's first operand was rewritten to a fresh reload VReg. Its
+        // assigned PReg must not be PReg(0) (where v_const lives).
+        let cmp = mf.blocks[0]
+            .instrs
+            .iter()
+            .find(|i| i.opcode == CMP)
+            .expect("cmp instruction present");
+        let reload_vreg = match &cmp.operands[0] {
+            MOperand::VReg(v) => *v,
+            other => panic!("expected reloaded VReg operand, got {other:?}"),
+        };
+        let reload_preg = result
+            .vreg_to_preg
+            .get(&reload_vreg)
+            .copied()
+            .expect("reload VReg must be allocated");
+        let const_preg = result.vreg_to_preg[&v_const];
+        assert_ne!(
+            reload_preg, const_preg,
+            "reload of spilled operand collided with the live operand's register"
+        );
     }
 
     // ── RegClass tests ────────────────────────────────────────────────────────
