@@ -1059,7 +1059,7 @@ fn lower_instr(
                 mf.push(mblock, MInstr::new(MOV_RR).with_dst(tmp).with_vreg(*src));
                 staged.push(tmp);
             }
-            for ((preg, _), tmp) in reg_moves.iter().zip(staged.into_iter()) {
+            for ((preg, _), tmp) in reg_moves.iter().zip(staged) {
                 emit_mov_to_preg(mf, mblock, *preg, tmp);
             }
 
