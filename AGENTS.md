@@ -1,9 +1,50 @@
 # AGENTS.md — Agentic Development Guide
 
 This file documents the agentic workflow used to develop LLVM-in-Rust with
-Claude Code.  It exists so that Claude can operate **autonomously** on this
-project with minimal back-and-forth, following the same patterns used
-throughout Phases 1–4.
+coding agents.  It exists so that agents can operate **autonomously** on this
+project with minimal back-and-forth, following the patterns established across
+the production-readiness roadmap (issue #93, Milestones A–Z).
+
+---
+
+## Standing Roadmap-Execution Workflow
+
+This is the durable process for advancing the production-readiness roadmap
+(**issue #93**).  It is the default mode of work — agents should follow it
+without waiting for a per-task restatement of these rules.
+
+1. **Source of truth is #93.** Pick up the lowest-lettered milestone that is
+   still open (its tracking issue is linked from #93).  Milestones are worked
+   roughly in order; later milestones may depend on earlier ones being green
+   (e.g. the RC burn-in milestone is blocked until all prior milestones pass).
+2. **One issue → its own focused PR(s).** Solve each tracking issue (or each
+   self-contained checklist item within a large milestone) in a separate PR.
+   Keep mechanical changes (fmt, clippy, renames) in their own PRs, separate
+   from behavioral changes, so each diff stays reviewable.
+3. **Every PR carries thorough tests.** Add regression tests that would have
+   caught the bug or that exercise the new behavior.  Prefer
+   target-independent tests (assert on IR / data structures) so they run on
+   every platform, not just the host arch.
+4. **Code review is mandatory** (see the loop below).  When two agents
+   collaborate, divide milestones explicitly up front so branches never
+   overlap, and review each other's PRs.  GitHub blocks self-approval when
+   pushes share one account, so post the review as a PR **comment** with an
+   explicit verdict instead of a formal approval.
+5. **Quality gates must stay green** on the merge commit: `cargo +stable fmt
+   --all -- --check`, `cargo +stable clippy --locked --all-targets -- -D
+   warnings` (both enforced by `.github/workflows/quality-gates.yml`), the full
+   test suite, the Differential Tests workflow, and the Platform Matrix gate.
+   Do not mark any production-readiness status green unless all of these agree
+   on the same commit.
+6. **Close the issue after its PR merges** and tick the corresponding checkbox
+   in #93; keep the #93 status table current.
+7. **Report once a milestone is done** in the active coordination thread and
+   update #93 with links to the green CI runs.
+8. **Auto-resume across interruptions.** Keep `MEMORY.md` (in the agent
+   workspace) current as the recovery point: which milestone is in flight,
+   which PRs are open, and what is next.  After a rate-limit, sleep, or daemon
+   restart, re-sync `origin/main`, re-read #93, and resume from the lowest open
+   milestone — no human nudge required.
 
 ---
 
@@ -215,7 +256,8 @@ Claude must execute the following loop **without waiting for user prompts**
 at each step:
 
 1. Read `MEMORY.md` and `#93` to determine which milestones and sub-issues are open.
-2. For each open milestone (in order Q → R → S → T → U):
+2. For each open milestone, lowest letter first (consult #93 for the current
+   open set — e.g. Milestones V → W → X → Y → Z after the 2026-05 audit):
    a. Work on each sub-issue in dependency order (infrastructure first).
    b. Use parallel worktree agents for independent sub-issues within a milestone.
    c. Follow the full PR workflow (implement → review → test → fix → merge → close).
@@ -276,11 +318,17 @@ Every PR merged into `main` must satisfy:
 1. **`cargo test` all green** — no skipped tests, no `#[ignore]` added.
 2. **Targeted tests** — every bug fix adds at least one regression test named
    after what it verifies (e.g. `udiv_uses_div_r_not_idiv_r`).
-3. **Minimal diff** — only the lines necessary to fix the bug or implement
-   the feature; no reformatting or unrelated cleanup.
-4. **Squash merge** — one commit per PR on `main`; branch history preserved
+3. **Formatting + lints clean** — `cargo +stable fmt --all -- --check` and
+   `cargo +stable clippy --locked --all-targets -- -D warnings` both pass.
+   These are enforced by the `Quality Gates` workflow
+   (`.github/workflows/quality-gates.yml`).
+4. **Minimal diff** — only the lines necessary to fix the bug or implement
+   the feature; no reformatting or unrelated cleanup.  (Exception: the
+   one-time gate-establishing fmt/clippy PRs that brought the tree into
+   compliance.)
+5. **Squash merge** — one commit per PR on `main`; branch history preserved
    in the PR.
-5. **Closes #N in commit message** — so GitHub auto-closes the issue.
+6. **Closes #N in commit message** — so GitHub auto-closes the issue.
 
 ---
 
