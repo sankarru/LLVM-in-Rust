@@ -138,7 +138,7 @@ fn lto_dead_stripping_removes_unused_function() {
     );
 
     let (_, merged_o0) =
-        run_lto_from_objects(&[with_dead.clone()], OptLevel::O0).expect("O0 failed");
+        run_lto_from_objects(std::slice::from_ref(&with_dead), OptLevel::O0).expect("O0 failed");
     let (_, merged_o2) = run_lto_from_objects(&[with_dead], OptLevel::O2).expect("O2 failed");
 
     // At O0, @dead should still be present (no DCE).

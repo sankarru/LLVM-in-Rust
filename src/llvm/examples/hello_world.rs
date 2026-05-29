@@ -13,7 +13,7 @@ fn main() {
     b.position_at_end(entry);
     let c = b.const_int(i32_ty, 0);
     b.build_ret(c);
-    drop(b);
+    let _ = b;
 
     let mut pm = build_pipeline(OptLevel::O1);
     pm.run_until_fixed_point(&mut ctx, &mut module, 4);

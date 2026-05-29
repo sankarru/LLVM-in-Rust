@@ -294,8 +294,8 @@ mod tests {
             df.get(&BlockId(2)).map(|v| v.as_slice()),
             Some(&[BlockId(3)][..])
         );
-        assert!(df.get(&BlockId(0)).map_or(true, |v| v.is_empty()));
-        assert!(df.get(&BlockId(3)).map_or(true, |v| v.is_empty()));
+        assert!(df.get(&BlockId(0)).is_none_or(|v| v.is_empty()));
+        assert!(df.get(&BlockId(3)).is_none_or(|v| v.is_empty()));
     }
 
     #[test]
@@ -308,9 +308,7 @@ mod tests {
         let cfg = Cfg::compute(&func);
         let dom = DomTree::compute(&func, &cfg);
         let df = dom.dominance_frontier(&cfg);
-        assert!(df
-            .get(&BlockId(2))
-            .map_or(false, |v| v.contains(&BlockId(1))));
+        assert!(df.get(&BlockId(2)).is_some_and(|v| v.contains(&BlockId(1))));
     }
 
     #[test]
@@ -326,12 +324,12 @@ mod tests {
         let df = dom.dominance_frontier(&cfg);
         // No reachable block exists, so the dominance frontier must be empty.
         assert!(
-            df.get(&BlockId(1)).map_or(true, |v| v.is_empty()),
+            df.get(&BlockId(1)).is_none_or(|v| v.is_empty()),
             "spurious DF entry for unreachable block 1: {:?}",
             df.get(&BlockId(1))
         );
         assert!(
-            df.get(&BlockId(2)).map_or(true, |v| v.is_empty()),
+            df.get(&BlockId(2)).is_none_or(|v| v.is_empty()),
             "spurious DF entry for unreachable block 2: {:?}",
             df.get(&BlockId(2))
         );

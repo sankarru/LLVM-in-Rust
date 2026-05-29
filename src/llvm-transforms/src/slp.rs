@@ -865,7 +865,7 @@ mod tests {
         let has_vec_fadd = func.blocks[0].body.iter().any(|&id| {
             let instr = &func.instructions[id.0 as usize];
             match &instr.kind {
-                InstrKind::FAdd { lhs, rhs, .. } => {
+                InstrKind::FAdd { lhs, rhs: _, .. } => {
                     let lhs_ty = match lhs {
                         ValueRef::Instruction(iid) => func.instructions[iid.0 as usize].ty,
                         _ => return false,

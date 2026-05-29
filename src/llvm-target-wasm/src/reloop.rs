@@ -554,13 +554,11 @@ mod tests {
                     return true;
                 }
                 has_loop_header(body, header)
-                    || next
-                        .as_deref()
-                        .map_or(false, |n| has_loop_header(n, header))
+                    || next.as_deref().is_some_and(|n| has_loop_header(n, header))
             }
-            ControlNode::Simple { next, .. } => next
-                .as_deref()
-                .map_or(false, |n| has_loop_header(n, header)),
+            ControlNode::Simple { next, .. } => {
+                next.as_deref().is_some_and(|n| has_loop_header(n, header))
+            }
             ControlNode::Branch {
                 then_node,
                 else_node,
@@ -570,10 +568,8 @@ mod tests {
                 has_loop_header(then_node, header)
                     || else_node
                         .as_deref()
-                        .map_or(false, |n| has_loop_header(n, header))
-                    || next
-                        .as_deref()
-                        .map_or(false, |n| has_loop_header(n, header))
+                        .is_some_and(|n| has_loop_header(n, header))
+                    || next.as_deref().is_some_and(|n| has_loop_header(n, header))
             }
         }
     }
@@ -594,19 +590,19 @@ mod tests {
                 has_branch_at(then_node, cond_block)
                     || else_node
                         .as_deref()
-                        .map_or(false, |n| has_branch_at(n, cond_block))
+                        .is_some_and(|n| has_branch_at(n, cond_block))
                     || next
                         .as_deref()
-                        .map_or(false, |n| has_branch_at(n, cond_block))
+                        .is_some_and(|n| has_branch_at(n, cond_block))
             }
             ControlNode::Simple { next, .. } => next
                 .as_deref()
-                .map_or(false, |n| has_branch_at(n, cond_block)),
+                .is_some_and(|n| has_branch_at(n, cond_block)),
             ControlNode::Loop { body, next, .. } => {
                 has_branch_at(body, cond_block)
                     || next
                         .as_deref()
-                        .map_or(false, |n| has_branch_at(n, cond_block))
+                        .is_some_and(|n| has_branch_at(n, cond_block))
             }
         }
     }
@@ -698,10 +694,10 @@ mod tests {
                     if *id == BlockId(3) {
                         return true;
                     }
-                    next.as_deref().map_or(false, has_simple_3)
+                    next.as_deref().is_some_and(has_simple_3)
                 }
                 ControlNode::Loop { next, body, .. } => {
-                    has_simple_3(body) || next.as_deref().map_or(false, has_simple_3)
+                    has_simple_3(body) || next.as_deref().is_some_and(has_simple_3)
                 }
                 ControlNode::Branch {
                     then_node,
@@ -710,8 +706,8 @@ mod tests {
                     ..
                 } => {
                     has_simple_3(then_node)
-                        || else_node.as_deref().map_or(false, has_simple_3)
-                        || next.as_deref().map_or(false, has_simple_3)
+                        || else_node.as_deref().is_some_and(has_simple_3)
+                        || next.as_deref().is_some_and(has_simple_3)
                 }
             }
         }

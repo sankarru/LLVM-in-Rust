@@ -118,11 +118,7 @@ pub fn codegen_module(
                 emit_object(&mf, &mut emitter)
             }
             TargetArch::AArch64 => {
-                let aarch64_fmt = match fmt {
-                    ObjectFormat::MachO => ObjectFormat::MachO,
-                    ObjectFormat::Coff => ObjectFormat::Coff,
-                    ObjectFormat::Elf => ObjectFormat::Elf,
-                };
+                let aarch64_fmt = fmt;
                 let mut backend = AArch64Backend::new(AArch64Features::lse());
                 let mf = backend.lower_function(ctx, module, func);
                 let mut emitter = AArch64Emitter::new(aarch64_fmt);

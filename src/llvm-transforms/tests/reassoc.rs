@@ -2,8 +2,8 @@
 //! FMF-exploiting FP constant folding (`try_fold_fp`).
 
 use llvm_ir::{
-    ArgId, Builder, ConstantData, Context, FastMathFlags, InstrId, InstrKind, Instruction, Linkage,
-    Module, TypeId, ValueRef,
+    ArgId, Builder, ConstantData, Context, FastMathFlags, InstrKind, Instruction, Linkage, Module,
+    TypeId, ValueRef,
 };
 use llvm_transforms::{constant_fold::try_fold_fp, pass::FunctionPass, reassoc::ReassocPass};
 
@@ -40,7 +40,7 @@ fn body_len(module: &Module) -> usize {
 
 /// Helper: append an instruction to block 0 of function 0, return its InstrId.
 fn push_instr(
-    ctx: &Context,
+    _ctx: &Context,
     module: &mut Module,
     name: &str,
     ty: TypeId,

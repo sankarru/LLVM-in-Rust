@@ -2744,7 +2744,7 @@ mod tests {
             false,
         );
         b.build_ret_void();
-        drop(b);
+        let _ = b;
 
         // Lower
         let mut be = X86Backend::new(TargetFeatures::baseline());

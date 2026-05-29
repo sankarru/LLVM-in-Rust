@@ -16,7 +16,7 @@
 //! b.position_at_end(entry);
 //! let c = b.const_int(i32_ty, 42);
 //! b.build_ret(c);
-//! drop(b);
+//! let _ = b;
 //! let mut pm = build_pipeline(OptLevel::O2);
 //! pm.run_until_fixed_point(&mut ctx, &mut module, 8);
 //! assert_eq!(module.functions.len(), 1);

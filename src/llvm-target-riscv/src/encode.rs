@@ -1120,7 +1120,7 @@ mod tests {
     fn enc_fneg_d_uses_fsgnjn_encoding() {
         // fneg.d is FSGNJN.D rd, rs, rs: funct7=0x21, funct3=0x1, rs2=rs1
         let mi = MInstr::new(FNEG_D)
-            .with_dst(VReg(32 + 0)) // fd=f0
+            .with_dst(VReg(32)) // fd=f0
             .with_preg(PReg(32 + 1)) // rs1=f1
             .with_preg(PReg(32 + 1)); // rs2=f1 (same)
         let word = encode_instr(&mi);
@@ -1140,7 +1140,7 @@ mod tests {
         // feq.d uses integer rd, FP rs1/rs2: funct7=0x51, funct3=0x2
         let mi = MInstr::new(FCMP_EQ_D)
             .with_dst(VReg(3)) // integer rd=x3
-            .with_preg(PReg(32 + 0)) // rs1=f0
+            .with_preg(PReg(32)) // rs1=f0
             .with_preg(PReg(32 + 1)); // rs2=f1
         let word = encode_instr(&mi);
         assert_eq!((word >> 25) & 0x7F, 0x51, "feq.d funct7 must be 0x51");
@@ -1177,7 +1177,7 @@ mod tests {
         // fcvt.l.d: funct7=0x61, rs2=2 (L), rounding=RTZ=0x1
         let mi = MInstr::new(FCVT_L_D)
             .with_dst(VReg(1)) // integer rd
-            .with_preg(PReg(32 + 0)); // fp rs1
+            .with_preg(PReg(32)); // fp rs1
         let word = encode_instr(&mi);
         assert_eq!((word >> 25) & 0x7F, 0x61, "fcvt.l.d funct7 must be 0x61");
         assert_eq!((word >> 20) & 0x1F, 2, "fcvt.l.d rs2 must be 2 (L)");
@@ -1199,7 +1199,7 @@ mod tests {
     fn enc_fcvt_d_l_funct7_and_rs2() {
         // fcvt.d.l: funct7=0x69, rs2=2
         let mi = MInstr::new(FCVT_D_L)
-            .with_dst(VReg(32 + 0)) // fp rd
+            .with_dst(VReg(32)) // fp rd
             .with_preg(PReg(1)); // int rs1
         let word = encode_instr(&mi);
         assert_eq!((word >> 25) & 0x7F, 0x69, "fcvt.d.l funct7 must be 0x69");
@@ -1312,9 +1312,7 @@ mod tests {
     #[test]
     fn enc_fcvt_s_l_funct7_and_rs2() {
         // fcvt.s.l: funct7=0x68, rs2=2
-        let mi = MInstr::new(FCVT_S_L)
-            .with_dst(VReg(32 + 0))
-            .with_preg(PReg(1));
+        let mi = MInstr::new(FCVT_S_L).with_dst(VReg(32)).with_preg(PReg(1));
         let word = encode_instr(&mi);
         assert_eq!((word >> 25) & 0x7F, 0x68, "fcvt.s.l funct7 must be 0x68");
         assert_eq!((word >> 20) & 0x1F, 2, "fcvt.s.l rs2 must be 2");

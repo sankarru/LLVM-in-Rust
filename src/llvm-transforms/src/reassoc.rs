@@ -147,27 +147,26 @@ fn try_simplify_fp(
             if reassoc_or_fast {
                 if let Some(c2) = fp_constant_bits(ctx, *rhs) {
                     let inner_lhs = resolve(*lhs, subst);
-                    if let Some((inner_kind, _inner_lhs_id)) =
-                        get_instr_kind_by_ref(func, rewritten, inner_lhs)
-                    {
-                        if let InstrKind::FAdd {
+                    if let Some((
+                        InstrKind::FAdd {
                             flags: f2,
                             lhs: x,
                             rhs: rhs2,
-                        } = inner_kind
-                        {
-                            if f2.reassoc || f2.fast {
-                                if let Some(c1) = fp_constant_bits(ctx, *rhs2) {
-                                    let combined = f64::from_bits(c1) + f64::from_bits(c2);
-                                    if combined.is_finite() {
-                                        let new_c = ctx.const_float(ty, combined.to_bits());
-                                        let new_kind = InstrKind::FAdd {
-                                            flags: *flags,
-                                            lhs: *x,
-                                            rhs: ValueRef::Constant(new_c),
-                                        };
-                                        return Some(SimplifyResult::NewKind(new_kind));
-                                    }
+                        },
+                        _inner_lhs_id,
+                    )) = get_instr_kind_by_ref(func, rewritten, inner_lhs)
+                    {
+                        if f2.reassoc || f2.fast {
+                            if let Some(c1) = fp_constant_bits(ctx, *rhs2) {
+                                let combined = f64::from_bits(c1) + f64::from_bits(c2);
+                                if combined.is_finite() {
+                                    let new_c = ctx.const_float(ty, combined.to_bits());
+                                    let new_kind = InstrKind::FAdd {
+                                        flags: *flags,
+                                        lhs: *x,
+                                        rhs: ValueRef::Constant(new_c),
+                                    };
+                                    return Some(SimplifyResult::NewKind(new_kind));
                                 }
                             }
                         }
@@ -204,11 +203,9 @@ fn try_simplify_fp(
 
             // x * 0.0  →  0.0  (nnan + ninf, or fast)
             let nnan_ninf_or_fast = (flags.nnan && flags.ninf) || flags.fast;
-            if nnan_ninf_or_fast {
-                if is_fp_zero(ctx, *rhs) || is_fp_zero(ctx, *lhs) {
-                    let zero_cid = ctx.const_float(ty, 0f64.to_bits());
-                    return Some(SimplifyResult::Identity(ValueRef::Constant(zero_cid)));
-                }
+            if nnan_ninf_or_fast && (is_fp_zero(ctx, *rhs) || is_fp_zero(ctx, *lhs)) {
+                let zero_cid = ctx.const_float(ty, 0f64.to_bits());
+                return Some(SimplifyResult::Identity(ValueRef::Constant(zero_cid)));
             }
 
             None

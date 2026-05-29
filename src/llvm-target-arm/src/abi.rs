@@ -142,7 +142,7 @@ fn field_hfa_kind(ctx: &Context, ty: TypeId) -> Option<(FloatKind, usize)> {
         TypeData::Float(_) => None, // half/bfloat/fp128/x86fp80 → not a valid HFA base
         TypeData::Struct(_) => {
             // Recursively check if this nested struct is itself an HFA.
-            detect_hfa(ctx, ty).map(|(k, n)| (k, n))
+            detect_hfa(ctx, ty)
         }
         _ => None,
     }

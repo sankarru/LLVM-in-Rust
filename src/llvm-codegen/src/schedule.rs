@@ -352,13 +352,7 @@ pub fn x86_latency(opcode: MOpcode) -> u32 {
     // Reference: Intel Skylake/Cascade Lake instruction tables.
     match opcode.0 {
         // ── data movement (1 cycle) ──
-        0x00 | // MOV_RR
-        0x01 | // MOV_RI
-        0x02 | // MOVSX_32
-        0x03 | // MOVSX_8
-        0x04 | // MOVZX_8
-        0x05 | // MOV_PR
-        0x06   // MOVSX_16
+        0x00..=0x06   // MOVSX_16
         => 1,
 
         // ── integer arithmetic ──
@@ -413,19 +407,14 @@ pub fn x86_latency(opcode: MOpcode) -> u32 {
         0x87   // MULPD_RR
         => 4,
         0x85 => 11,  // DIVPS_RR
-        0x88 | // MOVAPS_RR
-        0x89 | // MOVDQU_LOAD_MR
-        0x8A | // MOVDQU_STORE_RM
-        0x8B   // MOVAPS_LOAD_MR
+        0x88..=0x8B   // MOVAPS_LOAD_MR
         => 4,
 
         // ── atomics (conservative: fence-like latency) ──
         0x90..=0x96 | 0x9A => 20,
 
         // ── non-promotable frame access ──
-        0xA0 | // LEA_FRAME_MR
-        0xA1 | // MOV_LOAD_REG_MR
-        0xA2   // MOV_STORE_REG_RM
+        0xA0..=0xA2   // MOV_STORE_REG_RM
         => 4,
 
         // ── SSE2 double ──

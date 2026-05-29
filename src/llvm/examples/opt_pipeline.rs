@@ -17,7 +17,7 @@ fn main() {
     let _dead = b.build_add("dead", c1, c2);
     let ret_val = b.const_int(i32_ty, 42);
     b.build_ret(ret_val);
-    drop(b);
+    let _ = b;
 
     let before = module.functions[0].blocks[0].body.len();
     let mut pm = build_pipeline(OptLevel::O2);

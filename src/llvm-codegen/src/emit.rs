@@ -888,7 +888,7 @@ fn build_eh_frame(text_size: u64, frame_size: u32, used_callee_saved: &[PReg]) -
         // Record callee-saved register saves (each push is 1 or 2 bytes).
         // CFA offset at this point = 16 + n_callee*8; factored = (16 + (idx+1)*8) / 8 = 2 + idx+1.
         for (idx, pr) in used_callee_saved.iter().enumerate() {
-            let reg = pr.0 as u8;
+            let reg = pr.0;
             // Push instruction: 1 byte for RAX-RDI (no REX), 2 bytes for R8-R15 (REX.B prefix).
             let push_len: u8 = if pr.0 >= 8 { 2 } else { 1 };
             // DWARF register numbers for x86-64 (System V ABI Table 3.18).
@@ -1509,6 +1509,458 @@ fn push_str(table: &mut Vec<u8>, s: &[u8]) -> u32 {
     table.extend_from_slice(s);
     table.push(0);
     off
+}
+
+// ── Global-variable data section emission ─────────────────────────────────
+
+use llvm_ir::{
+    context::ConstId, ConstExprOp, ConstantData, Context, FloatKind, Linkage, Module, TypeData,
+};
+use std::collections::HashMap;
+
+/// Byte size of an IR type under the System V / AAPCS64 ABI model.
+///
+/// Pointers are always 8 bytes; integer types round up to the nearest byte;
+/// aggregates include natural padding.  Void / label / metadata / function
+/// types have size 0.
+pub fn sizeof_ty(ctx: &Context, ty: llvm_ir::context::TypeId) -> u64 {
+    match ctx.get_type(ty) {
+        TypeData::Integer(bits) => (*bits as u64).div_ceil(8),
+        TypeData::Float(k) => match k {
+            FloatKind::Half | FloatKind::BFloat => 2,
+            FloatKind::Single => 4,
+            FloatKind::Double => 8,
+            FloatKind::Fp128 => 16,
+            FloatKind::X86Fp80 => 16,
+        },
+        TypeData::Pointer => 8,
+        TypeData::Array { element, len } => {
+            let esz = sizeof_ty(ctx, *element);
+            esz * len
+        }
+        TypeData::Vector { element, len, .. } => {
+            let esz = sizeof_ty(ctx, *element);
+            esz * (*len as u64)
+        }
+        TypeData::Struct(st) => struct_total_size(ctx, &st.fields.clone(), st.packed),
+        TypeData::Void | TypeData::Label | TypeData::Metadata | TypeData::Function(_) => 0,
+    }
+}
+
+fn align_of_ty(ctx: &Context, ty: llvm_ir::context::TypeId) -> u64 {
+    sizeof_ty(ctx, ty).clamp(1, 8)
+}
+
+fn struct_total_size(ctx: &Context, fields: &[llvm_ir::context::TypeId], packed: bool) -> u64 {
+    let mut offset = 0u64;
+    let mut max_align = 1u64;
+    for &f in fields {
+        let fsz = sizeof_ty(ctx, f);
+        let al = if packed { 1 } else { align_of_ty(ctx, f) };
+        if al > max_align {
+            max_align = al;
+        }
+        offset = (offset + al - 1) & !(al - 1);
+        offset += fsz;
+    }
+    if !packed && max_align > 1 {
+        offset = (offset + max_align - 1) & !(max_align - 1);
+    }
+    offset
+}
+
+fn struct_field_byte_offset(
+    ctx: &Context,
+    fields: &[llvm_ir::context::TypeId],
+    field_idx: usize,
+    packed: bool,
+) -> u64 {
+    let mut offset = 0u64;
+    for (i, &f) in fields.iter().enumerate() {
+        let al = if packed { 1 } else { align_of_ty(ctx, f) };
+        offset = (offset + al - 1) & !(al - 1);
+        if i == field_idx {
+            return offset;
+        }
+        offset += sizeof_ty(ctx, f);
+    }
+    0
+}
+
+/// Compute the addend (in bytes) for a GEP constexpr.
+///
+/// `base_ty` is the aggregate/element type that the first GEP index scales
+/// over.  `indices` are the already-extracted integer index values.
+fn gep_byte_offset(ctx: &Context, base_ty: llvm_ir::context::TypeId, indices: &[i64]) -> i64 {
+    let mut offset: i64 = 0;
+    let mut cur_ty = base_ty;
+    for (depth, &idx) in indices.iter().enumerate() {
+        if depth == 0 {
+            offset += idx * sizeof_ty(ctx, cur_ty) as i64;
+        } else {
+            match ctx.get_type(cur_ty).clone() {
+                TypeData::Array { element, .. } => {
+                    offset += idx * sizeof_ty(ctx, element) as i64;
+                    cur_ty = element;
+                }
+                TypeData::Struct(st) => {
+                    let fi = idx as usize;
+                    let flds: Vec<_> = st.fields.clone();
+                    offset += struct_field_byte_offset(ctx, &flds, fi, st.packed) as i64;
+                    if fi < flds.len() {
+                        cur_ty = flds[fi];
+                    }
+                }
+                TypeData::Vector { element, .. } => {
+                    offset += idx * sizeof_ty(ctx, element) as i64;
+                    cur_ty = element;
+                }
+                _ => break,
+            }
+        }
+    }
+    offset
+}
+
+fn const_as_i64(ctx: &Context, cid: ConstId) -> i64 {
+    match ctx.get_const(cid) {
+        ConstantData::Int { val, .. } => *val as i64,
+        _ => 0,
+    }
+}
+
+/// Evaluate `cid` into raw bytes appended to `out`, recording any needed
+/// relocations in `relocs` with offsets relative to `sec_base` (the
+/// section-absolute byte offset at which `out` starts).
+fn eval_const_bytes(
+    ctx: &Context,
+    cid: ConstId,
+    sec_base: u64,
+    global_sym_map: &HashMap<String, usize>,
+    relocs: &mut Vec<Reloc>,
+    out: &mut Vec<u8>,
+) {
+    let cd = ctx.get_const(cid).clone();
+    match cd {
+        ConstantData::Int { ty, val } => {
+            let byte_count = (match ctx.get_type(ty) {
+                TypeData::Integer(b) => *b,
+                _ => 64,
+            } as u64)
+                .div_ceil(8);
+            for i in 0..byte_count {
+                out.push((val >> (i * 8)) as u8);
+            }
+        }
+        ConstantData::IntWide { ty, words } => {
+            let bits = match ctx.get_type(ty) {
+                TypeData::Integer(b) => *b as u64,
+                _ => 64 * words.len() as u64,
+            };
+            let byte_count = bits.div_ceil(8);
+            let raw: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let take = (byte_count as usize).min(raw.len());
+            out.extend_from_slice(&raw[..take]);
+        }
+        ConstantData::Float { ty, bits } => {
+            let sz = sizeof_ty(ctx, ty) as usize;
+            for i in 0..sz {
+                out.push((bits >> (i * 8)) as u8);
+            }
+        }
+        ConstantData::Null(ty) | ConstantData::Undef(ty) | ConstantData::Poison(ty) => {
+            let sz = sizeof_ty(ctx, ty) as usize;
+            out.extend(std::iter::repeat_n(0u8, sz));
+        }
+        ConstantData::ZeroInitializer(ty) => {
+            let sz = sizeof_ty(ctx, ty) as usize;
+            out.extend(std::iter::repeat_n(0u8, sz));
+        }
+        ConstantData::Array { elements, .. } | ConstantData::Vector { elements, .. } => {
+            for elem in elements {
+                eval_const_bytes(ctx, elem, sec_base, global_sym_map, relocs, out);
+            }
+        }
+        ConstantData::Struct { ty, fields } => {
+            let (field_tys, is_packed) = match ctx.get_type(ty) {
+                TypeData::Struct(st) => (st.fields.clone(), st.packed),
+                _ => (vec![], false),
+            };
+            let struct_start = out.len();
+            for (i, fld_cid) in fields.iter().enumerate() {
+                let fty = field_tys.get(i).copied().unwrap_or(ctx.i8_ty);
+                let al = if is_packed {
+                    1
+                } else {
+                    align_of_ty(ctx, fty) as usize
+                };
+                let local_pos = out.len() - struct_start;
+                let pad = if al > 0 {
+                    (al - local_pos % al) % al
+                } else {
+                    0
+                };
+                out.extend(std::iter::repeat_n(0u8, pad));
+                eval_const_bytes(ctx, *fld_cid, sec_base, global_sym_map, relocs, out);
+            }
+            // Trailing struct padding
+            let content = out.len() - struct_start;
+            let total = struct_total_size(ctx, &field_tys, is_packed) as usize;
+            if total > content {
+                out.extend(std::iter::repeat_n(0u8, total - content));
+            }
+        }
+        ConstantData::GlobalRef { name, .. } => {
+            push_ptr_reloc(sec_base, &name, 0, global_sym_map, relocs, out);
+        }
+        ConstantData::Expr { op, ty, operands } => {
+            match op {
+                ConstExprOp::BitCast | ConstExprOp::AddrSpaceCast => {
+                    if let Some(&base_cid) = operands.first() {
+                        eval_const_bytes(ctx, base_cid, sec_base, global_sym_map, relocs, out);
+                    } else {
+                        out.extend(std::iter::repeat_n(0u8, sizeof_ty(ctx, ty) as usize));
+                    }
+                }
+                ConstExprOp::GetElementPtr { base_ty, .. } => {
+                    let indices: Vec<i64> = operands[1..]
+                        .iter()
+                        .map(|&c| const_as_i64(ctx, c))
+                        .collect();
+                    let addend = gep_byte_offset(ctx, base_ty, &indices);
+                    match ctx.get_const(operands[0]).clone() {
+                        ConstantData::GlobalRef { name, .. } => {
+                            push_ptr_reloc(sec_base, &name, addend, global_sym_map, relocs, out);
+                        }
+                        _ => {
+                            eval_const_bytes(
+                                ctx,
+                                operands[0],
+                                sec_base,
+                                global_sym_map,
+                                relocs,
+                                out,
+                            );
+                        }
+                    }
+                }
+                ConstExprOp::IntToPtr => {
+                    // Absolute address — no relocation
+                    if let Some(&val_cid) = operands.first() {
+                        match ctx.get_const(val_cid) {
+                            ConstantData::Int { val, .. } => {
+                                out.extend_from_slice(&val.to_le_bytes());
+                            }
+                            _ => out.extend_from_slice(&0u64.to_le_bytes()),
+                        }
+                    } else {
+                        out.extend_from_slice(&0u64.to_le_bytes());
+                    }
+                }
+                ConstExprOp::PtrToInt => {
+                    let int_bits = match ctx.get_type(ty) {
+                        TypeData::Integer(b) => *b,
+                        _ => 64,
+                    };
+                    let byte_count = (int_bits as usize).div_ceil(8);
+                    if let Some(&base_cid) = operands.first() {
+                        if let ConstantData::GlobalRef { name, .. } =
+                            ctx.get_const(base_cid).clone()
+                        {
+                            push_ptr_reloc(sec_base, &name, 0, global_sym_map, relocs, out);
+                            // push_ptr_reloc always emits 8 bytes; truncate if int is narrower
+                            if byte_count < 8 {
+                                let extra = 8 - byte_count;
+                                let len = out.len();
+                                out.truncate(len - extra);
+                            }
+                            return;
+                        }
+                    }
+                    out.extend(std::iter::repeat_n(0u8, byte_count));
+                }
+                ConstExprOp::Trunc | ConstExprOp::ZExt | ConstExprOp::SExt => {
+                    let dst_bits = match ctx.get_type(ty) {
+                        TypeData::Integer(b) => *b as usize,
+                        _ => 64,
+                    };
+                    let dst_bytes = dst_bits.div_ceil(8);
+                    if let Some(&src_cid) = operands.first() {
+                        let mut src_buf = Vec::new();
+                        eval_const_bytes(
+                            ctx,
+                            src_cid,
+                            sec_base,
+                            global_sym_map,
+                            relocs,
+                            &mut src_buf,
+                        );
+                        let sign_extend = op == ConstExprOp::SExt;
+                        let fill = if sign_extend {
+                            src_buf
+                                .last()
+                                .map(|&b| if b & 0x80 != 0 { 0xFF } else { 0 })
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        src_buf.resize(dst_bytes, fill);
+                        out.extend_from_slice(&src_buf[..dst_bytes.min(src_buf.len())]);
+                    } else {
+                        out.extend(std::iter::repeat_n(0u8, dst_bytes));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn push_ptr_reloc(
+    sec_base: u64,
+    name: &str,
+    addend: i64,
+    global_sym_map: &HashMap<String, usize>,
+    relocs: &mut Vec<Reloc>,
+    out: &mut Vec<u8>,
+) {
+    let reloc_offset = sec_base + out.len() as u64;
+    if let Some(&sym_idx) = global_sym_map.get(name) {
+        relocs.push(Reloc {
+            offset: reloc_offset,
+            symbol: sym_idx,
+            kind: RelocKind::Abs64,
+            addend,
+            external_name: None,
+        });
+    } else {
+        relocs.push(Reloc {
+            offset: reloc_offset,
+            symbol: 0,
+            kind: RelocKind::Abs64,
+            addend,
+            external_name: Some(name.to_string()),
+        });
+    }
+    out.extend_from_slice(&0u64.to_le_bytes());
+}
+
+/// Emit all global variables in `module` as data sections with relocations.
+///
+/// Returns `(sections, symbols)` ready to be merged into an [`ObjectFile`].
+/// Symbol indices in the returned relocs are relative to the returned
+/// `symbols` vec; callers must adjust them if merging into a larger symbol
+/// table.
+///
+/// Returns `None` when the module contains no global variables.
+pub fn emit_globals(
+    ctx: &Context,
+    module: &Module,
+    format: ObjectFormat,
+) -> Option<(Vec<Section>, Vec<Symbol>)> {
+    if module.globals.is_empty() {
+        return None;
+    }
+
+    // Map global name → symbol index (within our local symbols vec).
+    let mut global_sym_map: HashMap<String, usize> = HashMap::new();
+    for (i, gv) in module.globals.iter().enumerate() {
+        global_sym_map.insert(gv.name.clone(), i);
+    }
+
+    let rodata_name = match format {
+        ObjectFormat::MachO => "__const",
+        _ => ".rodata",
+    };
+    let data_name = match format {
+        ObjectFormat::MachO => "__data",
+        _ => ".data",
+    };
+
+    // Build one section for read-only globals, one for mutable globals.
+    let has_readonly = module.globals.iter().any(|gv| gv.is_constant);
+    let has_rw = module.globals.iter().any(|gv| !gv.is_constant);
+
+    let mut sections: Vec<Section> = Vec::new();
+    if has_readonly {
+        sections.push(Section {
+            name: rodata_name.to_string(),
+            data: Vec::new(),
+            relocs: Vec::new(),
+            debug_rows: Vec::new(),
+        });
+    }
+    if has_rw {
+        sections.push(Section {
+            name: data_name.to_string(),
+            data: Vec::new(),
+            relocs: Vec::new(),
+            debug_rows: Vec::new(),
+        });
+    }
+
+    let mut symbols: Vec<Symbol> = Vec::new();
+
+    for gv in &module.globals {
+        let sec_idx = if gv.is_constant {
+            sections.iter().position(|s| s.name == rodata_name).unwrap()
+        } else {
+            sections.iter().position(|s| s.name == data_name).unwrap()
+        };
+        let sec = &mut sections[sec_idx];
+
+        // Natural alignment: min of sizeof(ty), 16.
+        let sz = sizeof_ty(ctx, gv.ty) as usize;
+        let al = (sz as u64).clamp(1, 16) as usize;
+        let pad = if al > 0 {
+            (al - sec.data.len() % al) % al
+        } else {
+            0
+        };
+        sec.data.extend(std::iter::repeat_n(0u8, pad));
+
+        let global_offset = sec.data.len() as u64;
+
+        if let Some(init_cid) = gv.initializer {
+            // sec_base = 0: `sec.data` is the full section buffer, so
+            // `out.len()` directly gives the section-absolute byte position.
+            eval_const_bytes(
+                ctx,
+                init_cid,
+                0,
+                &global_sym_map,
+                &mut sec.relocs,
+                &mut sec.data,
+            );
+        } else {
+            // Declaration only (extern) — emit zero bytes as placeholder.
+            sec.data.extend(std::iter::repeat_n(0u8, sz));
+        }
+
+        let emitted_size = sec.data.len() as u64 - global_offset;
+        let is_global_sym = !matches!(gv.linkage, Linkage::Private | Linkage::Internal);
+        symbols.push(Symbol {
+            name: gv.name.clone(),
+            section: sec_idx,
+            offset: global_offset,
+            size: emitted_size,
+            global: is_global_sym,
+            undefined: false,
+        });
+    }
+
+    // Resolve external_name relocs within our own global_sym_map.
+    // (Relocs referencing *other* globals outside this module are left as
+    // external_name for the caller to resolve after merging symbol tables.)
+    let sym_count = symbols.len();
+    for sec in &mut sections {
+        for reloc in &mut sec.relocs {
+            if reloc.external_name.is_none() && reloc.symbol >= sym_count {
+                // Symbol index is already correct (relative to our vec).
+            }
+        }
+    }
+
+    Some((sections, symbols))
 }
 
 // ── tests ──────────────────────────────────────────────────────────────────
@@ -2174,456 +2626,4 @@ mod tests {
         let operand = u16::from_le_bytes([xdata[6], xdata[7]]);
         assert_eq!(operand, 32, "ALLOC_LARGE operand must be alloc_size/8 = 32");
     }
-}
-
-// ── Global-variable data section emission ─────────────────────────────────
-
-use llvm_ir::{
-    context::ConstId, ConstExprOp, ConstantData, Context, FloatKind, Linkage, Module, TypeData,
-};
-use std::collections::HashMap;
-
-/// Byte size of an IR type under the System V / AAPCS64 ABI model.
-///
-/// Pointers are always 8 bytes; integer types round up to the nearest byte;
-/// aggregates include natural padding.  Void / label / metadata / function
-/// types have size 0.
-pub fn sizeof_ty(ctx: &Context, ty: llvm_ir::context::TypeId) -> u64 {
-    match ctx.get_type(ty) {
-        TypeData::Integer(bits) => (*bits as u64).div_ceil(8),
-        TypeData::Float(k) => match k {
-            FloatKind::Half | FloatKind::BFloat => 2,
-            FloatKind::Single => 4,
-            FloatKind::Double => 8,
-            FloatKind::Fp128 => 16,
-            FloatKind::X86Fp80 => 16,
-        },
-        TypeData::Pointer => 8,
-        TypeData::Array { element, len } => {
-            let esz = sizeof_ty(ctx, *element);
-            esz * len
-        }
-        TypeData::Vector { element, len, .. } => {
-            let esz = sizeof_ty(ctx, *element);
-            esz * (*len as u64)
-        }
-        TypeData::Struct(st) => struct_total_size(ctx, &st.fields.clone(), st.packed),
-        TypeData::Void | TypeData::Label | TypeData::Metadata | TypeData::Function(_) => 0,
-    }
-}
-
-fn align_of_ty(ctx: &Context, ty: llvm_ir::context::TypeId) -> u64 {
-    sizeof_ty(ctx, ty).clamp(1, 8)
-}
-
-fn struct_total_size(ctx: &Context, fields: &[llvm_ir::context::TypeId], packed: bool) -> u64 {
-    let mut offset = 0u64;
-    let mut max_align = 1u64;
-    for &f in fields {
-        let fsz = sizeof_ty(ctx, f);
-        let al = if packed { 1 } else { align_of_ty(ctx, f) };
-        if al > max_align {
-            max_align = al;
-        }
-        offset = (offset + al - 1) & !(al - 1);
-        offset += fsz;
-    }
-    if !packed && max_align > 1 {
-        offset = (offset + max_align - 1) & !(max_align - 1);
-    }
-    offset
-}
-
-fn struct_field_byte_offset(
-    ctx: &Context,
-    fields: &[llvm_ir::context::TypeId],
-    field_idx: usize,
-    packed: bool,
-) -> u64 {
-    let mut offset = 0u64;
-    for (i, &f) in fields.iter().enumerate() {
-        let al = if packed { 1 } else { align_of_ty(ctx, f) };
-        offset = (offset + al - 1) & !(al - 1);
-        if i == field_idx {
-            return offset;
-        }
-        offset += sizeof_ty(ctx, f);
-    }
-    0
-}
-
-/// Compute the addend (in bytes) for a GEP constexpr.
-///
-/// `base_ty` is the aggregate/element type that the first GEP index scales
-/// over.  `indices` are the already-extracted integer index values.
-fn gep_byte_offset(ctx: &Context, base_ty: llvm_ir::context::TypeId, indices: &[i64]) -> i64 {
-    let mut offset: i64 = 0;
-    let mut cur_ty = base_ty;
-    for (depth, &idx) in indices.iter().enumerate() {
-        if depth == 0 {
-            offset += idx * sizeof_ty(ctx, cur_ty) as i64;
-        } else {
-            match ctx.get_type(cur_ty).clone() {
-                TypeData::Array { element, .. } => {
-                    offset += idx * sizeof_ty(ctx, element) as i64;
-                    cur_ty = element;
-                }
-                TypeData::Struct(st) => {
-                    let fi = idx as usize;
-                    let flds: Vec<_> = st.fields.clone();
-                    offset += struct_field_byte_offset(ctx, &flds, fi, st.packed) as i64;
-                    if fi < flds.len() {
-                        cur_ty = flds[fi];
-                    }
-                }
-                TypeData::Vector { element, .. } => {
-                    offset += idx * sizeof_ty(ctx, element) as i64;
-                    cur_ty = element;
-                }
-                _ => break,
-            }
-        }
-    }
-    offset
-}
-
-fn const_as_i64(ctx: &Context, cid: ConstId) -> i64 {
-    match ctx.get_const(cid) {
-        ConstantData::Int { val, .. } => *val as i64,
-        _ => 0,
-    }
-}
-
-/// Evaluate `cid` into raw bytes appended to `out`, recording any needed
-/// relocations in `relocs` with offsets relative to `sec_base` (the
-/// section-absolute byte offset at which `out` starts).
-fn eval_const_bytes(
-    ctx: &Context,
-    cid: ConstId,
-    sec_base: u64,
-    global_sym_map: &HashMap<String, usize>,
-    relocs: &mut Vec<Reloc>,
-    out: &mut Vec<u8>,
-) {
-    let cd = ctx.get_const(cid).clone();
-    match cd {
-        ConstantData::Int { ty, val } => {
-            let byte_count = (match ctx.get_type(ty) {
-                TypeData::Integer(b) => *b,
-                _ => 64,
-            } as u64)
-                .div_ceil(8);
-            for i in 0..byte_count {
-                out.push((val >> (i * 8)) as u8);
-            }
-        }
-        ConstantData::IntWide { ty, words } => {
-            let bits = match ctx.get_type(ty) {
-                TypeData::Integer(b) => *b as u64,
-                _ => 64 * words.len() as u64,
-            };
-            let byte_count = bits.div_ceil(8);
-            let raw: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-            let take = (byte_count as usize).min(raw.len());
-            out.extend_from_slice(&raw[..take]);
-        }
-        ConstantData::Float { ty, bits } => {
-            let sz = sizeof_ty(ctx, ty) as usize;
-            for i in 0..sz {
-                out.push((bits >> (i * 8)) as u8);
-            }
-        }
-        ConstantData::Null(ty) | ConstantData::Undef(ty) | ConstantData::Poison(ty) => {
-            let sz = sizeof_ty(ctx, ty) as usize;
-            out.extend(std::iter::repeat_n(0u8, sz));
-        }
-        ConstantData::ZeroInitializer(ty) => {
-            let sz = sizeof_ty(ctx, ty) as usize;
-            out.extend(std::iter::repeat_n(0u8, sz));
-        }
-        ConstantData::Array { elements, .. } | ConstantData::Vector { elements, .. } => {
-            for elem in elements {
-                eval_const_bytes(ctx, elem, sec_base, global_sym_map, relocs, out);
-            }
-        }
-        ConstantData::Struct { ty, fields } => {
-            let (field_tys, is_packed) = match ctx.get_type(ty) {
-                TypeData::Struct(st) => (st.fields.clone(), st.packed),
-                _ => (vec![], false),
-            };
-            let struct_start = out.len();
-            for (i, fld_cid) in fields.iter().enumerate() {
-                let fty = field_tys.get(i).copied().unwrap_or(ctx.i8_ty);
-                let al = if is_packed {
-                    1
-                } else {
-                    align_of_ty(ctx, fty) as usize
-                };
-                let local_pos = out.len() - struct_start;
-                let pad = if al > 0 {
-                    (al - local_pos % al) % al
-                } else {
-                    0
-                };
-                out.extend(std::iter::repeat_n(0u8, pad));
-                eval_const_bytes(ctx, *fld_cid, sec_base, global_sym_map, relocs, out);
-            }
-            // Trailing struct padding
-            let content = out.len() - struct_start;
-            let total = struct_total_size(ctx, &field_tys, is_packed) as usize;
-            if total > content {
-                out.extend(std::iter::repeat_n(0u8, total - content));
-            }
-        }
-        ConstantData::GlobalRef { name, .. } => {
-            push_ptr_reloc(sec_base, &name, 0, global_sym_map, relocs, out);
-        }
-        ConstantData::Expr { op, ty, operands } => {
-            match op {
-                ConstExprOp::BitCast | ConstExprOp::AddrSpaceCast => {
-                    if let Some(&base_cid) = operands.first() {
-                        eval_const_bytes(ctx, base_cid, sec_base, global_sym_map, relocs, out);
-                    } else {
-                        out.extend(std::iter::repeat_n(0u8, sizeof_ty(ctx, ty) as usize));
-                    }
-                }
-                ConstExprOp::GetElementPtr { base_ty, .. } => {
-                    let indices: Vec<i64> = operands[1..]
-                        .iter()
-                        .map(|&c| const_as_i64(ctx, c))
-                        .collect();
-                    let addend = gep_byte_offset(ctx, base_ty, &indices);
-                    match ctx.get_const(operands[0]).clone() {
-                        ConstantData::GlobalRef { name, .. } => {
-                            push_ptr_reloc(sec_base, &name, addend, global_sym_map, relocs, out);
-                        }
-                        _ => {
-                            eval_const_bytes(
-                                ctx,
-                                operands[0],
-                                sec_base,
-                                global_sym_map,
-                                relocs,
-                                out,
-                            );
-                        }
-                    }
-                }
-                ConstExprOp::IntToPtr => {
-                    // Absolute address — no relocation
-                    if let Some(&val_cid) = operands.first() {
-                        match ctx.get_const(val_cid) {
-                            ConstantData::Int { val, .. } => {
-                                out.extend_from_slice(&val.to_le_bytes());
-                            }
-                            _ => out.extend_from_slice(&0u64.to_le_bytes()),
-                        }
-                    } else {
-                        out.extend_from_slice(&0u64.to_le_bytes());
-                    }
-                }
-                ConstExprOp::PtrToInt => {
-                    let int_bits = match ctx.get_type(ty) {
-                        TypeData::Integer(b) => *b,
-                        _ => 64,
-                    };
-                    let byte_count = (int_bits as usize).div_ceil(8);
-                    if let Some(&base_cid) = operands.first() {
-                        if let ConstantData::GlobalRef { name, .. } =
-                            ctx.get_const(base_cid).clone()
-                        {
-                            push_ptr_reloc(sec_base, &name, 0, global_sym_map, relocs, out);
-                            // push_ptr_reloc always emits 8 bytes; truncate if int is narrower
-                            if byte_count < 8 {
-                                let extra = 8 - byte_count;
-                                let len = out.len();
-                                out.truncate(len - extra);
-                            }
-                            return;
-                        }
-                    }
-                    out.extend(std::iter::repeat_n(0u8, byte_count));
-                }
-                ConstExprOp::Trunc | ConstExprOp::ZExt | ConstExprOp::SExt => {
-                    let dst_bits = match ctx.get_type(ty) {
-                        TypeData::Integer(b) => *b as usize,
-                        _ => 64,
-                    };
-                    let dst_bytes = dst_bits.div_ceil(8);
-                    if let Some(&src_cid) = operands.first() {
-                        let mut src_buf = Vec::new();
-                        eval_const_bytes(
-                            ctx,
-                            src_cid,
-                            sec_base,
-                            global_sym_map,
-                            relocs,
-                            &mut src_buf,
-                        );
-                        let sign_extend = op == ConstExprOp::SExt;
-                        let fill = if sign_extend {
-                            src_buf
-                                .last()
-                                .map(|&b| if b & 0x80 != 0 { 0xFF } else { 0 })
-                                .unwrap_or(0)
-                        } else {
-                            0
-                        };
-                        src_buf.resize(dst_bytes, fill);
-                        out.extend_from_slice(&src_buf[..dst_bytes.min(src_buf.len())]);
-                    } else {
-                        out.extend(std::iter::repeat_n(0u8, dst_bytes));
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn push_ptr_reloc(
-    sec_base: u64,
-    name: &str,
-    addend: i64,
-    global_sym_map: &HashMap<String, usize>,
-    relocs: &mut Vec<Reloc>,
-    out: &mut Vec<u8>,
-) {
-    let reloc_offset = sec_base + out.len() as u64;
-    if let Some(&sym_idx) = global_sym_map.get(name) {
-        relocs.push(Reloc {
-            offset: reloc_offset,
-            symbol: sym_idx,
-            kind: RelocKind::Abs64,
-            addend,
-            external_name: None,
-        });
-    } else {
-        relocs.push(Reloc {
-            offset: reloc_offset,
-            symbol: 0,
-            kind: RelocKind::Abs64,
-            addend,
-            external_name: Some(name.to_string()),
-        });
-    }
-    out.extend_from_slice(&0u64.to_le_bytes());
-}
-
-/// Emit all global variables in `module` as data sections with relocations.
-///
-/// Returns `(sections, symbols)` ready to be merged into an [`ObjectFile`].
-/// Symbol indices in the returned relocs are relative to the returned
-/// `symbols` vec; callers must adjust them if merging into a larger symbol
-/// table.
-///
-/// Returns `None` when the module contains no global variables.
-pub fn emit_globals(
-    ctx: &Context,
-    module: &Module,
-    format: ObjectFormat,
-) -> Option<(Vec<Section>, Vec<Symbol>)> {
-    if module.globals.is_empty() {
-        return None;
-    }
-
-    // Map global name → symbol index (within our local symbols vec).
-    let mut global_sym_map: HashMap<String, usize> = HashMap::new();
-    for (i, gv) in module.globals.iter().enumerate() {
-        global_sym_map.insert(gv.name.clone(), i);
-    }
-
-    let rodata_name = match format {
-        ObjectFormat::MachO => "__const",
-        _ => ".rodata",
-    };
-    let data_name = match format {
-        ObjectFormat::MachO => "__data",
-        _ => ".data",
-    };
-
-    // Build one section for read-only globals, one for mutable globals.
-    let has_readonly = module.globals.iter().any(|gv| gv.is_constant);
-    let has_rw = module.globals.iter().any(|gv| !gv.is_constant);
-
-    let mut sections: Vec<Section> = Vec::new();
-    if has_readonly {
-        sections.push(Section {
-            name: rodata_name.to_string(),
-            data: Vec::new(),
-            relocs: Vec::new(),
-            debug_rows: Vec::new(),
-        });
-    }
-    if has_rw {
-        sections.push(Section {
-            name: data_name.to_string(),
-            data: Vec::new(),
-            relocs: Vec::new(),
-            debug_rows: Vec::new(),
-        });
-    }
-
-    let mut symbols: Vec<Symbol> = Vec::new();
-
-    for gv in &module.globals {
-        let sec_idx = if gv.is_constant {
-            sections.iter().position(|s| s.name == rodata_name).unwrap()
-        } else {
-            sections.iter().position(|s| s.name == data_name).unwrap()
-        };
-        let sec = &mut sections[sec_idx];
-
-        // Natural alignment: min of sizeof(ty), 16.
-        let sz = sizeof_ty(ctx, gv.ty) as usize;
-        let al = (sz as u64).clamp(1, 16) as usize;
-        let pad = if al > 0 {
-            (al - sec.data.len() % al) % al
-        } else {
-            0
-        };
-        sec.data.extend(std::iter::repeat_n(0u8, pad));
-
-        let global_offset = sec.data.len() as u64;
-
-        if let Some(init_cid) = gv.initializer {
-            // sec_base = 0: `sec.data` is the full section buffer, so
-            // `out.len()` directly gives the section-absolute byte position.
-            eval_const_bytes(
-                ctx,
-                init_cid,
-                0,
-                &global_sym_map,
-                &mut sec.relocs,
-                &mut sec.data,
-            );
-        } else {
-            // Declaration only (extern) — emit zero bytes as placeholder.
-            sec.data.extend(std::iter::repeat_n(0u8, sz));
-        }
-
-        let emitted_size = sec.data.len() as u64 - global_offset;
-        let is_global_sym = !matches!(gv.linkage, Linkage::Private | Linkage::Internal);
-        symbols.push(Symbol {
-            name: gv.name.clone(),
-            section: sec_idx,
-            offset: global_offset,
-            size: emitted_size,
-            global: is_global_sym,
-            undefined: false,
-        });
-    }
-
-    // Resolve external_name relocs within our own global_sym_map.
-    // (Relocs referencing *other* globals outside this module are left as
-    // external_name for the caller to resolve after merging symbol tables.)
-    let sym_count = symbols.len();
-    for sec in &mut sections {
-        for reloc in &mut sec.relocs {
-            if reloc.external_name.is_none() && reloc.symbol >= sym_count {
-                // Symbol index is already correct (relative to our vec).
-            }
-        }
-    }
-
-    Some((sections, symbols))
 }

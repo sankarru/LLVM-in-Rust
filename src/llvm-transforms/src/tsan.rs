@@ -456,7 +456,7 @@ fn is_alloca_derived(
 mod tests {
     use super::*;
     use crate::pass::ModulePass;
-    use llvm_ir::{Builder, Context, Function, InstrKind, Linkage, Module};
+    use llvm_ir::{Builder, Context, InstrKind, Linkage, Module};
 
     fn make_load_module_i64() -> (Context, Module) {
         let mut ctx = Context::new();

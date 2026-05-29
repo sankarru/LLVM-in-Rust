@@ -98,7 +98,7 @@ pub enum EightbyteClass {
 /// that force MEMORY classification (i128, vectors, etc.).
 fn type_size(ctx: &Context, ty: TypeId) -> Option<u64> {
     match ctx.get_type(ty) {
-        TypeData::Integer(bits) => Some((*bits as u64 + 7) / 8),
+        TypeData::Integer(bits) => Some((*bits as u64).div_ceil(8)),
         TypeData::Float(FloatKind::Single) => Some(4),
         TypeData::Float(FloatKind::Double) => Some(8),
         TypeData::Float(_) => None, // x87 / fp128 / bfloat → MEMORY
@@ -132,7 +132,7 @@ fn classify_field(ctx: &Context, ty: TypeId) -> EightbyteClass {
                 EightbyteClass::Memory
             } else {
                 // Nested struct: return INTEGER if any eightbyte is INTEGER.
-                if sub.iter().any(|c| *c == EightbyteClass::Integer) {
+                if sub.contains(&EightbyteClass::Integer) {
                     EightbyteClass::Integer
                 } else {
                     EightbyteClass::Sse

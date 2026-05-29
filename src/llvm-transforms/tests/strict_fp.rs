@@ -27,7 +27,7 @@ fn make_f64_two_arg_fn() -> (Context, Module) {
     );
     let entry = b.add_block("entry");
     b.position_at_end(entry);
-    drop(b);
+    let _ = b;
     (ctx, module)
 }
 
@@ -222,7 +222,7 @@ fn build_fp_invariant_loop(flags: FastMathFlags) -> (Context, Module, BlockId) {
 
     b.position_at_end(exit_bb);
     b.build_ret(c0);
-    drop(b);
+    let _ = b;
 
     // Patch back-edge into phi.
     {
@@ -340,7 +340,7 @@ fn strictfp_function_attr_round_trips() {
     );
 
     // Parse back.
-    let (ctx2, module2) = parse(&ll).expect("should re-parse successfully");
+    let (_ctx2, module2) = parse(&ll).expect("should re-parse successfully");
 
     assert!(
         module2.functions[0].strictfp,

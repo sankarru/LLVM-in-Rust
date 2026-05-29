@@ -146,7 +146,7 @@ impl CfiWriter {
 
         // Pad to 8-byte boundary (length field + body must be 8-byte aligned).
         // The total record = 4 (length) + body.len(); pad body so total is multiple of 8.
-        while (4 + body.len()) % 8 != 0 {
+        while !(4 + body.len()).is_multiple_of(8) {
             body.extend(CfiInstr::Nop.encode());
         }
 
@@ -190,7 +190,7 @@ impl CfiWriter {
         }
 
         // Pad to 4-byte boundary.
-        while (4 + body.len()) % 4 != 0 {
+        while !(4 + body.len()).is_multiple_of(4) {
             body.extend(CfiInstr::Nop.encode());
         }
 
