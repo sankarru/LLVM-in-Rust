@@ -45,7 +45,6 @@ fn emit_host_obj(ll: &str, out: &Path) {
     #[cfg(target_arch = "x86_64")]
     {
         emit_host_obj_x86(&ctx, &module, func, obj_format, out);
-        return;
     }
 
     #[cfg(target_arch = "aarch64")]

@@ -424,9 +424,9 @@ loop_exit:
         let ptr = jit.get_function_ptr("fib").expect("symbol not found");
         // SAFETY: ptr points to compiled x86-64 code with signature `fn(i32) -> i32`.
         let f = unsafe { std::mem::transmute::<*const u8, fn(i32) -> i32>(ptr) };
-        assert_eq!(unsafe { f(10) }, 55);
-        assert_eq!(unsafe { f(0) }, 0);
-        assert_eq!(unsafe { f(1) }, 1);
+        assert_eq!(f(10), 55);
+        assert_eq!(f(0), 0);
+        assert_eq!(f(1), 1);
     }
 
     #[test]
@@ -453,8 +453,8 @@ entry:
         let double = unsafe { std::mem::transmute::<*const u8, fn(i32) -> i32>(p_double) };
         let triple = unsafe { std::mem::transmute::<*const u8, fn(i32) -> i32>(p_triple) };
 
-        assert_eq!(unsafe { double(5) }, 10);
-        assert_eq!(unsafe { triple(5) }, 15);
+        assert_eq!(double(5), 10);
+        assert_eq!(triple(5), 15);
     }
 
     #[test]
