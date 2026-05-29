@@ -56,7 +56,11 @@ pub struct X86Emitter {
 impl X86Emitter {
     /// Create a new `X86Emitter` for the given object format.
     pub fn new(format: ObjectFormat) -> Self {
-        Self { format, cfi_section: None, lsda_section: None }
+        Self {
+            format,
+            cfi_section: None,
+            lsda_section: None,
+        }
     }
 
     /// Return and clear the CFI section bytes built during the last
@@ -96,7 +100,10 @@ impl Emitter for X86Emitter {
                 // After "push rbp" (1 byte): CFA = RSP+16, RBP saved at CFA-16.
                 CfiInstr::AdvanceLoc(1),
                 CfiInstr::DefCfaOffset(16),
-                CfiInstr::Offset { reg: 6, factored_offset: 2 },
+                CfiInstr::Offset {
+                    reg: 6,
+                    factored_offset: 2,
+                },
                 // After "mov rbp, rsp" (3 bytes): CFA register = RBP.
                 CfiInstr::AdvanceLoc(3),
                 CfiInstr::DefCfaRegister(6),
@@ -161,7 +168,7 @@ impl Emitter for X86Emitter {
                     ctx.emit64(sub_rsp as i64);
                     let call_site = ctx.pos();
                     ctx.emit(0xE8); // CALL rel32
-                    // rel32 placeholder — filled by linker via IMAGE_REL_AMD64_REL32
+                                    // rel32 placeholder — filled by linker via IMAGE_REL_AMD64_REL32
                     ctx.emit32(0);
                     ctx.relocs.push(Reloc {
                         offset: (call_site + 1) as u64,
@@ -1017,13 +1024,14 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
         // Layout: RBP - callee_save_bytes - (slot_idx+1)*8
         // Encoding: REX.W 8D /r ModRM(mod=10, reg=dst, rm=5=RBP) disp32
         LEA_FRAME_MR => {
-            if let (Some(dst), Some(MOperand::Imm(slot_idx))) = (instr.dst, instr.operands.first()) {
+            if let (Some(dst), Some(MOperand::Imm(slot_idx))) = (instr.dst, instr.operands.first())
+            {
                 let dst_r = PReg(dst.0 as u8);
                 let disp = -((ctx.callee_save_bytes as i32) + (*slot_idx as i32 + 1) * 8);
                 let rex = 0x48 | (if is_extended(dst_r) { 0x04 } else { 0 });
                 ctx.emit(rex);
                 ctx.emit(0x8D); // LEA r64, m
-                // ModRM: mod=10 (disp32), reg=dst_enc, rm=5 (RBP)
+                                // ModRM: mod=10 (disp32), reg=dst_enc, rm=5 (RBP)
                 ctx.emit(0x80 | (reg_enc(dst_r) << 3) | 5);
                 ctx.emit32(disp);
             } else {
@@ -1059,35 +1067,35 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
         }
 
         // ── SSE2 scalar double: 66 0F <op> /r ─────────────────────────────
-        ADDSD_RR  => emit_sse2_rr(ctx, instr, 0x66, 0x58),
-        SUBSD_RR  => emit_sse2_rr(ctx, instr, 0x66, 0x5C),
-        MULSD_RR  => emit_sse2_rr(ctx, instr, 0x66, 0x59),
-        DIVSD_RR  => emit_sse2_rr(ctx, instr, 0x66, 0x5E),
-        SQRTSD_R  => emit_sse2_rr(ctx, instr, 0x66, 0x51),
+        ADDSD_RR => emit_sse2_rr(ctx, instr, 0x66, 0x58),
+        SUBSD_RR => emit_sse2_rr(ctx, instr, 0x66, 0x5C),
+        MULSD_RR => emit_sse2_rr(ctx, instr, 0x66, 0x59),
+        DIVSD_RR => emit_sse2_rr(ctx, instr, 0x66, 0x5E),
+        SQRTSD_R => emit_sse2_rr(ctx, instr, 0x66, 0x51),
         UCOMISD_RR => emit_sse2_cmp(ctx, instr, 0x66, 0x2E),
         MOVAPD_RR | MOVAPD_RR_F32 => emit_sse2_rr(ctx, instr, 0x66, 0x28),
 
         // ── SSE2 scalar single: F3 0F <op> /r ─────────────────────────────
-        ADDSS_RR  => emit_sse2_rr(ctx, instr, 0xF3, 0x58),
-        SUBSS_RR  => emit_sse2_rr(ctx, instr, 0xF3, 0x5C),
-        MULSS_RR  => emit_sse2_rr(ctx, instr, 0xF3, 0x59),
-        DIVSS_RR  => emit_sse2_rr(ctx, instr, 0xF3, 0x5E),
-        SQRTSS_R  => emit_sse2_rr(ctx, instr, 0xF3, 0x51),
+        ADDSS_RR => emit_sse2_rr(ctx, instr, 0xF3, 0x58),
+        SUBSS_RR => emit_sse2_rr(ctx, instr, 0xF3, 0x5C),
+        MULSS_RR => emit_sse2_rr(ctx, instr, 0xF3, 0x59),
+        DIVSS_RR => emit_sse2_rr(ctx, instr, 0xF3, 0x5E),
+        SQRTSS_R => emit_sse2_rr(ctx, instr, 0xF3, 0x51),
         UCOMISS_RR => emit_sse2_cmp(ctx, instr, 0x00, 0x2E), // no mandatory prefix for SSE UCOMISS
-        MOVSS_LOAD_MR  => emit_sse2_spill_load(ctx, instr, 0xF3, 0x10),
+        MOVSS_LOAD_MR => emit_sse2_spill_load(ctx, instr, 0xF3, 0x10),
         MOVSS_STORE_RM => emit_sse2_spill_store(ctx, instr, 0xF3, 0x11),
 
         // ── FP spill load/store: F2 0F 10/11 [rbp+disp32] ─────────────────
-        MOVSD_LOAD_MR  => emit_sse2_spill_load(ctx, instr, 0xF2, 0x10),
+        MOVSD_LOAD_MR => emit_sse2_spill_load(ctx, instr, 0xF2, 0x10),
         MOVSD_STORE_RM => emit_sse2_spill_store(ctx, instr, 0xF2, 0x11),
 
         // ── FP ↔ int conversions ──────────────────────────────────────────
         CVTTSD2SI_RR => emit_cvt_xmm_to_gpr(ctx, instr, 0xF2, 0x2C),
-        CVTSI2SD_RR  => emit_cvt_gpr_to_xmm(ctx, instr, 0xF2, 0x2A),
+        CVTSI2SD_RR => emit_cvt_gpr_to_xmm(ctx, instr, 0xF2, 0x2A),
         CVTTSS2SI_RR => emit_cvt_xmm_to_gpr(ctx, instr, 0xF3, 0x2C),
-        CVTSI2SS_RR  => emit_cvt_gpr_to_xmm(ctx, instr, 0xF3, 0x2A),
-        CVTSD2SS_RR  => emit_sse2_rr(ctx, instr, 0xF2, 0x5A),
-        CVTSS2SD_RR  => emit_sse2_rr(ctx, instr, 0xF3, 0x5A),
+        CVTSI2SS_RR => emit_cvt_gpr_to_xmm(ctx, instr, 0xF3, 0x2A),
+        CVTSD2SS_RR => emit_sse2_rr(ctx, instr, 0xF2, 0x5A),
+        CVTSS2SD_RR => emit_sse2_rr(ctx, instr, 0xF3, 0x5A),
 
         // ── unsupported: emit NOP ─────────────────────────────────────────
         _ => {
@@ -1101,9 +1109,8 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
 /// Emit a REX byte for XMM ← XMM operations when extended registers are used.
 /// REX.R = dst XMM8-15; REX.B = src XMM8-15.  No REX.W for SSE2 scalar ops.
 fn xmm_rex(ctx: &mut EncodeCtx, dst_enc: u8, src_enc: u8) {
-    let rex = 0x40u8
-        | (if dst_enc >= 8 { 0x04 } else { 0 })
-        | (if src_enc >= 8 { 0x01 } else { 0 });
+    let rex =
+        0x40u8 | (if dst_enc >= 8 { 0x04 } else { 0 }) | (if src_enc >= 8 { 0x01 } else { 0 });
     if rex != 0x40 {
         ctx.emit(rex);
     }
@@ -1930,7 +1937,14 @@ mod tests {
             RegAllocStrategy::LinearScan,
         );
         assert!(!result.spilled.is_empty(), "must have spills");
-        insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+        insert_spill_reloads(
+            &mut mf,
+            &mut result,
+            MOV_LOAD_MR,
+            MOV_STORE_RM,
+            MOV_LOAD_MR,
+            MOV_STORE_RM,
+        );
         apply_allocation(&mut mf, &result);
 
         let mut e = X86Emitter::new(ObjectFormat::Elf);
@@ -1988,16 +2002,22 @@ mod tests {
             "missing: mov rax, 8192"
         );
         assert!(
-            sec.data.windows(call_chkstk.len()).any(|w| w == call_chkstk),
+            sec.data
+                .windows(call_chkstk.len())
+                .any(|w| w == call_chkstk),
             "missing: call __chkstk placeholder"
         );
         assert!(
-            sec.data.windows(sub_rsp_rax.len()).any(|w| w == sub_rsp_rax),
+            sec.data
+                .windows(sub_rsp_rax.len())
+                .any(|w| w == sub_rsp_rax),
             "missing: sub rsp, rax"
         );
         // Must have a reloc for the __chkstk call
         assert!(
-            sec.relocs.iter().any(|r| r.external_name.as_deref() == Some("__chkstk")),
+            sec.relocs
+                .iter()
+                .any(|r| r.external_name.as_deref() == Some("__chkstk")),
             "missing __chkstk reloc"
         );
     }
@@ -2033,11 +2053,15 @@ mod tests {
         // sub rsp, 8192 (imm32 form): 48 81 EC 00 20 00 00
         let sub_rsp_imm32: &[u8] = &[0x48, 0x81, 0xEC, 0x00, 0x20, 0x00, 0x00];
         assert!(
-            sec.data.windows(sub_rsp_imm32.len()).any(|w| w == sub_rsp_imm32),
+            sec.data
+                .windows(sub_rsp_imm32.len())
+                .any(|w| w == sub_rsp_imm32),
             "ELF large frame must use sub rsp, imm32 (not __chkstk)"
         );
         assert!(
-            !sec.relocs.iter().any(|r| r.external_name.as_deref() == Some("__chkstk")),
+            !sec.relocs
+                .iter()
+                .any(|r| r.external_name.as_deref() == Some("__chkstk")),
             "ELF must not emit __chkstk reloc"
         );
     }
@@ -2060,7 +2084,11 @@ mod tests {
         let mi = MInstr {
             opcode: LOCK_CMPXCHG_MR,
             dst: None,
-            operands: vec![MOperand::PReg(RCX), MOperand::PReg(RAX), MOperand::PReg(RDX)],
+            operands: vec![
+                MOperand::PReg(RCX),
+                MOperand::PReg(RAX),
+                MOperand::PReg(RDX),
+            ],
             phys_uses: vec![],
             clobbers: vec![],
             debug_loc: None,
@@ -2073,7 +2101,10 @@ mod tests {
         assert_eq!(sec.data[1], 0x48, "REX.W");
         assert_eq!(sec.data[2], 0x0F, "escape byte");
         assert_eq!(sec.data[3], 0xB1, "CMPXCHG opcode");
-        assert_eq!(sec.data[4], 0x11, "ModRM(00 010 001): mod=00 reg=RDX rm=RCX");
+        assert_eq!(
+            sec.data[4], 0x11,
+            "ModRM(00 010 001): mod=00 reg=RDX rm=RCX"
+        );
     }
 
     #[test]
@@ -2097,7 +2128,10 @@ mod tests {
         assert_eq!(sec.data[1], 0x48, "REX.W");
         assert_eq!(sec.data[2], 0x0F);
         assert_eq!(sec.data[3], 0xC1, "XADD opcode");
-        assert_eq!(sec.data[4], 0x37, "ModRM(00 110 111): mod=00 reg=RSI rm=RDI");
+        assert_eq!(
+            sec.data[4], 0x37,
+            "ModRM(00 110 111): mod=00 reg=RSI rm=RDI"
+        );
     }
 
     #[test]
@@ -2118,7 +2152,10 @@ mod tests {
         // 48, 87, ModRM(00 000 111) = 0x07
         assert_eq!(sec.data[0], 0x48, "REX.W");
         assert_eq!(sec.data[1], 0x87, "XCHG opcode");
-        assert_eq!(sec.data[2], 0x07, "ModRM(00 000 111): mod=00 reg=RAX rm=RDI");
+        assert_eq!(
+            sec.data[2], 0x07,
+            "ModRM(00 000 111): mod=00 reg=RAX rm=RDI"
+        );
     }
 
     #[test]
@@ -2225,7 +2262,10 @@ mod tests {
         assert_eq!(sec.data[0], 0xF0, "LOCK prefix");
         assert_eq!(sec.data[1], 0x48, "REX.W");
         assert_eq!(sec.data[2], 0x21, "AND opcode");
-        assert_eq!(sec.data[3], 0x75, "ModRM(01 110 101): mod=01 reg=RSI rm=RBP");
+        assert_eq!(
+            sec.data[3], 0x75,
+            "ModRM(01 110 101): mod=01 reg=RSI rm=RBP"
+        );
         assert_eq!(sec.data[4], 0x00, "disp8=0 for mod=01 RBP base");
     }
 

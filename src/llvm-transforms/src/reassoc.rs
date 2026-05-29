@@ -147,7 +147,9 @@ fn try_simplify_fp(
             if reassoc_or_fast {
                 if let Some(c2) = fp_constant_bits(ctx, *rhs) {
                     let inner_lhs = resolve(*lhs, subst);
-                    if let Some((inner_kind, _inner_lhs_id)) = get_instr_kind_by_ref(func, rewritten, inner_lhs) {
+                    if let Some((inner_kind, _inner_lhs_id)) =
+                        get_instr_kind_by_ref(func, rewritten, inner_lhs)
+                    {
                         if let InstrKind::FAdd {
                             flags: f2,
                             lhs: x,
@@ -274,17 +276,13 @@ fn is_fp_zero(ctx: &Context, vref: ValueRef) -> bool {
 fn is_fp_one(ctx: &Context, vref: ValueRef) -> bool {
     if let ValueRef::Constant(cid) = vref {
         match ctx.get_const(cid) {
-            ConstantData::Float { ty, bits } => {
-                match ctx.get_type(*ty) {
-                    TypeData::Float(llvm_ir::FloatKind::Single) => {
-                        f32::from_bits(*bits as u32) == 1.0f32
-                    }
-                    TypeData::Float(llvm_ir::FloatKind::Double) => {
-                        f64::from_bits(*bits) == 1.0f64
-                    }
-                    _ => false,
+            ConstantData::Float { ty, bits } => match ctx.get_type(*ty) {
+                TypeData::Float(llvm_ir::FloatKind::Single) => {
+                    f32::from_bits(*bits as u32) == 1.0f32
                 }
-            }
+                TypeData::Float(llvm_ir::FloatKind::Double) => f64::from_bits(*bits) == 1.0f64,
+                _ => false,
+            },
             _ => false,
         }
     } else {
@@ -297,16 +295,14 @@ fn is_fp_one(ctx: &Context, vref: ValueRef) -> bool {
 fn fp_constant_bits(ctx: &Context, vref: ValueRef) -> Option<u64> {
     if let ValueRef::Constant(cid) = vref {
         match ctx.get_const(cid) {
-            ConstantData::Float { ty, bits } => {
-                match ctx.get_type(*ty) {
-                    TypeData::Float(llvm_ir::FloatKind::Single) => {
-                        let f = f32::from_bits(*bits as u32) as f64;
-                        Some(f.to_bits())
-                    }
-                    TypeData::Float(llvm_ir::FloatKind::Double) => Some(*bits),
-                    _ => None,
+            ConstantData::Float { ty, bits } => match ctx.get_type(*ty) {
+                TypeData::Float(llvm_ir::FloatKind::Single) => {
+                    let f = f32::from_bits(*bits as u32) as f64;
+                    Some(f.to_bits())
                 }
-            }
+                TypeData::Float(llvm_ir::FloatKind::Double) => Some(*bits),
+                _ => None,
+            },
             _ => None,
         }
     } else {

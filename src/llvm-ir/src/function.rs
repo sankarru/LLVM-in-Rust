@@ -153,7 +153,12 @@ impl Function {
     }
 
     /// Public API for `add_instr_metadata`.
-    pub fn add_instr_metadata(&mut self, id: InstrId, key: impl Into<String>, value: impl Into<String>) {
+    pub fn add_instr_metadata(
+        &mut self,
+        id: InstrId,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) {
         self.instr_metadata
             .entry(id)
             .or_default()

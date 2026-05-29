@@ -382,7 +382,16 @@ fn rewrite_block(
     }
 
     for &child in &dom_children[bid.0 as usize] {
-        rewrite_block(func, child, dom_children, &mut exprs, &mut loads, subst, remove, strictfp_mode);
+        rewrite_block(
+            func,
+            child,
+            dom_children,
+            &mut exprs,
+            &mut loads,
+            subst,
+            remove,
+            strictfp_mode,
+        );
     }
 }
 
@@ -625,7 +634,10 @@ mod tests {
 
         let mut pass = Gvn;
         let changed = pass.run_on_function(&mut ctx, &mut module.functions[0]);
-        assert!(!changed, "sibling-block expressions are not dominance-equivalent");
+        assert!(
+            !changed,
+            "sibling-block expressions are not dominance-equivalent"
+        );
     }
 
     #[test]

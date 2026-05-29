@@ -53,8 +53,7 @@ mod real_backend {
     /// mutex holds the lazily-initialised backend, which is selected based on
     /// the target triple provided to `init`.
     pub struct LlvmInRustBackend {
-        pub(crate) target_machine:
-            Arc<Mutex<Option<Box<dyn IselBackend + Send>>>>,
+        pub(crate) target_machine: Arc<Mutex<Option<Box<dyn IselBackend + Send>>>>,
     }
 
     impl LlvmInRustBackend {

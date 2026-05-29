@@ -84,7 +84,14 @@ fn emit_dbg_elf_obj_from_ir(src: &str, out: &Path) -> ObjectFile {
         &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    llvm_codegen::regalloc::insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
     let mut emitter = X86Emitter::new(ObjectFormat::Elf);
     let obj = emit_object(&mf, &mut emitter);
@@ -121,7 +128,14 @@ fn emit_dbg_elf_obj_from_ir(src: &str, out: &Path) -> ObjectFile {
         &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    llvm_codegen::regalloc::insert_spill_reloads(&mut mf, &mut result, LDR_FP, STR_FP, LDR_FP, STR_FP);
+    llvm_codegen::regalloc::insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        LDR_FP,
+        STR_FP,
+        LDR_FP,
+        STR_FP,
+    );
     apply_allocation(&mut mf, &result);
     let mut emitter = AArch64Emitter::new(ObjectFormat::Elf);
     let obj = emit_object(&mf, &mut emitter);
@@ -173,7 +187,10 @@ fn emits_debug_line_when_dbg_metadata_present() {
             .expect("run llvm-dwarfdump");
         assert!(out.status.success());
         let text = String::from_utf8_lossy(&out.stdout);
-        assert!(text.contains("dbg_test.c") || text.contains("line"), "dwarfdump output: {text}");
+        assert!(
+            text.contains("dbg_test.c") || text.contains("line"),
+            "dwarfdump output: {text}"
+        );
 
         let info = Command::new(&tool)
             .arg("--debug-info")
@@ -213,7 +230,10 @@ fn debug_rows_preserve_line_transitions_across_blocks() {
         .iter()
         .find(|s| s.name == ".text" || s.name == "__text")
         .expect("text section");
-    assert!(!text.debug_rows.is_empty(), "expected instruction debug rows");
+    assert!(
+        !text.debug_rows.is_empty(),
+        "expected instruction debug rows"
+    );
     let mut lines: Vec<u32> = text.debug_rows.iter().map(|r| r.line).collect();
     lines.sort_unstable();
     lines.dedup();

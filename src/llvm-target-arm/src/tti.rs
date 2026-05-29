@@ -157,9 +157,9 @@ impl TargetTransformInfo for AArch64Tti {
     /// Recommended SIMD vector factor for NEON (128-bit) baseline.
     fn vector_factor(&self, scalar_bits: u32) -> u32 {
         match scalar_bits {
-            16 => 8,  // 8x i16 in 128 bits (NEON)
-            32 => 4,  // 4x i32 / f32 in 128 bits (NEON)
-            64 => 2,  // 2x i64 / f64 in 128 bits (NEON)
+            16 => 8, // 8x i16 in 128 bits (NEON)
+            32 => 4, // 4x i32 / f32 in 128 bits (NEON)
+            64 => 2, // 2x i64 / f64 in 128 bits (NEON)
             _ => 1,
         }
     }

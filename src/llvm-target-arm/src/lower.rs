@@ -633,7 +633,9 @@ fn lower_instr(
         }
 
         // ── calls ──────────────────────────────────────────────────────────
-        Call { callee, args, tail, .. } => {
+        Call {
+            callee, args, tail, ..
+        } => {
             if let Some(ip) = instrprof_from_callee(ctx, *callee) {
                 eprintln!(
                     "warning: PGO intrinsic {} elided — counter emission not implemented",
@@ -698,7 +700,9 @@ fn lower_instr(
             // DMB ISH — data memory barrier, inner-shareable domain.
             mf.push(mblock, MInstr::new(DMB_ISH));
         }
-        CmpXchg { ptr, cmp, new_val, .. } => {
+        CmpXchg {
+            ptr, cmp, new_val, ..
+        } => {
             let ptr_vr = res!(*ptr);
             let cmp_vr = res!(*cmp);
             let new_vr = res!(*new_val);
@@ -717,10 +721,7 @@ fn lower_instr(
             } else {
                 // LL/SC pair (non-LSE path).
                 // Full retry loop is a follow-up; emit the basic pair here.
-                mf.push(
-                    mblock,
-                    MInstr::new(LDXR).with_dst(dst).with_vreg(ptr_vr),
-                );
+                mf.push(mblock, MInstr::new(LDXR).with_dst(dst).with_vreg(ptr_vr));
                 // STXR: status dst (not exposed as an SSA result), val, ptr.
                 let status = mf.fresh_vreg();
                 mf.push(
@@ -755,10 +756,7 @@ fn lower_instr(
                 );
             } else {
                 // LL/SC pair (non-LSE path).
-                mf.push(
-                    mblock,
-                    MInstr::new(LDXR).with_dst(dst).with_vreg(ptr_vr),
-                );
+                mf.push(mblock, MInstr::new(LDXR).with_dst(dst).with_vreg(ptr_vr));
                 let status = mf.fresh_vreg();
                 mf.push(
                     mblock,
@@ -778,7 +776,9 @@ fn lower_instr(
         // ── memory: non-promotable alloca/load/store (FP-relative frame slots) ──
         // mem2reg eliminates promotable alloca/load/store; what remains here is
         // non-promotable (address escapes or non-constant GEP index).
-        Alloca { alloc_ty, align, .. } => {
+        Alloca {
+            alloc_ty, align, ..
+        } => {
             let dst = new_dst!();
             let size_bytes = sizeof_ty(ctx, *alloc_ty) as u32;
             let align_bytes = align.unwrap_or(8);
@@ -801,10 +801,7 @@ fn lower_instr(
             let dst = new_dst!();
             // LDR_REG: ldr xd, [xn]
             let ptr_vr = res!(*ptr);
-            mf.push(
-                mblock,
-                MInstr::new(LDR_REG).with_dst(dst).with_vreg(ptr_vr),
-            );
+            mf.push(mblock, MInstr::new(LDR_REG).with_dst(dst).with_vreg(ptr_vr));
         }
         Store { val, ptr, .. } => {
             // STR_REG: str xs, [xn]
@@ -856,10 +853,20 @@ fn lower_instr(
         }
 
         // Terminators handled in lower_terminator.
-        Ret { .. } | Br { .. } | CondBr { .. } | Invoke { .. } | Switch { .. } | Unreachable | Resume { .. } => {}
+        Ret { .. }
+        | Br { .. }
+        | CondBr { .. }
+        | Invoke { .. }
+        | Switch { .. }
+        | Unreachable
+        | Resume { .. } => {}
 
         // Funclet pads — not yet fully supported; emit a NOP stub.
-        CatchPad { .. } | CleanupPad { .. } | CatchSwitch { .. } | CatchRet { .. } | CleanupRet { .. } => {}
+        CatchPad { .. }
+        | CleanupPad { .. }
+        | CatchSwitch { .. }
+        | CatchRet { .. }
+        | CleanupRet { .. } => {}
     }
 }
 
@@ -971,12 +978,8 @@ fn lower_terminator(
                 action: 0,
             });
             // Track: (machine_block, call_instr_in_block, lsda_record_idx, unwind_dest_mblock)
-            mf.invoke_tracking.push((
-                mblock,
-                call_instr_idx,
-                lsda_rec_idx,
-                unwind_dest.0 as usize,
-            ));
+            mf.invoke_tracking
+                .push((mblock, call_instr_idx, lsda_rec_idx, unwind_dest.0 as usize));
             if term.ty != ctx.void_ty {
                 let dst = mf.fresh_vreg();
                 vmap.insert(ValueRef::Instruction(tid), dst);
@@ -1018,7 +1021,9 @@ fn lower_terminator(
         }
 
         // CatchSwitch — lower first handler as unconditional branch (stub).
-        CatchSwitch { handlers, default, .. } => {
+        CatchSwitch {
+            handlers, default, ..
+        } => {
             if let Some(&h) = handlers.first() {
                 mf.push(mblock, MInstr::new(B).with_block(h.0 as usize));
             } else if let Some(d) = default {
@@ -1520,10 +1525,7 @@ mod tests {
         let mut emitter = AArch64Emitter::new(ObjectFormat::Elf);
         let sec = emitter.emit_function(&mf);
         // DMB ISH = 0xD5033BBF in LE: [BF, 3B, 03, D5]
-        let found_dmb = sec
-            .data
-            .windows(4)
-            .any(|w| w == [0xBF, 0x3B, 0x03, 0xD5]);
+        let found_dmb = sec.data.windows(4).any(|w| w == [0xBF, 0x3B, 0x03, 0xD5]);
         assert!(found_dmb, "DMB ISH bytes [BF 3B 03 D5] must appear in code");
     }
 
@@ -1633,10 +1635,7 @@ mod tests {
             .blocks
             .iter()
             .any(|bl| bl.instrs.iter().any(|i| i.opcode == CASAL));
-        assert!(
-            !has_casal,
-            "CmpXchg with LSE=false must NOT emit CASAL"
-        );
+        assert!(!has_casal, "CmpXchg with LSE=false must NOT emit CASAL");
     }
 
     #[test]
@@ -1676,7 +1675,10 @@ mod tests {
             .blocks
             .iter()
             .any(|bl| bl.instrs.iter().any(|i| i.opcode == LDADDAL));
-        assert!(has_ldaddal, "AtomicRmw(Add) with LSE=true must emit LDADDAL");
+        assert!(
+            has_ldaddal,
+            "AtomicRmw(Add) with LSE=true must emit LDADDAL"
+        );
     }
 
     #[test]
@@ -1797,7 +1799,10 @@ mod tests {
         let (ctx, module) = make_fp_binop_fn("fadd_fn", |b, a, bv| b.build_fadd("r", a, bv));
         let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
-        let has_fadd = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FADD_RR));
+        let has_fadd = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == FADD_RR));
         assert!(has_fadd, "FAdd must lower to FADD_RR");
     }
 
@@ -1806,7 +1811,10 @@ mod tests {
         let (ctx, module) = make_fp_binop_fn("fsub_fn", |b, a, bv| b.build_fsub("r", a, bv));
         let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
-        let has_fsub = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FSUB_RR));
+        let has_fsub = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == FSUB_RR));
         assert!(has_fsub, "FSub must lower to FSUB_RR");
     }
 
@@ -1815,7 +1823,10 @@ mod tests {
         let (ctx, module) = make_fp_binop_fn("fmul_fn", |b, a, bv| b.build_fmul("r", a, bv));
         let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
-        let has_fmul = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FMUL_RR));
+        let has_fmul = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == FMUL_RR));
         assert!(has_fmul, "FMul must lower to FMUL_RR");
     }
 
@@ -1824,7 +1835,10 @@ mod tests {
         let (ctx, module) = make_fp_binop_fn("fdiv_fn", |b, a, bv| b.build_fdiv("r", a, bv));
         let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
-        let has_fdiv = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FDIV_RR));
+        let has_fdiv = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == FDIV_RR));
         assert!(has_fdiv, "FDiv must lower to FDIV_RR");
     }
 
@@ -1851,7 +1865,10 @@ mod tests {
 
         let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
-        let has_fneg = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FNEG_R));
+        let has_fneg = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == FNEG_R));
         assert!(has_fneg, "FNeg must lower to FNEG_R");
     }
 
@@ -1882,7 +1899,10 @@ mod tests {
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
 
         // Must emit FMOV_RR to copy from D0 argument register.
-        let has_fmov = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FMOV_RR));
+        let has_fmov = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == FMOV_RR));
         assert!(
             has_fmov,
             "Float function argument must be copied using FMOV_RR (not MOV_RR)"
@@ -1913,7 +1933,10 @@ mod tests {
 
         let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
-        let has_scvtf = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == SCVTF_RR));
+        let has_scvtf = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == SCVTF_RR));
         assert!(has_scvtf, "SIToFP must lower to SCVTF_RR");
     }
 
@@ -1941,7 +1964,10 @@ mod tests {
 
         let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
-        let has_fcvtzs = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FCVTZS_RR));
+        let has_fcvtzs = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == FCVTZS_RR));
         assert!(has_fcvtzs, "FPToSI must lower to FCVTZS_RR");
     }
 }

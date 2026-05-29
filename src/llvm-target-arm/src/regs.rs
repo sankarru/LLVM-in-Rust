@@ -178,8 +178,7 @@ pub const D31: PReg = PReg(63);
 /// AAPCS64: D8–D15 are callee-saved; D24–D31 are callee-saved.
 /// D0–D7 and D16–D23 are caller-saved (allocate freely).
 pub const FP_ALLOCATABLE: &[PReg] = &[
-    D0, D1, D2, D3, D4, D5, D6, D7,
-    D16, D17, D18, D19, D20, D21, D22, D23,
+    D0, D1, D2, D3, D4, D5, D6, D7, D16, D17, D18, D19, D20, D21, D22, D23,
 ];
 
 /// FP/SIMD callee-saved registers (D8–D15, AAPCS64).

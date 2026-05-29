@@ -2,14 +2,10 @@
 //! constant folding, plus `strictfp` function attribute round-trip.
 
 use llvm_ir::{
-    ArgId, BlockId, Builder, Context, FastMathFlags, InstrKind, Instruction, Linkage,
-    Module, TypeId, ValueRef,
+    ArgId, BlockId, Builder, Context, FastMathFlags, InstrKind, Instruction, Linkage, Module,
+    TypeId, ValueRef,
 };
-use llvm_transforms::{
-    gvn::Gvn,
-    licm::Licm,
-    pass::FunctionPass,
-};
+use llvm_transforms::{gvn::Gvn, licm::Licm, pass::FunctionPass};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -65,7 +61,10 @@ fn flags_none() -> FastMathFlags {
 }
 
 fn flags_reassoc() -> FastMathFlags {
-    FastMathFlags { reassoc: true, ..Default::default() }
+    FastMathFlags {
+        reassoc: true,
+        ..Default::default()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -84,14 +83,22 @@ fn gvn_does_not_cse_strict_fadd() {
         &mut module,
         "x1",
         f64_ty,
-        InstrKind::FAdd { flags: flags_none(), lhs: a, rhs: b },
+        InstrKind::FAdd {
+            flags: flags_none(),
+            lhs: a,
+            rhs: b,
+        },
     );
     // %x2 = fadd double %a, %b    (identical, no flags)
     let x2 = push_instr(
         &mut module,
         "x2",
         f64_ty,
-        InstrKind::FAdd { flags: flags_none(), lhs: a, rhs: b },
+        InstrKind::FAdd {
+            flags: flags_none(),
+            lhs: a,
+            rhs: b,
+        },
     );
     set_ret(&ctx, &mut module, x2);
 
@@ -102,10 +109,7 @@ fn gvn_does_not_cse_strict_fadd() {
     let changed = pass.run_on_function(&mut ctx, &mut module.functions[0]);
 
     // GVN must NOT fire: strict FP forbids CSE.
-    assert!(
-        !changed,
-        "GVN must not CSE strict (no-FMF) fadds"
-    );
+    assert!(!changed, "GVN must not CSE strict (no-FMF) fadds");
     assert_eq!(
         body_len(&module, BlockId(0)),
         2,
@@ -129,14 +133,22 @@ fn gvn_cse_fadd_with_reassoc() {
         &mut module,
         "x1",
         f64_ty,
-        InstrKind::FAdd { flags: flags_reassoc(), lhs: a, rhs: b },
+        InstrKind::FAdd {
+            flags: flags_reassoc(),
+            lhs: a,
+            rhs: b,
+        },
     );
     // %x2 = fadd reassoc double %a, %b  (identical)
     let x2 = push_instr(
         &mut module,
         "x2",
         f64_ty,
-        InstrKind::FAdd { flags: flags_reassoc(), lhs: a, rhs: b },
+        InstrKind::FAdd {
+            flags: flags_reassoc(),
+            lhs: a,
+            rhs: b,
+        },
     );
     set_ret(&ctx, &mut module, x2);
 
@@ -226,8 +238,9 @@ fn build_fp_invariant_loop(flags: FastMathFlags) -> (Context, Module, BlockId) {
     // Overwrite the fadd flags to the desired value.
     {
         let fp_inv_iid = module.functions[0].value_names["fp_inv"];
-        if let InstrKind::FAdd { flags: ref mut f, .. } =
-            &mut module.functions[0].instructions[fp_inv_iid.0 as usize].kind
+        if let InstrKind::FAdd {
+            flags: ref mut f, ..
+        } = &mut module.functions[0].instructions[fp_inv_iid.0 as usize].kind
         {
             *f = flags;
         }
@@ -253,7 +266,9 @@ fn licm_does_not_hoist_strict_fadd() {
     // fp_inv must NOT be hoisted: no FMF flags → strict FP semantics.
     let fp_inv_id = module.functions[0].value_names["fp_inv"];
     assert!(
-        module.functions[0].blocks[body.0 as usize].body.contains(&fp_inv_id),
+        module.functions[0].blocks[body.0 as usize]
+            .body
+            .contains(&fp_inv_id),
         "%fp_inv must NOT be hoisted out of the loop (no fast-math flags)"
     );
 }
@@ -269,12 +284,17 @@ fn licm_hoists_fadd_with_reassoc() {
     let mut pass = Licm;
     let changed = pass.run_on_function(&mut ctx, &mut module.functions[0]);
 
-    assert!(changed, "LICM must report a change when hoisting reassoc fadd");
+    assert!(
+        changed,
+        "LICM must report a change when hoisting reassoc fadd"
+    );
 
     // fp_inv must be hoisted out of the body.
     let fp_inv_id = module.functions[0].value_names["fp_inv"];
     assert!(
-        !module.functions[0].blocks[body.0 as usize].body.contains(&fp_inv_id),
+        !module.functions[0].blocks[body.0 as usize]
+            .body
+            .contains(&fp_inv_id),
         "%fp_inv must be hoisted out of the loop when reassoc is set"
     );
 }
@@ -344,13 +364,21 @@ fn strictfp_blocks_fp_cse_entirely() {
         &mut module,
         "x1",
         f64_ty,
-        InstrKind::FAdd { flags: flags_reassoc(), lhs: a, rhs: b },
+        InstrKind::FAdd {
+            flags: flags_reassoc(),
+            lhs: a,
+            rhs: b,
+        },
     );
     let x2 = push_instr(
         &mut module,
         "x2",
         f64_ty,
-        InstrKind::FAdd { flags: flags_reassoc(), lhs: a, rhs: b },
+        InstrKind::FAdd {
+            flags: flags_reassoc(),
+            lhs: a,
+            rhs: b,
+        },
     );
     set_ret(&ctx, &mut module, x2);
 

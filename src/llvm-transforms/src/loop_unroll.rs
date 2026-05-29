@@ -104,7 +104,11 @@ fn const_i64(ctx: &Context, v: ValueRef) -> Option<i64> {
 /// - `icmp sle %i, C`
 /// - `icmp ult %i, C`
 /// - `icmp ule %i, C`
-pub(crate) fn constant_trip_count(ctx: &Context, func: &Function, header: BlockId) -> Option<usize> {
+pub(crate) fn constant_trip_count(
+    ctx: &Context,
+    func: &Function,
+    header: BlockId,
+) -> Option<usize> {
     let hb = &func.blocks[header.0 as usize];
     let tid = hb.terminator?;
     let InstrKind::CondBr { cond, .. } = func.instr(tid).kind else {
@@ -150,11 +154,7 @@ mod tests {
 
         b.position_at_end(header);
         let zero = b.const_int(b.ctx.i32_ty, 0);
-        let i = b.build_phi(
-            "i",
-            b.ctx.i32_ty,
-            vec![(zero, entry), (zero, header)],
-        );
+        let i = b.build_phi("i", b.ctx.i32_ty, vec![(zero, entry), (zero, header)]);
         let c = b.const_int(b.ctx.i32_ty, n as u64);
         let cmp = b.build_icmp("cmp", pred, i, c);
         b.build_cond_br(cmp, header, exit);

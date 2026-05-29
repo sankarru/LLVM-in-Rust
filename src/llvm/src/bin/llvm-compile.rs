@@ -51,7 +51,9 @@ fn main() -> ExitCode {
                     .next()
                     .unwrap_or_else(|| die("--target requires an argument"));
                 if target != "x86_64" {
-                    eprintln!("warning: only x86_64 target is supported; ignoring --target {target}");
+                    eprintln!(
+                        "warning: only x86_64 target is supported; ignoring --target {target}"
+                    );
                 }
             }
             s if s.starts_with("-O") => {

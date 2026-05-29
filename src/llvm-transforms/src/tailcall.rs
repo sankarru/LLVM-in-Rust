@@ -20,11 +20,7 @@ impl ModulePass for TailCallOpt {
         let mut changed = false;
         // Collect (function_index, function_name) pairs so we can look up
         // callees by GlobalId later.
-        let name_by_idx: Vec<String> = module
-            .functions
-            .iter()
-            .map(|f| f.name.clone())
-            .collect();
+        let name_by_idx: Vec<String> = module.functions.iter().map(|f| f.name.clone()).collect();
 
         for fidx in 0..module.functions.len() {
             if module.functions[fidx].is_declaration {
@@ -106,12 +102,10 @@ fn run_on_function_with_name(
                     } else {
                         // Check for self-recursive call.
                         let is_self = match callee {
-                            ValueRef::Global(gid) => {
-                                name_by_idx
-                                    .get(gid.0 as usize)
-                                    .map(|n| n == func_name)
-                                    .unwrap_or(false)
-                            }
+                            ValueRef::Global(gid) => name_by_idx
+                                .get(gid.0 as usize)
+                                .map(|n| n == func_name)
+                                .unwrap_or(false),
                             _ => false,
                         };
                         Some(if is_self {
@@ -192,14 +186,7 @@ mod tests {
 
         let callee_ty = b.ctx.mk_fn_type(b.ctx.i32_ty, vec![], false);
         b.add_declaration("callee", b.ctx.i32_ty, vec![], false);
-        b.add_function(
-            "f",
-            b.ctx.i32_ty,
-            vec![],
-            vec![],
-            false,
-            Linkage::External,
-        );
+        b.add_function("f", b.ctx.i32_ty, vec![], vec![], false, Linkage::External);
         let entry = b.add_block("entry");
         b.position_at_end(entry);
         let call = b.build_call(
@@ -260,7 +247,11 @@ mod tests {
         assert!(pass.run_on_module(&mut ctx, &mut module));
         match &module.functions[0].instr(call_id).kind {
             InstrKind::Call { tail, .. } => {
-                assert_eq!(*tail, TailCallKind::MustTail, "self-recursive call should be MustTail")
+                assert_eq!(
+                    *tail,
+                    TailCallKind::MustTail,
+                    "self-recursive call should be MustTail"
+                )
             }
             other => panic!("expected call, got {other:?}"),
         }
@@ -275,14 +266,7 @@ mod tests {
 
         let callee_ty = b.ctx.mk_fn_type(b.ctx.i32_ty, vec![], false);
         b.add_declaration("callee", b.ctx.i32_ty, vec![], false);
-        b.add_function(
-            "f",
-            b.ctx.i32_ty,
-            vec![],
-            vec![],
-            false,
-            Linkage::External,
-        );
+        b.add_function("f", b.ctx.i32_ty, vec![], vec![], false, Linkage::External);
         let entry = b.add_block("entry");
         b.position_at_end(entry);
         let call = b.build_call(
@@ -345,7 +329,11 @@ mod tests {
         assert!(pass.run_on_module(&mut ctx, &mut module));
         match &module.functions[1].instr(call_id).kind {
             InstrKind::Call { tail, .. } => {
-                assert_eq!(*tail, TailCallKind::Tail, "void tail call should be marked Tail")
+                assert_eq!(
+                    *tail,
+                    TailCallKind::Tail,
+                    "void tail call should be marked Tail"
+                )
             }
             other => panic!("expected call, got {other:?}"),
         }
@@ -389,7 +377,11 @@ mod tests {
 
         match &module.functions[1].instr(call_id).kind {
             InstrKind::Call { tail, .. } => {
-                assert_ne!(*tail, TailCallKind::None, "O2 pipeline should mark tail call");
+                assert_ne!(
+                    *tail,
+                    TailCallKind::None,
+                    "O2 pipeline should mark tail call"
+                );
             }
             other => panic!("expected call, got {other:?}"),
         }

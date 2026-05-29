@@ -12,7 +12,7 @@ use crate::encode::{
 };
 use crate::instructions::*;
 use crate::types::{ir_ty_to_valtype, is_i64_type, VALTYPE_I32};
-use llvm_codegen::isel::{IselBackend, MachineFunction, MOpcode};
+use llvm_codegen::isel::{IselBackend, MOpcode, MachineFunction};
 use llvm_ir::{
     ArgId, BlockId, ConstantData, Context, Function, InstrId, InstrKind, IntPredicate, Module,
     TypeData, TypeId, ValueRef,
@@ -51,11 +51,7 @@ impl WasmBackend {
     }
 
     /// Lower all non-declaration functions in `module` to [`WasmFunction`]s.
-    pub fn lower_module(
-        &mut self,
-        ctx: &Context,
-        module: &Module,
-    ) -> Vec<WasmFunction> {
+    pub fn lower_module(&mut self, ctx: &Context, module: &Module) -> Vec<WasmFunction> {
         module
             .functions
             .iter()
@@ -108,9 +104,8 @@ fn lower_function_to_wasm(
     // indices in vmap but do not emit them in `local_types`.
     let n_args = func.args.len();
     for i in 0..n_args {
-        let vt = ir_ty_to_valtype(ctx, func.ty)
-            .unwrap_or(VALTYPE_I32); // fallback (won't be used for void)
-        // Use the actual argument type from the function type.
+        let vt = ir_ty_to_valtype(ctx, func.ty).unwrap_or(VALTYPE_I32); // fallback (won't be used for void)
+                                                                        // Use the actual argument type from the function type.
         let arg_vt = if let TypeData::Function(ft) = ctx.get_type(func.ty) {
             ft.params
                 .get(i)
@@ -160,7 +155,11 @@ fn lower_function_to_wasm(
                         is_loop_header[j] = true;
                     }
                 }
-                InstrKind::CondBr { then_dest, else_dest, .. } => {
+                InstrKind::CondBr {
+                    then_dest,
+                    else_dest,
+                    ..
+                } => {
                     for dest in [then_dest, else_dest] {
                         let j = block_index[dest];
                         if j <= i {
@@ -421,18 +420,10 @@ fn emit_instr(
             binop!(if is64 { WASM_I64_SHL } else { WASM_I32_SHL }, lhs, rhs);
         }
         LShr { lhs, rhs, .. } => {
-            binop!(
-                if is64 { WASM_I64_SHR_U } else { WASM_I32_SHR_U },
-                lhs,
-                rhs
-            );
+            binop!(if is64 { WASM_I64_SHR_U } else { WASM_I32_SHR_U }, lhs, rhs);
         }
         AShr { lhs, rhs, .. } => {
-            binop!(
-                if is64 { WASM_I64_SHR_S } else { WASM_I32_SHR_S },
-                lhs,
-                rhs
-            );
+            binop!(if is64 { WASM_I64_SHR_S } else { WASM_I32_SHR_S }, lhs, rhs);
         }
 
         // ── comparisons ───────────────────────────────────────────────────
@@ -513,7 +504,11 @@ fn emit_instr(
         }
 
         // ── select ────────────────────────────────────────────────────────
-        Select { cond, then_val, else_val } => {
+        Select {
+            cond,
+            then_val,
+            else_val,
+        } => {
             // Wasm doesn't have a direct select for arbitrary nesting here;
             // we use if/else.
             emit_value(ctx, vmap, code, *cond, false);
@@ -551,11 +546,15 @@ fn emit_instr(
                 _ => false,
             };
             emit_value(ctx, vmap, code, *val, store_is64);
-            let op = if store_is64 { WASM_I64_STORE } else { WASM_I32_STORE };
+            let op = if store_is64 {
+                WASM_I64_STORE
+            } else {
+                WASM_I32_STORE
+            };
             code.push(op.0 as u8);
             leb128_u(code, 2); // alignment hint
             leb128_u(code, 0); // memory offset
-            // Store is void — no local.set
+                               // Store is void — no local.set
         }
 
         // ── alloca (stub — wasm32 linear memory model) ───────────────────
@@ -605,7 +604,10 @@ fn emit_instr(
                 },
                 ValueRef::Global(gid) => {
                     // Look up by function index in the module.
-                    module.functions.get(gid.0 as usize).map(|f| f.name.as_str())
+                    module
+                        .functions
+                        .get(gid.0 as usize)
+                        .map(|f| f.name.as_str())
                 }
                 _ => None,
             };
@@ -727,7 +729,11 @@ fn emit_terminator(
             }
         }
 
-        CondBr { cond, then_dest, else_dest } => {
+        CondBr {
+            cond,
+            then_dest,
+            else_dest,
+        } => {
             let then_target = block_index[then_dest];
             let else_target = block_index[else_dest];
 
@@ -778,7 +784,11 @@ fn emit_terminator(
             }
         }
 
-        Switch { val, default, cases } => {
+        Switch {
+            val,
+            default,
+            cases,
+        } => {
             // TODO: implement switch via br_table.  For now: unconditional branch to default.
             let _ = (val, cases);
             let target = block_index[default];

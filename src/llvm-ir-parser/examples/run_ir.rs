@@ -53,7 +53,14 @@ fn run_ours(ctx: &Context, module: &Module, label: &str) -> Result<i32, String> 
         &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
 
     let obj_format = host_object_format().ok_or_else(|| "unsupported host OS".to_string())?;

@@ -15,10 +15,7 @@ pub enum TypeData {
     /// `Pointer` variant.
     Pointer,
     /// `Array` variant.
-    Array {
-        element: TypeId,
-        len: u64,
-    },
+    Array { element: TypeId, len: u64 },
     /// `Vector` variant.
     Vector {
         element: TypeId,

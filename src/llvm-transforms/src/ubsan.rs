@@ -67,11 +67,7 @@ impl crate::pass::ModulePass for UbsanModulePass {
         "ubsan-module"
     }
 
-    fn run_on_module(
-        &mut self,
-        ctx: &mut llvm_ir::Context,
-        module: &mut llvm_ir::Module,
-    ) -> bool {
+    fn run_on_module(&mut self, ctx: &mut llvm_ir::Context, module: &mut llvm_ir::Module) -> bool {
         ensure_declarations(ctx, module);
 
         let num_funcs = module.functions.len();
@@ -330,7 +326,11 @@ fn instrument_div_by_zero(ctx: &mut Context, func: &mut Function) -> bool {
     };
 
     // Process in reverse block/pos order.
-    sites.sort_by(|a, b| b.block_idx.cmp(&a.block_idx).then(b.body_pos.cmp(&a.body_pos)));
+    sites.sort_by(|a, b| {
+        b.block_idx
+            .cmp(&a.block_idx)
+            .then(b.body_pos.cmp(&a.body_pos))
+    });
 
     for site in sites {
         let DivSite {
@@ -635,10 +635,7 @@ fn is_integer_type(ctx: &Context, ty: llvm_ir::TypeId) -> bool {
     matches!(ctx.get_type(ty), llvm_ir::TypeData::Integer(_))
 }
 
-fn is_provably_non_null(
-    ptr: ValueRef,
-    alloca_ids: &std::collections::HashSet<InstrId>,
-) -> bool {
+fn is_provably_non_null(ptr: ValueRef, alloca_ids: &std::collections::HashSet<InstrId>) -> bool {
     match ptr {
         // Alloca: always non-null (stack pointer).
         ValueRef::Instruction(iid) => alloca_ids.contains(&iid),
@@ -886,7 +883,10 @@ mod tests {
         let (mut ctx, mut module) = make_add_module();
         run_ubsan(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__ubsan_handle_add_overflow");
-        assert!(count >= 1, "__ubsan_handle_add_overflow should be inserted for non-nsw add, got {count}");
+        assert!(
+            count >= 1,
+            "__ubsan_handle_add_overflow should be inserted for non-nsw add, got {count}"
+        );
     }
 
     #[test]
@@ -902,7 +902,10 @@ mod tests {
         let (mut ctx, mut module) = make_div_module();
         run_ubsan(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__ubsan_handle_divrem_overflow");
-        assert!(count >= 1, "__ubsan_handle_divrem_overflow should be inserted for sdiv, got {count}");
+        assert!(
+            count >= 1,
+            "__ubsan_handle_divrem_overflow should be inserted for sdiv, got {count}"
+        );
     }
 
     #[test]
@@ -910,7 +913,10 @@ mod tests {
         let (mut ctx, mut module) = make_rem_module();
         run_ubsan(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__ubsan_handle_divrem_overflow");
-        assert!(count >= 1, "__ubsan_handle_divrem_overflow should be inserted for srem, got {count}");
+        assert!(
+            count >= 1,
+            "__ubsan_handle_divrem_overflow should be inserted for srem, got {count}"
+        );
     }
 
     #[test]
@@ -918,7 +924,10 @@ mod tests {
         let (mut ctx, mut module) = make_load_ptr_arg_module();
         run_ubsan(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__ubsan_handle_null_ptr_deref");
-        assert!(count >= 1, "__ubsan_handle_null_ptr_deref should be inserted for load from arg ptr, got {count}");
+        assert!(
+            count >= 1,
+            "__ubsan_handle_null_ptr_deref should be inserted for load from arg ptr, got {count}"
+        );
     }
 
     #[test]
@@ -926,7 +935,10 @@ mod tests {
         let (mut ctx, mut module) = make_store_ptr_arg_module();
         run_ubsan(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__ubsan_handle_null_ptr_deref");
-        assert!(count >= 1, "__ubsan_handle_null_ptr_deref should be inserted for store to arg ptr, got {count}");
+        assert!(
+            count >= 1,
+            "__ubsan_handle_null_ptr_deref should be inserted for store to arg ptr, got {count}"
+        );
     }
 
     #[test]
@@ -934,7 +946,10 @@ mod tests {
         let (mut ctx, mut module) = make_alloca_load_module();
         run_ubsan(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__ubsan_handle_null_ptr_deref");
-        assert_eq!(count, 0, "loads from alloca must NOT get null check, got {count}");
+        assert_eq!(
+            count, 0,
+            "loads from alloca must NOT get null check, got {count}"
+        );
     }
 
     #[test]
@@ -943,13 +958,12 @@ mod tests {
         run_ubsan(&mut ctx, &mut module);
         // function index 1 (function 0 is... wait, globals are separate from functions)
         // The function is the last added function — after the global.
-        let func_idx = module
-            .functions
-            .iter()
-            .position(|f| f.name == "f")
-            .unwrap();
+        let func_idx = module.functions.iter().position(|f| f.name == "f").unwrap();
         let count = count_calls_to(&module, func_idx, "__ubsan_handle_null_ptr_deref");
-        assert_eq!(count, 0, "loads from globals must NOT get null check, got {count}");
+        assert_eq!(
+            count, 0,
+            "loads from globals must NOT get null check, got {count}"
+        );
     }
 
     #[test]
@@ -957,14 +971,20 @@ mod tests {
         let (mut ctx, mut module) = make_unreachable_module();
         run_ubsan(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__ubsan_handle_builtin_unreachable");
-        assert!(count >= 1, "__ubsan_handle_builtin_unreachable should be inserted, got {count}");
+        assert!(
+            count >= 1,
+            "__ubsan_handle_builtin_unreachable should be inserted, got {count}"
+        );
         // Unreachable terminator must still be present.
         let still_unreachable = module.functions[0]
             .blocks
             .iter()
             .filter_map(|bb| bb.terminator)
             .any(|tid| matches!(module.functions[0].instr(tid).kind, InstrKind::Unreachable));
-        assert!(still_unreachable, "unreachable terminator must still be present after instrumentation");
+        assert!(
+            still_unreachable,
+            "unreachable terminator must still be present after instrumentation"
+        );
     }
 
     #[test]

@@ -50,9 +50,18 @@ entry:
 declare ptr @__gxx_personality_v0(...)
 "#;
     let printed = print_module(src);
-    assert!(printed.contains("cleanuppad"), "missing cleanuppad: {printed}");
-    assert!(printed.contains("cleanupret"), "missing cleanupret: {printed}");
-    assert!(printed.contains("within none"), "missing 'within none': {printed}");
+    assert!(
+        printed.contains("cleanuppad"),
+        "missing cleanuppad: {printed}"
+    );
+    assert!(
+        printed.contains("cleanupret"),
+        "missing cleanupret: {printed}"
+    );
+    assert!(
+        printed.contains("within none"),
+        "missing 'within none': {printed}"
+    );
 }
 
 /// Parse a `catchswitch` with two handlers.
@@ -88,7 +97,10 @@ declare ptr @__gxx_personality_v0(...)
         }
     }
     let out = Printer::new(&ctx).print_module(&module);
-    assert!(out.contains("catchswitch"), "missing catchswitch in printed output: {out}");
+    assert!(
+        out.contains("catchswitch"),
+        "missing catchswitch in printed output: {out}"
+    );
     // The test asserts no panic; handler count assertion above covers semantics.
     let _ = found;
 }
@@ -115,8 +127,14 @@ declare ptr @__gxx_personality_v0(...)
     for block in &f.blocks {
         if let Some(tid) = block.terminator {
             let term = f.instr(tid);
-            if let InstrKind::CatchSwitch { default, handlers, .. } = &term.kind {
-                assert!(default.is_none(), "expected None default for unwind-to-caller");
+            if let InstrKind::CatchSwitch {
+                default, handlers, ..
+            } = &term.kind
+            {
+                assert!(
+                    default.is_none(),
+                    "expected None default for unwind-to-caller"
+                );
                 assert_eq!(handlers.len(), 1);
             }
         }
@@ -146,7 +164,10 @@ declare ptr @__gxx_personality_v0(...)
         if let Some(tid) = block.terminator {
             let term = f.instr(tid);
             if let InstrKind::CleanupRet { unwind_dest, .. } = &term.kind {
-                assert!(unwind_dest.is_some(), "expected Some unwind_dest for 'unwind label'");
+                assert!(
+                    unwind_dest.is_some(),
+                    "expected Some unwind_dest for 'unwind label'"
+                );
             }
         }
     }
@@ -172,7 +193,10 @@ declare ptr @__gxx_personality_v0(...)
         if let Some(tid) = block.terminator {
             let term = f.instr(tid);
             if let InstrKind::CleanupRet { unwind_dest, .. } = &term.kind {
-                assert!(unwind_dest.is_none(), "expected None for 'unwind to caller'");
+                assert!(
+                    unwind_dest.is_none(),
+                    "expected None for 'unwind to caller'"
+                );
             }
         }
     }
@@ -203,12 +227,20 @@ declare ptr @__gxx_personality_v0(...)
             let instr = f.instr(iid);
             if let InstrKind::CatchPad { args, .. } = &instr.kind {
                 // Two args: [ptr null, i32 0]
-                assert_eq!(args.len(), 2, "expected 2 catchpad args, got {}", args.len());
+                assert_eq!(
+                    args.len(),
+                    2,
+                    "expected 2 catchpad args, got {}",
+                    args.len()
+                );
                 found_catchpad = true;
             }
         }
     }
-    assert!(found_catchpad, "no catchpad instruction found in parsed function");
+    assert!(
+        found_catchpad,
+        "no catchpad instruction found in parsed function"
+    );
 }
 
 /// Parse a realistic catchpad sequence (as clang would emit) without panicking.
@@ -246,9 +278,19 @@ declare ptr @__CxxFrameHandler3(...)
     let (ctx, module) = parse(src).expect("realistic clang SEH output failed to parse");
     // Verify basic structure: at least 4 blocks
     let f = &module.functions[0];
-    assert!(f.blocks.len() >= 4, "expected at least 4 blocks, got {}", f.blocks.len());
+    assert!(
+        f.blocks.len() >= 4,
+        "expected at least 4 blocks, got {}",
+        f.blocks.len()
+    );
     // Verify print round-trip doesn't panic
     let out = Printer::new(&ctx).print_module(&module);
-    assert!(out.contains("catchpad"), "missing catchpad in output: {out}");
-    assert!(out.contains("catchswitch"), "missing catchswitch in output: {out}");
+    assert!(
+        out.contains("catchpad"),
+        "missing catchpad in output: {out}"
+    );
+    assert!(
+        out.contains("catchswitch"),
+        "missing catchswitch in output: {out}"
+    );
 }

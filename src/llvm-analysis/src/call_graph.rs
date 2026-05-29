@@ -213,7 +213,14 @@ mod tests {
         let i64_ty = b.ctx.i64_ty;
         let fn_ty = b.ctx.mk_fn_type(i64_ty, vec![i64_ty], false);
 
-        b.add_function("a", i64_ty, vec![i64_ty], vec!["x".into()], false, Linkage::External);
+        b.add_function(
+            "a",
+            i64_ty,
+            vec![i64_ty],
+            vec!["x".into()],
+            false,
+            Linkage::External,
+        );
         let a_entry = b.add_block("a.entry");
         b.position_at_end(a_entry);
         let x = b.get_arg(0);
@@ -222,14 +229,28 @@ mod tests {
         let sum = b.build_add("sum", c1, c2);
         b.build_ret(sum);
 
-        b.add_function("b", i64_ty, vec![i64_ty], vec!["x".into()], false, Linkage::External);
+        b.add_function(
+            "b",
+            i64_ty,
+            vec![i64_ty],
+            vec!["x".into()],
+            false,
+            Linkage::External,
+        );
         let b_entry = b.add_block("b.entry");
         b.position_at_end(b_entry);
         let bx = b.get_arg(0);
         let bcall = b.build_call("r", i64_ty, fn_ty, ValueRef::Global(GlobalId(2)), vec![bx]);
         b.build_ret(bcall);
 
-        b.add_function("c", i64_ty, vec![i64_ty], vec!["x".into()], false, Linkage::External);
+        b.add_function(
+            "c",
+            i64_ty,
+            vec![i64_ty],
+            vec!["x".into()],
+            false,
+            Linkage::External,
+        );
         let c_entry = b.add_block("c.entry");
         b.position_at_end(c_entry);
         let cx = b.get_arg(0);
@@ -257,7 +278,14 @@ mod tests {
         let i64_ty = b.ctx.i64_ty;
         let fn_ty = b.ctx.mk_fn_type(i64_ty, vec![i64_ty], false);
         for name in ["a", "b", "c"] {
-            b.add_function(name, i64_ty, vec![i64_ty], vec!["x".into()], false, Linkage::External);
+            b.add_function(
+                name,
+                i64_ty,
+                vec![i64_ty],
+                vec!["x".into()],
+                false,
+                Linkage::External,
+            );
             let entry = b.add_block(format!("{name}.entry"));
             b.position_at_end(entry);
             let x = b.get_arg(0);
@@ -272,10 +300,9 @@ mod tests {
 
         let cg = CallGraph::build(&ctx, &module);
         let sccs = cg.sccs();
-        assert!(
-            sccs.iter()
-                .any(|s| s.len() == 2 && s.contains(&FunctionId(0)) && s.contains(&FunctionId(1)))
-        );
+        assert!(sccs
+            .iter()
+            .any(|s| s.len() == 2 && s.contains(&FunctionId(0)) && s.contains(&FunctionId(1))));
     }
 
     #[test]
@@ -287,7 +314,14 @@ mod tests {
         let fn_ty = b.ctx.mk_fn_type(i64_ty, vec![i64_ty], false);
         b.add_declaration("ext", i64_ty, vec![i64_ty], false);
 
-        b.add_function("f", i64_ty, vec![i64_ty], vec!["x".into()], false, Linkage::External);
+        b.add_function(
+            "f",
+            i64_ty,
+            vec![i64_ty],
+            vec!["x".into()],
+            false,
+            Linkage::External,
+        );
         let entry = b.add_block("entry");
         b.position_at_end(entry);
         let x = b.get_arg(0);

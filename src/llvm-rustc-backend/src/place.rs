@@ -63,7 +63,7 @@ pub use llvm_ir::context::ValueRef;
 
 // ── Core lowering function ────────────────────────────────────────────────────
 
-use llvm_ir::{Builder, context::TypeId, types::TypeData};
+use llvm_ir::{context::TypeId, types::TypeData, Builder};
 
 /// Lower a chain of MIR place projections into llvm-ir GEP / load instructions.
 ///
@@ -100,11 +100,7 @@ pub fn lower_projection(
             // obtain the inner pointer, then continue with the pointee type.
             PlaceElem::Deref => {
                 let ptr_ty = builder.ctx.ptr_ty;
-                let loaded = builder.build_load(
-                    format!("deref_{proj_idx}"),
-                    ptr_ty,
-                    ptr,
-                );
+                let loaded = builder.build_load(format!("deref_{proj_idx}"), ptr_ty, ptr);
                 // After a deref the element type is the inner pointee.
                 // We represent all pointers as opaque `ptr` in this IR, so
                 // we keep `ty` unchanged (the caller already knows the
@@ -142,12 +138,8 @@ pub fn lower_projection(
                     .expect("Index projection requires a corresponding index_operand entry");
                 index_slot += 1;
 
-                let gep = builder.build_gep_inbounds(
-                    format!("index_{proj_idx}"),
-                    ty,
-                    ptr,
-                    vec![idx_val],
-                );
+                let gep =
+                    builder.build_gep_inbounds(format!("index_{proj_idx}"), ty, ptr, vec![idx_val]);
                 // Advance ty to the array element type.
                 ty = array_element_type(builder, ty);
                 ptr = gep;
@@ -228,9 +220,7 @@ pub fn lower_projection(
 /// conservative fallback for opaque / non-struct types.
 fn field_type(builder: &Builder<'_>, struct_ty: TypeId, idx: usize) -> TypeId {
     match builder.ctx.get_type(struct_ty) {
-        TypeData::Struct(st) => {
-            st.fields.get(idx).copied().unwrap_or(builder.ctx.ptr_ty)
-        }
+        TypeData::Struct(st) => st.fields.get(idx).copied().unwrap_or(builder.ctx.ptr_ty),
         _ => builder.ctx.ptr_ty,
     }
 }
@@ -286,10 +276,7 @@ pub mod rustc_adapter {
 mod tests {
     use super::*;
     use llvm_ir::{
-        Builder, Context, Module,
-        context::ValueRef,
-        instruction::InstrKind,
-        value::Linkage,
+        context::ValueRef, instruction::InstrKind, value::Linkage, Builder, Context, Module,
     };
 
     // ── Test 1: Deref ─────────────────────────────────────────────────────────
@@ -305,7 +292,14 @@ mod tests {
         let void_ty = ctx.void_ty;
 
         let mut b = Builder::new(&mut ctx, &mut module);
-        let fid = b.add_function("test_deref", void_ty, vec![ptr_ty], vec!["p".into()], false, Linkage::Internal);
+        let fid = b.add_function(
+            "test_deref",
+            void_ty,
+            vec![ptr_ty],
+            vec!["p".into()],
+            false,
+            Linkage::Internal,
+        );
         let entry = b.add_block("entry");
         b.position_at_end(entry);
 
@@ -313,7 +307,8 @@ mod tests {
         let base_ptr = b.get_arg(0);
 
         let projections = vec![PlaceElem::Deref];
-        let (result_ptr, _result_ty) = lower_projection(&mut b, base_ptr, i32_ty, &projections, &[None]);
+        let (result_ptr, _result_ty) =
+            lower_projection(&mut b, base_ptr, i32_ty, &projections, &[None]);
 
         // The result must be a new instruction (load).
         assert!(
@@ -323,8 +318,15 @@ mod tests {
 
         // Inspect the emitted instruction.
         let func = b.module.function(fid);
-        let instrs: Vec<_> = func.blocks.iter().flat_map(|bb| bb.body.iter().copied()).collect();
-        assert!(!instrs.is_empty(), "at least one instruction must be emitted");
+        let instrs: Vec<_> = func
+            .blocks
+            .iter()
+            .flat_map(|bb| bb.body.iter().copied())
+            .collect();
+        assert!(
+            !instrs.is_empty(),
+            "at least one instruction must be emitted"
+        );
         let last_instr = func.instr(*instrs.last().unwrap());
         assert!(
             matches!(last_instr.kind, InstrKind::Load { .. }),
@@ -349,14 +351,22 @@ mod tests {
         let struct_ty = ctx.mk_struct_anon(vec![i32_ty, i64_ty], false);
 
         let mut b = Builder::new(&mut ctx, &mut module);
-        let fid = b.add_function("test_field", void_ty, vec![ptr_ty], vec!["p".into()], false, Linkage::Internal);
+        let fid = b.add_function(
+            "test_field",
+            void_ty,
+            vec![ptr_ty],
+            vec!["p".into()],
+            false,
+            Linkage::Internal,
+        );
         let entry = b.add_block("entry");
         b.position_at_end(entry);
 
         let base_ptr = b.get_arg(0);
 
         let projections = vec![PlaceElem::Field(1)];
-        let (result_ptr, result_ty) = lower_projection(&mut b, base_ptr, struct_ty, &projections, &[]);
+        let (result_ptr, result_ty) =
+            lower_projection(&mut b, base_ptr, struct_ty, &projections, &[]);
 
         assert!(
             matches!(result_ptr, ValueRef::Instruction(_)),
@@ -367,10 +377,16 @@ mod tests {
         assert_eq!(result_ty, i64_ty, "Field(1) result type must be i64");
 
         let func = b.module.function(fid);
-        let instrs: Vec<_> = func.blocks.iter().flat_map(|bb| bb.body.iter().copied()).collect();
+        let instrs: Vec<_> = func
+            .blocks
+            .iter()
+            .flat_map(|bb| bb.body.iter().copied())
+            .collect();
         let last_instr = func.instr(*instrs.last().unwrap());
         match &last_instr.kind {
-            InstrKind::GetElementPtr { inbounds, indices, .. } => {
+            InstrKind::GetElementPtr {
+                inbounds, indices, ..
+            } => {
                 assert!(inbounds, "GEP must be inbounds");
                 assert_eq!(indices.len(), 2, "Field GEP must have 2 indices");
             }
@@ -421,10 +437,16 @@ mod tests {
         assert_eq!(result_ty, i32_ty, "Index result type must be i32");
 
         let func = b.module.function(fid);
-        let instrs: Vec<_> = func.blocks.iter().flat_map(|bb| bb.body.iter().copied()).collect();
+        let instrs: Vec<_> = func
+            .blocks
+            .iter()
+            .flat_map(|bb| bb.body.iter().copied())
+            .collect();
         let last_instr = func.instr(*instrs.last().unwrap());
         match &last_instr.kind {
-            InstrKind::GetElementPtr { inbounds, indices, .. } => {
+            InstrKind::GetElementPtr {
+                inbounds, indices, ..
+            } => {
                 assert!(inbounds, "GEP must be inbounds");
                 assert_eq!(indices.len(), 1, "Index GEP must have 1 index");
                 // The one index must be the dynamic argument.
@@ -463,8 +485,7 @@ mod tests {
         let base_ptr = b.get_arg(0);
 
         let projections = vec![PlaceElem::ConstantIndex(2)];
-        let (result_ptr, result_ty) =
-            lower_projection(&mut b, base_ptr, arr_ty, &projections, &[]);
+        let (result_ptr, result_ty) = lower_projection(&mut b, base_ptr, arr_ty, &projections, &[]);
 
         assert!(
             matches!(result_ptr, ValueRef::Instruction(_)),
@@ -473,10 +494,16 @@ mod tests {
         assert_eq!(result_ty, i32_ty, "ConstantIndex result type must be i32");
 
         let func = b.module.function(fid);
-        let instrs: Vec<_> = func.blocks.iter().flat_map(|bb| bb.body.iter().copied()).collect();
+        let instrs: Vec<_> = func
+            .blocks
+            .iter()
+            .flat_map(|bb| bb.body.iter().copied())
+            .collect();
         let last_instr = func.instr(*instrs.last().unwrap());
         match &last_instr.kind {
-            InstrKind::GetElementPtr { inbounds, indices, .. } => {
+            InstrKind::GetElementPtr {
+                inbounds, indices, ..
+            } => {
                 assert!(inbounds, "GEP must be inbounds");
                 assert_eq!(indices.len(), 1, "ConstantIndex GEP must have 1 index");
             }
@@ -526,8 +553,16 @@ mod tests {
 
         // Expect exactly 2 instructions: load then GEP.
         let func = b.module.function(fid);
-        let instrs: Vec<_> = func.blocks.iter().flat_map(|bb| bb.body.iter().copied()).collect();
-        assert_eq!(instrs.len(), 2, "must emit exactly 2 instructions (load + gep)");
+        let instrs: Vec<_> = func
+            .blocks
+            .iter()
+            .flat_map(|bb| bb.body.iter().copied())
+            .collect();
+        assert_eq!(
+            instrs.len(),
+            2,
+            "must emit exactly 2 instructions (load + gep)"
+        );
         assert!(
             matches!(func.instr(instrs[0]).kind, InstrKind::Load { .. }),
             "first instruction must be Load"
@@ -588,11 +623,22 @@ mod tests {
 
         // Two GEP instructions must have been emitted.
         let func = b.module.function(fid);
-        let instrs: Vec<_> = func.blocks.iter().flat_map(|bb| bb.body.iter().copied()).collect();
-        assert_eq!(instrs.len(), 2, "Downcast must emit exactly 2 GEP instructions");
+        let instrs: Vec<_> = func
+            .blocks
+            .iter()
+            .flat_map(|bb| bb.body.iter().copied())
+            .collect();
+        assert_eq!(
+            instrs.len(),
+            2,
+            "Downcast must emit exactly 2 GEP instructions"
+        );
         for &id in &instrs {
             assert!(
-                matches!(func.instr(id).kind, InstrKind::GetElementPtr { inbounds: true, .. }),
+                matches!(
+                    func.instr(id).kind,
+                    InstrKind::GetElementPtr { inbounds: true, .. }
+                ),
                 "both instructions must be inbounds GEPs"
             );
         }

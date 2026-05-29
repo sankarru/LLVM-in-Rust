@@ -204,11 +204,7 @@ fn encode_functype(buf: &mut Vec<u8>, params: &[u8], results: &[u8]) {
 /// The functions are expected to come from `WasmBackend::lower_module`.
 /// Each function in the list that corresponds to a non-declaration IR
 /// function will be placed in the type/function/export/code sections.
-pub fn assemble_module(
-    ctx: &Context,
-    module: &Module,
-    wasm_functions: &[WasmFunction],
-) -> Vec<u8> {
+pub fn assemble_module(ctx: &Context, module: &Module, wasm_functions: &[WasmFunction]) -> Vec<u8> {
     // ── magic + version ───────────────────────────────────────────────────
     let mut out: Vec<u8> = Vec::new();
     out.extend_from_slice(b"\0asm");

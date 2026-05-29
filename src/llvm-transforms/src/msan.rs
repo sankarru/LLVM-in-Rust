@@ -258,9 +258,7 @@ fn instrument_memory_accesses(ctx: &mut Context, module: &mut Module, fid: Funct
                 }
                 InstrKind::Store { val, ptr, .. } => {
                     let val_ty = value_type(func, *val);
-                    let bytes = val_ty
-                        .and_then(|ty| type_size_bytes(ctx, ty))
-                        .unwrap_or(4);
+                    let bytes = val_ty.and_then(|ty| type_size_bytes(ctx, ty)).unwrap_or(4);
                     accesses.push(MemAccess {
                         block_idx: bi,
                         body_pos: pos,
@@ -526,7 +524,10 @@ mod tests {
         let mut pass = MsanPass;
         pass.run_on_module(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__msan_check_shadow8");
-        assert!(count >= 1, "__msan_check_shadow8 should be inserted for i64 load, got {count}");
+        assert!(
+            count >= 1,
+            "__msan_check_shadow8 should be inserted for i64 load, got {count}"
+        );
     }
 
     #[test]
@@ -535,7 +536,10 @@ mod tests {
         let mut pass = MsanPass;
         pass.run_on_module(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__msan_store_shadow4");
-        assert!(count >= 1, "__msan_store_shadow4 should be inserted for i32 store, got {count}");
+        assert!(
+            count >= 1,
+            "__msan_store_shadow4 should be inserted for i32 store, got {count}"
+        );
     }
 
     #[test]
@@ -544,7 +548,10 @@ mod tests {
         let mut pass = MsanPass;
         pass.run_on_module(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__msan_poison_stack");
-        assert!(count >= 1, "__msan_poison_stack should be inserted after alloca, got {count}");
+        assert!(
+            count >= 1,
+            "__msan_poison_stack should be inserted after alloca, got {count}"
+        );
     }
 
     #[test]
@@ -590,7 +597,10 @@ mod tests {
         let mut pass = MsanPass;
         pass.run_on_module(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__msan_check_shadow1");
-        assert!(count >= 1, "i8 load should use __msan_check_shadow1, got {count}");
+        assert!(
+            count >= 1,
+            "i8 load should use __msan_check_shadow1, got {count}"
+        );
     }
 
     #[test]
@@ -599,7 +609,10 @@ mod tests {
         let mut pass = MsanPass;
         pass.run_on_module(&mut ctx, &mut module);
         let count = count_calls_to(&module, 0, "__msan_store_shadow4");
-        assert!(count >= 1, "i32 store should use __msan_store_shadow4, got {count}");
+        assert!(
+            count >= 1,
+            "i32 store should use __msan_store_shadow4, got {count}"
+        );
     }
 
     #[test]
@@ -611,7 +624,13 @@ mod tests {
         pass.run_on_module(&mut ctx, &mut module);
         let store_count = count_calls_to(&module, 0, "__msan_store_shadow4");
         let load_count = count_calls_to(&module, 0, "__msan_check_shadow4");
-        assert!(store_count >= 1, "store should get shadow mark, got {store_count}");
-        assert!(load_count >= 1, "load should get shadow check, got {load_count}");
+        assert!(
+            store_count >= 1,
+            "store should get shadow mark, got {store_count}"
+        );
+        assert!(
+            load_count >= 1,
+            "load should get shadow check, got {load_count}"
+        );
     }
 }

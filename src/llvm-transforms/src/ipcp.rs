@@ -1,9 +1,7 @@
 //! Inter-procedural constant propagation (IPCP).
 
 use crate::{const_prop::ConstProp, pass::ModulePass, value_rewrite::rewrite_values_in_kind};
-use llvm_ir::{
-    ArgId, Context, Function, FunctionId, GlobalId, InstrKind, Module, ValueRef,
-};
+use llvm_ir::{ArgId, Context, Function, FunctionId, GlobalId, InstrKind, Module, ValueRef};
 
 /// Simple IPCP pass:
 /// - detect a direct callee argument that is constant across all direct callsites
@@ -21,7 +19,9 @@ impl ModulePass for Ipcp {
 
         for callee_idx in 0..module.functions.len() {
             let callee_id = FunctionId(callee_idx as u32);
-            if module.functions[callee_idx].is_declaration || module.functions[callee_idx].args.is_empty() {
+            if module.functions[callee_idx].is_declaration
+                || module.functions[callee_idx].args.is_empty()
+            {
                 continue;
             }
 
@@ -54,8 +54,12 @@ impl ModulePass for Ipcp {
             let spec_ty = module.functions[spec_id.0 as usize].ty;
             for cs in callsites {
                 if cs.const_args.get(arg_idx).copied() == Some(Some(const_val)) {
-                    let instr = &mut module.functions[cs.caller.0 as usize].instructions[cs.iid.0 as usize];
-                    if let InstrKind::Call { callee, callee_ty, .. } = &mut instr.kind {
+                    let instr =
+                        &mut module.functions[cs.caller.0 as usize].instructions[cs.iid.0 as usize];
+                    if let InstrKind::Call {
+                        callee, callee_ty, ..
+                    } = &mut instr.kind
+                    {
                         *callee = ValueRef::Global(GlobalId(spec_id.0));
                         *callee_ty = spec_ty;
                         changed = true;
@@ -200,7 +204,9 @@ mod tests {
         let x0 = b.get_arg(0);
         let c7 = b.const_int(b.ctx.i64_ty, 7);
         let c7b = b.const_int(b.ctx.i64_ty, 7);
-        let call_ty = b.ctx.mk_fn_type(b.ctx.i64_ty, vec![b.ctx.i64_ty, b.ctx.i64_ty], false);
+        let call_ty = b
+            .ctx
+            .mk_fn_type(b.ctx.i64_ty, vec![b.ctx.i64_ty, b.ctx.i64_ty], false);
         let t1 = b.build_call(
             "t1",
             b.ctx.i64_ty,
@@ -228,7 +234,10 @@ mod tests {
         let changed = pass.run_on_module(&mut ctx, &mut module);
         assert!(changed);
         assert!(
-            module.functions.iter().any(|f| f.name.starts_with("addk.ipcp")),
+            module
+                .functions
+                .iter()
+                .any(|f| f.name.starts_with("addk.ipcp")),
             "expected specialized clone"
         );
     }

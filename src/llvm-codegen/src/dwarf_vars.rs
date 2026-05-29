@@ -93,7 +93,7 @@ pub fn build_variable_die(
     // DW_AT_name as DW_FORM_string (null-terminated)
     die.extend_from_slice(name.as_bytes());
     die.push(0u8); // null terminator
-    // DW_AT_type as DW_FORM_ref4
+                   // DW_AT_type as DW_FORM_ref4
     die.extend_from_slice(&type_die_offset.to_le_bytes());
     // DW_AT_location as DW_FORM_exprloc (ULEB128 length + expr)
     let expr = encode_location(loc);

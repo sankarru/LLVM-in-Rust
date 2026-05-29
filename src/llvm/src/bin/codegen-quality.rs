@@ -91,7 +91,8 @@ fn count_opcode(mf: &MachineFunction, opcode: MOpcode) -> usize {
 
 fn compile_kernel(path: &Path, emit_dir: &Path) -> Result<KernelMetrics, String> {
     let source = fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let (mut ctx, mut module) = parse(&source).map_err(|e| format!("parse {}: {e}", path.display()))?;
+    let (mut ctx, mut module) =
+        parse(&source).map_err(|e| format!("parse {}: {e}", path.display()))?;
     let func_idx = module
         .functions
         .iter()
@@ -112,7 +113,14 @@ fn compile_kernel(path: &Path, emit_dir: &Path) -> Result<KernelMetrics, String>
         &mf.allocatable_fp_pregs,
         RegAllocStrategy::LinearScan,
     );
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
 
     let machine_instructions: usize = mf.blocks.iter().map(|b| b.instrs.len()).sum();

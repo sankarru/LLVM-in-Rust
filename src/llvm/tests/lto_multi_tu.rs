@@ -64,8 +64,7 @@ fn lto_merge_three_modules_finds_all_functions() {
          define i32 @main() { entry: %a = call i32 @add(i32 3, i32 4)  ret i32 %a }",
     );
 
-    let (_, merged) = run_lto_from_objects(&[o1, o2, o3], OptLevel::O0)
-        .expect("LTO merge failed");
+    let (_, merged) = run_lto_from_objects(&[o1, o2, o3], OptLevel::O0).expect("LTO merge failed");
 
     assert!(
         merged.get_function_id("add").is_some(),
@@ -95,8 +94,8 @@ fn lto_cross_module_merge_and_optimize_succeeds() {
          define i32 @main() { entry: %r = call i32 @add(i32 3, i32 4)  ret i32 %r }",
     );
 
-    let (_, merged) = run_lto_from_objects(&[math, main_mod], OptLevel::O2)
-        .expect("LTO O2 merge must not fail");
+    let (_, merged) =
+        run_lto_from_objects(&[math, main_mod], OptLevel::O2).expect("LTO O2 merge must not fail");
 
     assert!(
         merged.get_function_id("add").is_some(),
@@ -109,7 +108,10 @@ fn lto_cross_module_merge_and_optimize_succeeds() {
 
     // The @add definition should no longer be a declaration after merge.
     let (_, add_fn) = merged.get_function("add").expect("@add not found");
-    assert!(!add_fn.is_declaration, "@add should be a definition after cross-module merge");
+    assert!(
+        !add_fn.is_declaration,
+        "@add should be a definition after cross-module merge"
+    );
 
     // The @main function must still have its instructions intact.
     let (_, main_fn) = merged.get_function("main").expect("@main not found");
@@ -137,8 +139,7 @@ fn lto_dead_stripping_removes_unused_function() {
 
     let (_, merged_o0) =
         run_lto_from_objects(&[with_dead.clone()], OptLevel::O0).expect("O0 failed");
-    let (_, merged_o2) =
-        run_lto_from_objects(&[with_dead], OptLevel::O2).expect("O2 failed");
+    let (_, merged_o2) = run_lto_from_objects(&[with_dead], OptLevel::O2).expect("O2 failed");
 
     // At O0, @dead should still be present (no DCE).
     assert!(
@@ -180,14 +181,30 @@ fn lto_lrir_round_trip_preserves_functions() {
     let payload = extract_lto_payload(&obj).expect("no payload");
     let (ctx2, m2) = read_bitcode(payload).expect("read_bitcode failed");
 
-    assert!(m2.get_function_id("foo").is_some(), "@foo missing after round-trip");
-    assert!(m2.get_function_id("main").is_some(), "@main missing after round-trip");
+    assert!(
+        m2.get_function_id("foo").is_some(),
+        "@foo missing after round-trip"
+    );
+    assert!(
+        m2.get_function_id("main").is_some(),
+        "@main missing after round-trip"
+    );
 
     // Re-optimize at O1 — must not panic.
-    let mut obj2 = ObjectFile { format: ObjectFormat::Elf, elf_machine: 62, coff_machine: 0, sections: vec![], symbols: vec![] };
+    let mut obj2 = ObjectFile {
+        format: ObjectFormat::Elf,
+        elf_machine: 62,
+        coff_machine: 0,
+        sections: vec![],
+        symbols: vec![],
+    };
     embed_lto_payload(&mut obj2, &ctx2, &m2);
-    let (_, re_optimized) = run_lto_from_objects(&[obj2], OptLevel::O1).expect("re-optimize failed");
-    assert!(re_optimized.get_function_id("main").is_some(), "@main must survive re-optimization");
+    let (_, re_optimized) =
+        run_lto_from_objects(&[obj2], OptLevel::O1).expect("re-optimize failed");
+    assert!(
+        re_optimized.get_function_id("main").is_some(),
+        "@main must survive re-optimization"
+    );
 }
 
 #[test]
@@ -229,5 +246,8 @@ fn lto_no_payload_returns_error() {
         symbols: vec![],
     };
     let result = run_lto_from_objects(&[empty_obj], OptLevel::O0);
-    assert!(result.is_err(), "expected error for object with no LTO payload");
+    assert!(
+        result.is_err(),
+        "expected error for object with no LTO payload"
+    );
 }

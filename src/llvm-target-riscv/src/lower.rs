@@ -122,7 +122,10 @@ fn is_fp_type(ctx: &Context, ty: llvm_ir::TypeId) -> bool {
 
 /// Returns `true` if `ty` is specifically a double-precision (f64) type.
 fn is_double(ctx: &Context, ty: llvm_ir::TypeId) -> bool {
-    matches!(ctx.get_type(ty), TypeData::Float(llvm_ir::FloatKind::Double))
+    matches!(
+        ctx.get_type(ty),
+        TypeData::Float(llvm_ir::FloatKind::Double)
+    )
 }
 
 fn resolve(
@@ -149,7 +152,10 @@ fn resolve(
                 // would be most correct, but for the IR-level tests we emit a
                 // MOV_IMM carrying the bit pattern.  The encoder treats the dst
                 // class when producing the output register number.
-                mf.push(mblock, MInstr::new(MOV_IMM).with_dst(vreg).with_imm(*bits as i64));
+                mf.push(
+                    mblock,
+                    MInstr::new(MOV_IMM).with_dst(vreg).with_imm(*bits as i64),
+                );
                 vreg
             } else {
                 let vreg = mf.fresh_vreg();
@@ -186,47 +192,128 @@ fn lower_icmp_to_bool(
     match pred {
         IntPredicate::Eq => {
             let t = mf.fresh_vreg();
-            mf.push(mblock, MInstr::new(XOR_RR).with_dst(t).with_vreg(lhs).with_vreg(rhs));
+            mf.push(
+                mblock,
+                MInstr::new(XOR_RR)
+                    .with_dst(t)
+                    .with_vreg(lhs)
+                    .with_vreg(rhs),
+            );
             // dst = (t == 0) ? 1 : 0
-            mf.push(mblock, MInstr::new(SLTIU).with_dst(dst).with_vreg(t).with_imm(1));
+            mf.push(
+                mblock,
+                MInstr::new(SLTIU).with_dst(dst).with_vreg(t).with_imm(1),
+            );
         }
         IntPredicate::Ne => {
             let t = mf.fresh_vreg();
-            mf.push(mblock, MInstr::new(XOR_RR).with_dst(t).with_vreg(lhs).with_vreg(rhs));
+            mf.push(
+                mblock,
+                MInstr::new(XOR_RR)
+                    .with_dst(t)
+                    .with_vreg(lhs)
+                    .with_vreg(rhs),
+            );
             // dst = (t != 0) ? 1 : 0 => sltu x0, t
-            mf.push(mblock, MInstr::new(SLTU_RR).with_dst(dst).with_preg(X0).with_vreg(t));
+            mf.push(
+                mblock,
+                MInstr::new(SLTU_RR)
+                    .with_dst(dst)
+                    .with_preg(X0)
+                    .with_vreg(t),
+            );
         }
         IntPredicate::Slt => {
-            mf.push(mblock, MInstr::new(SLT_RR).with_dst(dst).with_vreg(lhs).with_vreg(rhs));
+            mf.push(
+                mblock,
+                MInstr::new(SLT_RR)
+                    .with_dst(dst)
+                    .with_vreg(lhs)
+                    .with_vreg(rhs),
+            );
         }
         IntPredicate::Sle => {
             let t = mf.fresh_vreg();
-            mf.push(mblock, MInstr::new(SLT_RR).with_dst(t).with_vreg(rhs).with_vreg(lhs));
-            mf.push(mblock, MInstr::new(XORI).with_dst(dst).with_vreg(t).with_imm(1));
+            mf.push(
+                mblock,
+                MInstr::new(SLT_RR)
+                    .with_dst(t)
+                    .with_vreg(rhs)
+                    .with_vreg(lhs),
+            );
+            mf.push(
+                mblock,
+                MInstr::new(XORI).with_dst(dst).with_vreg(t).with_imm(1),
+            );
         }
         IntPredicate::Sgt => {
-            mf.push(mblock, MInstr::new(SLT_RR).with_dst(dst).with_vreg(rhs).with_vreg(lhs));
+            mf.push(
+                mblock,
+                MInstr::new(SLT_RR)
+                    .with_dst(dst)
+                    .with_vreg(rhs)
+                    .with_vreg(lhs),
+            );
         }
         IntPredicate::Sge => {
             let t = mf.fresh_vreg();
-            mf.push(mblock, MInstr::new(SLT_RR).with_dst(t).with_vreg(lhs).with_vreg(rhs));
-            mf.push(mblock, MInstr::new(XORI).with_dst(dst).with_vreg(t).with_imm(1));
+            mf.push(
+                mblock,
+                MInstr::new(SLT_RR)
+                    .with_dst(t)
+                    .with_vreg(lhs)
+                    .with_vreg(rhs),
+            );
+            mf.push(
+                mblock,
+                MInstr::new(XORI).with_dst(dst).with_vreg(t).with_imm(1),
+            );
         }
         IntPredicate::Ult => {
-            mf.push(mblock, MInstr::new(SLTU_RR).with_dst(dst).with_vreg(lhs).with_vreg(rhs));
+            mf.push(
+                mblock,
+                MInstr::new(SLTU_RR)
+                    .with_dst(dst)
+                    .with_vreg(lhs)
+                    .with_vreg(rhs),
+            );
         }
         IntPredicate::Ule => {
             let t = mf.fresh_vreg();
-            mf.push(mblock, MInstr::new(SLTU_RR).with_dst(t).with_vreg(rhs).with_vreg(lhs));
-            mf.push(mblock, MInstr::new(XORI).with_dst(dst).with_vreg(t).with_imm(1));
+            mf.push(
+                mblock,
+                MInstr::new(SLTU_RR)
+                    .with_dst(t)
+                    .with_vreg(rhs)
+                    .with_vreg(lhs),
+            );
+            mf.push(
+                mblock,
+                MInstr::new(XORI).with_dst(dst).with_vreg(t).with_imm(1),
+            );
         }
         IntPredicate::Ugt => {
-            mf.push(mblock, MInstr::new(SLTU_RR).with_dst(dst).with_vreg(rhs).with_vreg(lhs));
+            mf.push(
+                mblock,
+                MInstr::new(SLTU_RR)
+                    .with_dst(dst)
+                    .with_vreg(rhs)
+                    .with_vreg(lhs),
+            );
         }
         IntPredicate::Uge => {
             let t = mf.fresh_vreg();
-            mf.push(mblock, MInstr::new(SLTU_RR).with_dst(t).with_vreg(lhs).with_vreg(rhs));
-            mf.push(mblock, MInstr::new(XORI).with_dst(dst).with_vreg(t).with_imm(1));
+            mf.push(
+                mblock,
+                MInstr::new(SLTU_RR)
+                    .with_dst(t)
+                    .with_vreg(lhs)
+                    .with_vreg(rhs),
+            );
+            mf.push(
+                mblock,
+                MInstr::new(XORI).with_dst(dst).with_vreg(t).with_imm(1),
+            );
         }
     }
 }
@@ -277,7 +364,10 @@ fn lower_instr(
             let dst = new_dst!();
             let l = res!($lhs);
             let r = res!($rhs);
-            mf.push(mblock, MInstr::new($op).with_dst(dst).with_vreg(l).with_vreg(r));
+            mf.push(
+                mblock,
+                MInstr::new($op).with_dst(dst).with_vreg(l).with_vreg(r),
+            );
         }};
     }
     macro_rules! emit_fp_binop3 {
@@ -285,7 +375,10 @@ fn lower_instr(
             let dst = new_fp_dst!();
             let l = res!($lhs);
             let r = res!($rhs);
-            mf.push(mblock, MInstr::new($op).with_dst(dst).with_vreg(l).with_vreg(r));
+            mf.push(
+                mblock,
+                MInstr::new($op).with_dst(dst).with_vreg(l).with_vreg(r),
+            );
         }};
     }
 
@@ -322,12 +415,10 @@ fn lower_instr(
                 match lhs {
                     ValueRef::Instruction(i) => func.instr(*i).ty,
                     ValueRef::Argument(ArgId(a)) => func.args[*a as usize].ty,
-                    ValueRef::Constant(c) => {
-                        match ctx.get_const(*c) {
-                            ConstantData::Float { ty, .. } => *ty,
-                            _ => instr_ty,
-                        }
-                    }
+                    ValueRef::Constant(c) => match ctx.get_const(*c) {
+                        ConstantData::Float { ty, .. } => *ty,
+                        _ => instr_ty,
+                    },
                     _ => instr_ty,
                 }
             };
@@ -338,34 +429,55 @@ fn lower_instr(
                 // Ordered equal: feq.d
                 FloatPredicate::Oeq | FloatPredicate::Ueq => {
                     let op = if double { FCMP_EQ_D } else { FCMP_EQ_S };
-                    mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(l).with_vreg(r));
+                    mf.push(
+                        mblock,
+                        MInstr::new(op).with_dst(dst).with_vreg(l).with_vreg(r),
+                    );
                 }
                 // Ordered less-than: flt.d
                 FloatPredicate::Olt | FloatPredicate::Ult => {
                     let op = if double { FCMP_LT_D } else { FCMP_LT_S };
-                    mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(l).with_vreg(r));
+                    mf.push(
+                        mblock,
+                        MInstr::new(op).with_dst(dst).with_vreg(l).with_vreg(r),
+                    );
                 }
                 // Ordered less-or-equal: fle.d
                 FloatPredicate::Ole | FloatPredicate::Ule => {
                     let op = if double { FCMP_LE_D } else { FCMP_LE_S };
-                    mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(l).with_vreg(r));
+                    mf.push(
+                        mblock,
+                        MInstr::new(op).with_dst(dst).with_vreg(l).with_vreg(r),
+                    );
                 }
                 // Ordered greater-than: flt.d with swapped operands
                 FloatPredicate::Ogt | FloatPredicate::Ugt => {
                     let op = if double { FCMP_LT_D } else { FCMP_LT_S };
-                    mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(r).with_vreg(l));
+                    mf.push(
+                        mblock,
+                        MInstr::new(op).with_dst(dst).with_vreg(r).with_vreg(l),
+                    );
                 }
                 // Ordered greater-or-equal: fle.d with swapped operands
                 FloatPredicate::Oge | FloatPredicate::Uge => {
                     let op = if double { FCMP_LE_D } else { FCMP_LE_S };
-                    mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(r).with_vreg(l));
+                    mf.push(
+                        mblock,
+                        MInstr::new(op).with_dst(dst).with_vreg(r).with_vreg(l),
+                    );
                 }
                 // Not-equal: !(feq.d a, b) = xori(feq.d a b, 1)
                 FloatPredicate::One | FloatPredicate::Une => {
                     let eq_op = if double { FCMP_EQ_D } else { FCMP_EQ_S };
                     let t = mf.fresh_vreg();
-                    mf.push(mblock, MInstr::new(eq_op).with_dst(t).with_vreg(l).with_vreg(r));
-                    mf.push(mblock, MInstr::new(XORI).with_dst(dst).with_vreg(t).with_imm(1));
+                    mf.push(
+                        mblock,
+                        MInstr::new(eq_op).with_dst(t).with_vreg(l).with_vreg(r),
+                    );
+                    mf.push(
+                        mblock,
+                        MInstr::new(XORI).with_dst(dst).with_vreg(t).with_imm(1),
+                    );
                 }
                 // True/False/Ord/Uno: trivial constants
                 FloatPredicate::True => {
@@ -384,19 +496,44 @@ fn lower_instr(
             }
         }
 
-        Select { cond, then_val, else_val } => {
+        Select {
+            cond,
+            then_val,
+            else_val,
+        } => {
             let dst = new_dst!();
             let c = res!(*cond);
             let tv = res!(*then_val);
             let fv = res!(*else_val);
             // cond is i1 (0/1): dst = tv*cond + fv*(cond^1)
             let notc = mf.fresh_vreg();
-            mf.push(mblock, MInstr::new(XORI).with_dst(notc).with_vreg(c).with_imm(1));
+            mf.push(
+                mblock,
+                MInstr::new(XORI).with_dst(notc).with_vreg(c).with_imm(1),
+            );
             let tpart = mf.fresh_vreg();
             let fpart = mf.fresh_vreg();
-            mf.push(mblock, MInstr::new(MUL_RR).with_dst(tpart).with_vreg(tv).with_vreg(c));
-            mf.push(mblock, MInstr::new(MUL_RR).with_dst(fpart).with_vreg(fv).with_vreg(notc));
-            mf.push(mblock, MInstr::new(ADD_RR).with_dst(dst).with_vreg(tpart).with_vreg(fpart));
+            mf.push(
+                mblock,
+                MInstr::new(MUL_RR)
+                    .with_dst(tpart)
+                    .with_vreg(tv)
+                    .with_vreg(c),
+            );
+            mf.push(
+                mblock,
+                MInstr::new(MUL_RR)
+                    .with_dst(fpart)
+                    .with_vreg(fv)
+                    .with_vreg(notc),
+            );
+            mf.push(
+                mblock,
+                MInstr::new(ADD_RR)
+                    .with_dst(dst)
+                    .with_vreg(tpart)
+                    .with_vreg(fpart),
+            );
         }
 
         Phi { .. } => {}
@@ -418,10 +555,10 @@ fn lower_instr(
                 _ => 64,
             };
             let op = match (double, bits) {
-                (true,  64) => FCVT_L_D,
-                (true,  _)  => FCVT_W_D,
+                (true, 64) => FCVT_L_D,
+                (true, _) => FCVT_W_D,
                 (false, 64) => FCVT_L_S,
-                (false, _)  => FCVT_W_S,
+                (false, _) => FCVT_W_S,
             };
             mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(src));
         }
@@ -442,10 +579,10 @@ fn lower_instr(
                 _ => 64,
             };
             let op = match (double, bits) {
-                (true,  64) => FCVT_L_D,
-                (true,  _)  => FCVT_W_D,
+                (true, 64) => FCVT_L_D,
+                (true, _) => FCVT_W_D,
                 (false, 64) => FCVT_L_S,
-                (false, _)  => FCVT_W_S,
+                (false, _) => FCVT_W_S,
             };
             mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(src));
         }
@@ -466,10 +603,10 @@ fn lower_instr(
             };
             let double = is_double(ctx, result_ty);
             let op = match (double, src_bits) {
-                (true,  64) => FCVT_D_L,
-                (true,  _)  => FCVT_D_W,
+                (true, 64) => FCVT_D_L,
+                (true, _) => FCVT_D_W,
                 (false, 64) => FCVT_S_L,
-                (false, _)  => FCVT_S_W,
+                (false, _) => FCVT_S_W,
             };
             mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(src));
         }
@@ -490,10 +627,10 @@ fn lower_instr(
             };
             let double = is_double(ctx, result_ty);
             let op = match (double, src_bits) {
-                (true,  64) => FCVT_D_L,
-                (true,  _)  => FCVT_D_W,
+                (true, 64) => FCVT_D_L,
+                (true, _) => FCVT_D_W,
                 (false, 64) => FCVT_S_L,
-                (false, _)  => FCVT_S_W,
+                (false, _) => FCVT_S_W,
             };
             mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(src));
         }
@@ -546,7 +683,10 @@ fn lower_instr(
                 }
             }
             let callee_vr = res!(*callee);
-            let mut call_mi = MInstr::new(JALR).with_preg(PReg(1)).with_vreg(callee_vr).with_imm(0);
+            let mut call_mi = MInstr::new(JALR)
+                .with_preg(PReg(1))
+                .with_vreg(callee_vr)
+                .with_imm(0);
             call_mi.clobbers = ALLOCATABLE.to_vec();
             mf.push(mblock, call_mi);
 
@@ -569,31 +709,43 @@ fn lower_instr(
         Fence { .. } => {
             mf.push(mblock, MInstr::new(FENCE));
         }
-        CmpXchg { ptr, cmp: _cmp, new_val, .. } => {
+        CmpXchg {
+            ptr,
+            cmp: _cmp,
+            new_val,
+            ..
+        } => {
             let ptr_vr = res!(*ptr);
             let _cmp_vr = res!(*_cmp);
             let new_vr = res!(*new_val);
             // Determine width from instruction result type (struct { val_ty, i1 }).
             // Use W vs D based on pointer-width assumption; default to W (32-bit).
             let ty_bits = match ctx.get_type(instr.ty) {
-                TypeData::Struct(st) if !st.fields.is_empty() => {
-                    match ctx.get_type(st.fields[0]) {
-                        TypeData::Integer(b) => *b,
-                        _ => 32,
-                    }
-                }
+                TypeData::Struct(st) if !st.fields.is_empty() => match ctx.get_type(st.fields[0]) {
+                    TypeData::Integer(b) => *b,
+                    _ => 32,
+                },
                 _ => 32,
             };
             let use_d = ty_bits == 64;
             // LR.W/LR.D old, (ptr)
             let old_vr = mf.fresh_vreg();
             let lr_op = if use_d { LR_D } else { LR_W };
-            mf.push(mblock, MInstr::new(lr_op).with_dst(old_vr).with_vreg(ptr_vr));
+            mf.push(
+                mblock,
+                MInstr::new(lr_op).with_dst(old_vr).with_vreg(ptr_vr),
+            );
             // SC.W/SC.D status, new_val, (ptr)
             // (Simplified: no retry loop — follow-up per issue #239)
             let status_vr = mf.fresh_vreg();
             let sc_op = if use_d { SC_D } else { SC_W };
-            mf.push(mblock, MInstr::new(sc_op).with_dst(status_vr).with_vreg(ptr_vr).with_vreg(new_vr));
+            mf.push(
+                mblock,
+                MInstr::new(sc_op)
+                    .with_dst(status_vr)
+                    .with_vreg(ptr_vr)
+                    .with_vreg(new_vr),
+            );
             // Result is the old value from LR.
             let dst = new_dst!();
             mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(old_vr));
@@ -608,28 +760,78 @@ fn lower_instr(
             };
             let use_d = ty_bits == 64;
             let opcode = match op {
-                RmwOp::Add => if use_d { AMOADD_D } else { AMOADD_W },
-                RmwOp::Xchg => if use_d { AMOSWAP_D } else { AMOSWAP_W },
-                RmwOp::Xor => if use_d { AMOXOR_D } else { AMOXOR_W },
-                RmwOp::And | RmwOp::Nand => if use_d { AMOAND_D } else { AMOAND_W },
-                RmwOp::Or => if use_d { AMOOR_D } else { AMOOR_W },
+                RmwOp::Add => {
+                    if use_d {
+                        AMOADD_D
+                    } else {
+                        AMOADD_W
+                    }
+                }
+                RmwOp::Xchg => {
+                    if use_d {
+                        AMOSWAP_D
+                    } else {
+                        AMOSWAP_W
+                    }
+                }
+                RmwOp::Xor => {
+                    if use_d {
+                        AMOXOR_D
+                    } else {
+                        AMOXOR_W
+                    }
+                }
+                RmwOp::And | RmwOp::Nand => {
+                    if use_d {
+                        AMOAND_D
+                    } else {
+                        AMOAND_W
+                    }
+                }
+                RmwOp::Or => {
+                    if use_d {
+                        AMOOR_D
+                    } else {
+                        AMOOR_W
+                    }
+                }
                 // Sub: negate val then add — use amoadd (caller is responsible for negation;
                 // here we emit amoadd as the closest approximation without modifying val).
-                RmwOp::Sub => if use_d { AMOADD_D } else { AMOADD_W },
+                RmwOp::Sub => {
+                    if use_d {
+                        AMOADD_D
+                    } else {
+                        AMOADD_W
+                    }
+                }
                 RmwOp::Min => AMOMIN_W,
                 RmwOp::Max => AMOMAX_W,
                 RmwOp::UMin => AMOMINU_W,
                 RmwOp::UMax => AMOMAXU_W,
-                _ => if use_d { AMOADD_D } else { AMOADD_W },
+                _ => {
+                    if use_d {
+                        AMOADD_D
+                    } else {
+                        AMOADD_W
+                    }
+                }
             };
             let dst = new_dst!();
-            mf.push(mblock, MInstr::new(opcode).with_dst(dst).with_vreg(ptr_vr).with_vreg(val_vr));
+            mf.push(
+                mblock,
+                MInstr::new(opcode)
+                    .with_dst(dst)
+                    .with_vreg(ptr_vr)
+                    .with_vreg(val_vr),
+            );
         }
 
         // ── memory: non-promotable alloca/load/store (FP-relative frame slots) ──
         // mem2reg eliminates promotable alloca/load/store; what remains here is
         // non-promotable (address escapes or non-constant GEP index).
-        Alloca { alloc_ty, align, .. } => {
+        Alloca {
+            alloc_ty, align, ..
+        } => {
             let dst = new_dst!();
             let size_bytes = sizeof_ty(ctx, *alloc_ty) as u32;
             let align_bytes = align.unwrap_or(8);
@@ -652,19 +854,13 @@ fn lower_instr(
             let dst = new_dst!();
             // LD_REG: ld dst, 0(ptr_reg)
             let ptr_vr = res!(*ptr);
-            mf.push(
-                mblock,
-                MInstr::new(LD_REG).with_dst(dst).with_vreg(ptr_vr),
-            );
+            mf.push(mblock, MInstr::new(LD_REG).with_dst(dst).with_vreg(ptr_vr));
         }
         Store { val, ptr, .. } => {
             // SD_REG: sd src, 0(ptr_reg)
             let src = res!(*val);
             let ptr_vr = res!(*ptr);
-            mf.push(
-                mblock,
-                MInstr::new(SD_REG).with_vreg(ptr_vr).with_vreg(src),
-            );
+            mf.push(mblock, MInstr::new(SD_REG).with_vreg(ptr_vr).with_vreg(src));
         }
 
         FAdd { lhs, rhs, .. } => {
@@ -699,7 +895,10 @@ fn lower_instr(
             let src = res!(*operand);
             // fsgnjn.d rd, rs, rs negates the sign bit: FNEG_D uses rs1=rs2.
             let op = if is_double(ctx, ty) { FNEG_D } else { FNEG_S };
-            mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(src).with_vreg(src));
+            mf.push(
+                mblock,
+                MInstr::new(op).with_dst(dst).with_vreg(src).with_vreg(src),
+            );
         }
 
         ExtractValue { .. }
@@ -716,10 +915,20 @@ fn lower_instr(
             mf.push(mblock, MInstr::new(MOV_IMM).with_dst(dst).with_imm(0));
         }
 
-        Ret { .. } | Br { .. } | CondBr { .. } | Invoke { .. } | Switch { .. } | Unreachable | Resume { .. } => {}
+        Ret { .. }
+        | Br { .. }
+        | CondBr { .. }
+        | Invoke { .. }
+        | Switch { .. }
+        | Unreachable
+        | Resume { .. } => {}
 
         // Funclet pads — not yet fully supported; emit a NOP stub.
-        CatchPad { .. } | CleanupPad { .. } | CatchSwitch { .. } | CatchRet { .. } | CleanupRet { .. } => {}
+        CatchPad { .. }
+        | CleanupPad { .. }
+        | CatchSwitch { .. }
+        | CatchRet { .. }
+        | CleanupRet { .. } => {}
     }
 }
 
@@ -748,7 +957,11 @@ fn lower_terminator(
             mf.push(mblock, MInstr::new(JAL).with_block(dest.0 as usize));
         }
 
-        CondBr { cond, then_dest, else_dest } => {
+        CondBr {
+            cond,
+            then_dest,
+            else_dest,
+        } => {
             let c = resolve(ctx, mf, mblock, vmap, *cond);
             let pred_label = mf.blocks[mblock].label.clone();
             let then_edge = mf.add_block(format!("{}.then_edge", pred_label));
@@ -758,11 +971,22 @@ fn lower_terminator(
             emit_phi_copies(ctx, func, mf, mblock, else_edge, *else_dest, vmap);
             mf.push(else_edge, MInstr::new(JAL).with_block(else_dest.0 as usize));
             // if c == 0 goto else_edge else then_edge
-            mf.push(mblock, MInstr::new(BEQ).with_vreg(c).with_preg(X0).with_block(else_edge));
+            mf.push(
+                mblock,
+                MInstr::new(BEQ)
+                    .with_vreg(c)
+                    .with_preg(X0)
+                    .with_block(else_edge),
+            );
             mf.push(mblock, MInstr::new(JAL).with_block(then_edge));
         }
 
-        Invoke { callee, args, normal_dest, .. } => {
+        Invoke {
+            callee,
+            args,
+            normal_dest,
+            ..
+        } => {
             let arg_locs = classify_rv64_int_args(args.len());
             for (i, &arg_vref) in args.iter().enumerate() {
                 let src = resolve(ctx, mf, mblock, vmap, arg_vref);
@@ -784,12 +1008,22 @@ fn lower_terminator(
             mf.push(mblock, MInstr::new(JAL).with_block(normal_dest.0 as usize));
         }
 
-        Switch { val, default, cases } => {
+        Switch {
+            val,
+            default,
+            cases,
+        } => {
             let v = resolve(ctx, mf, mblock, vmap, *val);
             for (case_val, case_dest) in cases {
                 let cv = resolve(ctx, mf, mblock, vmap, *case_val);
                 emit_phi_copies(ctx, func, mf, mblock, mblock, *case_dest, vmap);
-                mf.push(mblock, MInstr::new(BEQ).with_vreg(v).with_vreg(cv).with_block(case_dest.0 as usize));
+                mf.push(
+                    mblock,
+                    MInstr::new(BEQ)
+                        .with_vreg(v)
+                        .with_vreg(cv)
+                        .with_block(case_dest.0 as usize),
+                );
             }
             emit_phi_copies(ctx, func, mf, mblock, mblock, *default, vmap);
             mf.push(mblock, MInstr::new(JAL).with_block(default.0 as usize));
@@ -801,7 +1035,9 @@ fn lower_terminator(
         Resume { .. } => mf.push(mblock, MInstr::new(NOP)),
 
         // CatchSwitch — lower first handler as unconditional branch (stub).
-        CatchSwitch { handlers, default, .. } => {
+        CatchSwitch {
+            handlers, default, ..
+        } => {
             if let Some(&h) = handlers.first() {
                 mf.push(mblock, MInstr::new(JAL).with_block(h.0 as usize));
             } else if let Some(d) = default {
@@ -849,7 +1085,10 @@ fn emit_phi_copies(
                     None => continue,
                 };
                 let src_vreg = resolve(ctx, mf, emit_to_mblock, vmap, *incoming_val);
-                mf.push(emit_to_mblock, MInstr::new(MOV_RR).with_dst(phi_vreg).with_vreg(src_vreg));
+                mf.push(
+                    emit_to_mblock,
+                    MInstr::new(MOV_RR).with_dst(phi_vreg).with_vreg(src_vreg),
+                );
             }
         }
     }
@@ -875,7 +1114,14 @@ mod tests {
         let mut ctx = Context::new();
         let mut module = Module::new("m");
         let mut b = Builder::new(&mut ctx, &mut module);
-        b.add_function("decl", b.ctx.i64_ty, vec![], vec![], true, Linkage::External);
+        b.add_function(
+            "decl",
+            b.ctx.i64_ty,
+            vec![],
+            vec![],
+            true,
+            Linkage::External,
+        );
         let f = &module.functions[0];
         let mut be = RiscVBackend;
         let mf = be.lower_function(&ctx, &module, f);
@@ -1006,7 +1252,10 @@ entry:
             .iter()
             .flat_map(|b| b.instrs.iter())
             .any(|i| i.opcode == AMOADD_D);
-        assert!(has_amoadd_d, "expected AMOADD_D in lowered atomicrmw add i64");
+        assert!(
+            has_amoadd_d,
+            "expected AMOADD_D in lowered atomicrmw add i64"
+        );
     }
 
     #[test]
@@ -1026,7 +1275,10 @@ entry:
             .iter()
             .flat_map(|b| b.instrs.iter())
             .any(|i| i.opcode == AMOSWAP_W);
-        assert!(has_amoswap, "expected AMOSWAP_W in lowered atomicrmw xchg i32");
+        assert!(
+            has_amoswap,
+            "expected AMOSWAP_W in lowered atomicrmw xchg i32"
+        );
     }
 
     #[test]

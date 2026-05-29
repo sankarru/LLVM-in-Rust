@@ -177,7 +177,10 @@ mod tests {
         let mut mf = empty_mf();
         let handled = lower_intrinsic("llvm.assume", &[], &mut mf, 0);
         assert!(handled);
-        assert!(mf.blocks[0].instrs.is_empty(), "assume should emit no instructions");
+        assert!(
+            mf.blocks[0].instrs.is_empty(),
+            "assume should emit no instructions"
+        );
     }
 
     #[test]
@@ -272,7 +275,10 @@ mod tests {
         let mut mf = empty_mf();
         let handled = lower_intrinsic("llvm.unknown_xyz_42", &[], &mut mf, 0);
         assert!(!handled, "unknown intrinsics must return false");
-        assert!(mf.blocks[0].instrs.is_empty(), "no instructions emitted for unknown");
+        assert!(
+            mf.blocks[0].instrs.is_empty(),
+            "no instructions emitted for unknown"
+        );
     }
 
     #[test]

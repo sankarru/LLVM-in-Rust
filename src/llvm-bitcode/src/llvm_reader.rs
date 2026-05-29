@@ -1,5 +1,13 @@
 //! Standard LLVM bitcode (`.bc`) reader.
-#![allow(dead_code, unused_variables, unused_mut, unused_assignments, clippy::ptr_arg, clippy::cloned_ref_to_slice_refs, dropping_references)]
+#![allow(
+    dead_code,
+    unused_variables,
+    unused_mut,
+    unused_assignments,
+    clippy::ptr_arg,
+    clippy::cloned_ref_to_slice_refs,
+    dropping_references
+)]
 //!
 //! Parses files produced by `clang -emit-llvm -c` and reconstructs a
 //! `(Context, Module)` using the same IR types as the rest of LLVM-in-Rust.
@@ -482,9 +490,7 @@ fn parse_module_block(
                         MODULE_CODE_FUNCTION => {
                             parse_function_decl_record(&fields[1..], state)?;
                         }
-                        MODULE_CODE_TRIPLE
-                        | MODULE_CODE_DATALAYOUT
-                        | MODULE_CODE_ALIAS => {
+                        MODULE_CODE_TRIPLE | MODULE_CODE_DATALAYOUT | MODULE_CODE_ALIAS => {
                             // Ignore
                         }
                         _ => {}
@@ -512,7 +518,11 @@ fn parse_module_block(
         let args: Vec<Argument> = param_tys
             .iter()
             .enumerate()
-            .map(|(i, &pty)| Argument { name: format!("arg{}", i), ty: pty, index: i as u32 })
+            .map(|(i, &pty)| Argument {
+                name: format!("arg{}", i),
+                ty: pty,
+                index: i as u32,
+            })
             .collect();
         let func = Function::new_declaration(name, ty, args, linkage);
         state.module.add_function(func);
@@ -786,9 +796,10 @@ fn parse_constants_block(
                             });
                             state.value_table.push(ValueRef::Constant(cid));
                         } else {
-                            let cid = state
-                                .ctx
-                                .push_const(ConstantData::IntWide { ty: cur_type, words });
+                            let cid = state.ctx.push_const(ConstantData::IntWide {
+                                ty: cur_type,
+                                words,
+                            });
                             state.value_table.push(ValueRef::Constant(cid));
                         }
                     }
@@ -826,12 +837,10 @@ fn parse_constants_block(
                                 ty: cur_type,
                                 fields: elems,
                             }),
-                            TypeData::Vector { .. } => {
-                                state.ctx.push_const(ConstantData::Vector {
-                                    ty: cur_type,
-                                    elements: elems,
-                                })
-                            }
+                            TypeData::Vector { .. } => state.ctx.push_const(ConstantData::Vector {
+                                ty: cur_type,
+                                elements: elems,
+                            }),
                             _ => state.ctx.push_const(ConstantData::Array {
                                 ty: cur_type,
                                 elements: elems,
@@ -847,9 +856,10 @@ fn parse_constants_block(
                         let arr_ty = state.ctx.mk_array(i8_ty, n);
                         let mut elems = Vec::new();
                         for b in bytes {
-                            let ec = state
-                                .ctx
-                                .push_const(ConstantData::Int { ty: i8_ty, val: b as u64 });
+                            let ec = state.ctx.push_const(ConstantData::Int {
+                                ty: i8_ty,
+                                val: b as u64,
+                            });
                             elems.push(ec);
                         }
                         let cid = state.ctx.push_const(ConstantData::Array {
@@ -976,10 +986,7 @@ fn decode_sign_rotated(encoded: u64) -> u64 {
 
 // ── GLOBALVAR record ───────────────────────────────────────────────────────────
 
-fn parse_globalvar_record(
-    fields: &[u64],
-    state: &mut LlvmReader,
-) -> Result<(), BitcodeError> {
+fn parse_globalvar_record(fields: &[u64], state: &mut LlvmReader) -> Result<(), BitcodeError> {
     if fields.len() < 6 {
         return Ok(());
     }
@@ -1046,10 +1053,7 @@ fn module_add_global(
 
 // ── FUNCTION declaration record ────────────────────────────────────────────────
 
-fn parse_function_decl_record(
-    fields: &[u64],
-    state: &mut LlvmReader,
-) -> Result<(), BitcodeError> {
+fn parse_function_decl_record(fields: &[u64], state: &mut LlvmReader) -> Result<(), BitcodeError> {
     // fields: [ty_idx, calling_conv, is_declaration, linkage, ...]
     if fields.len() < 3 {
         return Ok(());
@@ -1227,12 +1231,7 @@ fn parse_function_block(
                 let saved = bs.abbrevs.clone();
                 match block_id {
                     CONSTANTS_BLOCK_ID => {
-                        parse_constants_block(
-                            bs,
-                            state,
-                            &saved,
-                            Some(state.value_table.len()),
-                        )?;
+                        parse_constants_block(bs, state, &saved, Some(state.value_table.len()))?;
                     }
                     VALUE_SYMTAB_BLOCK_ID => {
                         // Function-local VST — skip for now.
@@ -1269,8 +1268,16 @@ fn parse_function_block(
                     }
                     FUNC_CODE_INST_BINOP => {
                         // [code, lhs, rhs, opcode, {flags}]
-                        let lhs = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
-                        let rhs = decode_relative_vref(cur_val_id, fields.get(2).copied().unwrap_or(0), state)?;
+                        let lhs = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(1).copied().unwrap_or(0),
+                            state,
+                        )?;
+                        let rhs = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(2).copied().unwrap_or(0),
+                            state,
+                        )?;
                         let opcode = fields.get(3).copied().unwrap_or(0);
                         let flags = fields.get(4).copied().unwrap_or(0);
 
@@ -1278,18 +1285,36 @@ fn parse_function_block(
                         let result_ty = type_of_vref(&lhs, &func, state);
 
                         let kind = binop_kind(opcode, flags, lhs, rhs, result_ty)?;
-                        let iid = emit_instr(&mut func, &mut basic_blocks, cur_block_idx, None, result_ty, kind);
+                        let iid = emit_instr(
+                            &mut func,
+                            &mut basic_blocks,
+                            cur_block_idx,
+                            None,
+                            result_ty,
+                            kind,
+                        );
                         state.value_table.push(ValueRef::Instruction(iid));
                         instr_count += 1;
                     }
                     FUNC_CODE_INST_CAST => {
                         // [code, val, ty_idx, opcode]
-                        let val = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
+                        let val = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(1).copied().unwrap_or(0),
+                            state,
+                        )?;
                         let ty_idx = fields.get(2).copied().unwrap_or(0) as usize;
                         let to_ty = state.get_type(ty_idx)?;
                         let opcode = fields.get(3).copied().unwrap_or(0);
                         let kind = cast_kind(opcode, val, to_ty)?;
-                        let iid = emit_instr(&mut func, &mut basic_blocks, cur_block_idx, None, to_ty, kind);
+                        let iid = emit_instr(
+                            &mut func,
+                            &mut basic_blocks,
+                            cur_block_idx,
+                            None,
+                            to_ty,
+                            kind,
+                        );
                         state.value_table.push(ValueRef::Instruction(iid));
                         instr_count += 1;
                     }
@@ -1331,7 +1356,9 @@ fn parse_function_block(
                         } else {
                             // Unconditional
                             let dest = fields.get(1).copied().unwrap_or(0) as u32;
-                            InstrKind::Br { dest: BlockId(dest) }
+                            InstrKind::Br {
+                                dest: BlockId(dest),
+                            }
                         };
                         let iid = emit_instr(
                             &mut func,
@@ -1395,7 +1422,10 @@ fn parse_function_block(
                             cur_block_idx,
                             None,
                             phi_ty,
-                            InstrKind::Phi { ty: phi_ty, incoming },
+                            InstrKind::Phi {
+                                ty: phi_ty,
+                                incoming,
+                            },
                         );
                         state.value_table.push(ValueRef::Instruction(iid));
                         instr_count += 1;
@@ -1429,7 +1459,11 @@ fn parse_function_block(
                     }
                     FUNC_CODE_INST_LOAD => {
                         // [code, ptr_val, ty_idx, align, volatile]
-                        let ptr = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
+                        let ptr = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(1).copied().unwrap_or(0),
+                            state,
+                        )?;
                         let ty_idx = fields.get(2).copied().unwrap_or(0) as usize;
                         let load_ty = state.get_type(ty_idx)?;
                         let align_enc = fields.get(3).copied().unwrap_or(0);
@@ -1445,7 +1479,12 @@ fn parse_function_block(
                             cur_block_idx,
                             None,
                             load_ty,
-                            InstrKind::Load { ty: load_ty, ptr, align, volatile },
+                            InstrKind::Load {
+                                ty: load_ty,
+                                ptr,
+                                align,
+                                volatile,
+                            },
                         );
                         state.value_table.push(ValueRef::Instruction(iid));
                         instr_count += 1;
@@ -1454,12 +1493,28 @@ fn parse_function_block(
                         // New: [code, ptr, val, align, volatile]
                         // Old: [code, val, ptr, align, volatile]
                         let (ptr, val) = if code == FUNC_CODE_INST_STORE {
-                            let p = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
-                            let v = decode_relative_vref(cur_val_id, fields.get(2).copied().unwrap_or(0), state)?;
+                            let p = decode_relative_vref(
+                                cur_val_id,
+                                fields.get(1).copied().unwrap_or(0),
+                                state,
+                            )?;
+                            let v = decode_relative_vref(
+                                cur_val_id,
+                                fields.get(2).copied().unwrap_or(0),
+                                state,
+                            )?;
                             (p, v)
                         } else {
-                            let v = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
-                            let p = decode_relative_vref(cur_val_id, fields.get(2).copied().unwrap_or(0), state)?;
+                            let v = decode_relative_vref(
+                                cur_val_id,
+                                fields.get(1).copied().unwrap_or(0),
+                                state,
+                            )?;
+                            let p = decode_relative_vref(
+                                cur_val_id,
+                                fields.get(2).copied().unwrap_or(0),
+                                state,
+                            )?;
                             (p, v)
                         };
                         let align_enc = fields.get(3).copied().unwrap_or(0);
@@ -1475,18 +1530,29 @@ fn parse_function_block(
                             cur_block_idx,
                             None,
                             state.ctx.void_ty,
-                            InstrKind::Store { val, ptr, align, volatile },
+                            InstrKind::Store {
+                                val,
+                                ptr,
+                                align,
+                                volatile,
+                            },
                         );
                         // Store has no value result.
                         instr_count += 1;
                     }
-                    FUNC_CODE_INST_GEP | FUNC_CODE_INST_GEP_OLD | FUNC_CODE_INST_INBOUNDS_GEP_OLD => {
+                    FUNC_CODE_INST_GEP
+                    | FUNC_CODE_INST_GEP_OLD
+                    | FUNC_CODE_INST_INBOUNDS_GEP_OLD => {
                         let (inbounds, base_ty, ptr, indices) = if code == FUNC_CODE_INST_GEP {
                             // New: [code, inbounds, ty_idx, ptr, (ty, idx)...]
                             let ib = fields.get(1).copied().unwrap_or(0) != 0;
                             let ty_idx = fields.get(2).copied().unwrap_or(0) as usize;
                             let base = state.get_type(ty_idx)?;
-                            let p = decode_relative_vref(cur_val_id, fields.get(3).copied().unwrap_or(0), state)?;
+                            let p = decode_relative_vref(
+                                cur_val_id,
+                                fields.get(3).copied().unwrap_or(0),
+                                state,
+                            )?;
                             let mut idxs = Vec::new();
                             let mut i = 4;
                             while i < fields.len() {
@@ -1501,7 +1567,11 @@ fn parse_function_block(
                         } else {
                             // Old: [code, (ty, val)...] with inbounds from code.
                             let ib = code == FUNC_CODE_INST_INBOUNDS_GEP_OLD;
-                            let p = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
+                            let p = decode_relative_vref(
+                                cur_val_id,
+                                fields.get(1).copied().unwrap_or(0),
+                                state,
+                            )?;
                             let base = type_of_vref(&p, &func, state);
                             let mut idxs = Vec::new();
                             let mut i = 2;
@@ -1518,15 +1588,28 @@ fn parse_function_block(
                             cur_block_idx,
                             None,
                             ptr_ty,
-                            InstrKind::GetElementPtr { inbounds, base_ty, ptr, indices },
+                            InstrKind::GetElementPtr {
+                                inbounds,
+                                base_ty,
+                                ptr,
+                                indices,
+                            },
                         );
                         state.value_table.push(ValueRef::Instruction(iid));
                         instr_count += 1;
                     }
                     FUNC_CODE_INST_CMP2 | FUNC_CODE_INST_CMP => {
                         // [code, lhs, rhs, predicate]
-                        let lhs = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
-                        let rhs = decode_relative_vref(cur_val_id, fields.get(2).copied().unwrap_or(0), state)?;
+                        let lhs = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(1).copied().unwrap_or(0),
+                            state,
+                        )?;
+                        let rhs = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(2).copied().unwrap_or(0),
+                            state,
+                        )?;
                         let pred = fields.get(3).copied().unwrap_or(0);
                         let i1_ty = state.ctx.i1_ty;
                         let kind = cmp_kind(pred, lhs, rhs);
@@ -1543,9 +1626,21 @@ fn parse_function_block(
                     }
                     FUNC_CODE_INST_SELECT | FUNC_CODE_INST_VSELECT => {
                         // [code, cond, true_val, false_val]
-                        let cond = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
-                        let then_val = decode_relative_vref(cur_val_id, fields.get(2).copied().unwrap_or(0), state)?;
-                        let else_val = decode_relative_vref(cur_val_id, fields.get(3).copied().unwrap_or(0), state)?;
+                        let cond = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(1).copied().unwrap_or(0),
+                            state,
+                        )?;
+                        let then_val = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(2).copied().unwrap_or(0),
+                            state,
+                        )?;
+                        let else_val = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(3).copied().unwrap_or(0),
+                            state,
+                        )?;
                         let res_ty = type_of_vref(&then_val, &func, state);
                         let iid = emit_instr(
                             &mut func,
@@ -1553,7 +1648,11 @@ fn parse_function_block(
                             cur_block_idx,
                             None,
                             res_ty,
-                            InstrKind::Select { cond, then_val, else_val },
+                            InstrKind::Select {
+                                cond,
+                                then_val,
+                                else_val,
+                            },
                         );
                         state.value_table.push(ValueRef::Instruction(iid));
                         instr_count += 1;
@@ -1591,7 +1690,12 @@ fn parse_function_block(
                             cur_block_idx,
                             None,
                             ret_ty,
-                            InstrKind::Call { tail, callee_ty, callee, args: call_args },
+                            InstrKind::Call {
+                                tail,
+                                callee_ty,
+                                callee,
+                                args: call_args,
+                            },
                         );
                         // Only push if non-void result.
                         let ret_td = state.ctx.get_type(ret_ty).clone();
@@ -1604,7 +1708,11 @@ fn parse_function_block(
                         // [code, ty_idx, cond, default_dest, (case_val, case_dest)...]
                         let ty_idx = fields.get(1).copied().unwrap_or(0) as usize;
                         let _ty = state.get_type(ty_idx)?;
-                        let cond = decode_relative_vref(cur_val_id, fields.get(2).copied().unwrap_or(0), state)?;
+                        let cond = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(2).copied().unwrap_or(0),
+                            state,
+                        )?;
                         let default = BlockId(fields.get(3).copied().unwrap_or(0) as u32);
                         let mut cases = Vec::new();
                         let mut i = 4;
@@ -1620,7 +1728,11 @@ fn parse_function_block(
                             cur_block_idx,
                             None,
                             state.ctx.void_ty,
-                            InstrKind::Switch { val: cond, default, cases },
+                            InstrKind::Switch {
+                                val: cond,
+                                default,
+                                cases,
+                            },
                         );
                         if cur_block_idx < basic_blocks.len() {
                             basic_blocks[cur_block_idx].terminator = Some(iid);
@@ -1630,19 +1742,40 @@ fn parse_function_block(
                     }
                     FUNC_CODE_INST_UNOP => {
                         // [code, val, opcode, {flags}]
-                        let val = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
+                        let val = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(1).copied().unwrap_or(0),
+                            state,
+                        )?;
                         let opcode = fields.get(2).copied().unwrap_or(0);
                         let res_ty = type_of_vref(&val, &func, state);
                         let kind = match opcode {
-                            12 => InstrKind::FNeg { flags: FastMathFlags::default(), operand: val },
-                            _ => InstrKind::FNeg { flags: FastMathFlags::default(), operand: val },
+                            12 => InstrKind::FNeg {
+                                flags: FastMathFlags::default(),
+                                operand: val,
+                            },
+                            _ => InstrKind::FNeg {
+                                flags: FastMathFlags::default(),
+                                operand: val,
+                            },
                         };
-                        let iid = emit_instr(&mut func, &mut basic_blocks, cur_block_idx, None, res_ty, kind);
+                        let iid = emit_instr(
+                            &mut func,
+                            &mut basic_blocks,
+                            cur_block_idx,
+                            None,
+                            res_ty,
+                            kind,
+                        );
                         state.value_table.push(ValueRef::Instruction(iid));
                         instr_count += 1;
                     }
                     FUNC_CODE_INST_FREEZE => {
-                        let val = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
+                        let val = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(1).copied().unwrap_or(0),
+                            state,
+                        )?;
                         let res_ty = type_of_vref(&val, &func, state);
                         let iid = emit_instr(
                             &mut func,
@@ -1656,7 +1789,11 @@ fn parse_function_block(
                         instr_count += 1;
                     }
                     FUNC_CODE_INST_EXTRACTVAL => {
-                        let agg = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
+                        let agg = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(1).copied().unwrap_or(0),
+                            state,
+                        )?;
                         let indices: Vec<u32> = fields[2..].iter().map(|&x| x as u32).collect();
                         let agg_ty = type_of_vref(&agg, &func, state);
                         // Walk indices to find result type.
@@ -1667,14 +1804,25 @@ fn parse_function_block(
                             cur_block_idx,
                             None,
                             res_ty,
-                            InstrKind::ExtractValue { aggregate: agg, indices },
+                            InstrKind::ExtractValue {
+                                aggregate: agg,
+                                indices,
+                            },
                         );
                         state.value_table.push(ValueRef::Instruction(iid));
                         instr_count += 1;
                     }
                     FUNC_CODE_INST_INSERTVAL => {
-                        let agg = decode_relative_vref(cur_val_id, fields.get(1).copied().unwrap_or(0), state)?;
-                        let val = decode_relative_vref(cur_val_id, fields.get(2).copied().unwrap_or(0), state)?;
+                        let agg = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(1).copied().unwrap_or(0),
+                            state,
+                        )?;
+                        let val = decode_relative_vref(
+                            cur_val_id,
+                            fields.get(2).copied().unwrap_or(0),
+                            state,
+                        )?;
                         let indices: Vec<u32> = fields[3..].iter().map(|&x| x as u32).collect();
                         let agg_ty = type_of_vref(&agg, &func, state);
                         let iid = emit_instr(
@@ -1683,7 +1831,11 @@ fn parse_function_block(
                             cur_block_idx,
                             None,
                             agg_ty,
-                            InstrKind::InsertValue { aggregate: agg, val, indices },
+                            InstrKind::InsertValue {
+                                aggregate: agg,
+                                val,
+                                indices,
+                            },
                         );
                         state.value_table.push(ValueRef::Instruction(iid));
                         instr_count += 1;
@@ -1703,12 +1855,13 @@ fn parse_function_block(
                             cur_block_idx,
                             None,
                             state.ctx.void_ty,
-                            InstrKind::Fence { ordering: llvm_ir::MemOrdering::SeqCst },
+                            InstrKind::Fence {
+                                ordering: llvm_ir::MemOrdering::SeqCst,
+                            },
                         );
                         instr_count += 1;
                     }
-                    FUNC_CODE_INST_DEBUG_LOC
-                    | FUNC_CODE_INST_OPERAND_BUNDLE => {
+                    FUNC_CODE_INST_DEBUG_LOC | FUNC_CODE_INST_OPERAND_BUNDLE => {
                         // Skip debug/operand bundle records.
                     }
                     _ => {
@@ -1742,9 +1895,12 @@ fn decode_relative_vref(
     if encoded == 0 {
         return Err(BitcodeError::ParseError("zero value reference".into()));
     }
-    let abs = cur_val_id
-        .checked_sub(encoded as usize)
-        .ok_or_else(|| BitcodeError::ParseError(format!("value ref underflow: cur={} enc={}", cur_val_id, encoded)))?;
+    let abs = cur_val_id.checked_sub(encoded as usize).ok_or_else(|| {
+        BitcodeError::ParseError(format!(
+            "value ref underflow: cur={} enc={}",
+            cur_val_id, encoded
+        ))
+    })?;
     state.value_table.get(abs).copied().ok_or_else(|| {
         BitcodeError::ParseError(format!(
             "value abs {} out of range (table size {})",
@@ -1793,9 +1949,7 @@ fn extractvalue_type(ctx: &Context, mut ty: TypeId, indices: &[u32]) -> TypeId {
     for &idx in indices {
         let td = ctx.get_type(ty).clone();
         ty = match td {
-            TypeData::Struct(ref st) => {
-                st.fields.get(idx as usize).copied().unwrap_or(ty)
-            }
+            TypeData::Struct(ref st) => st.fields.get(idx as usize).copied().unwrap_or(ty),
             TypeData::Array { element, .. } => element,
             _ => ty,
         };
@@ -1839,25 +1993,65 @@ fn binop_kind(
     let fmf = FastMathFlags::default();
 
     Ok(match opcode {
-        0 => InstrKind::Add { flags: iaf, lhs, rhs },
-        1 => InstrKind::Sub { flags: iaf, lhs, rhs },
-        2 => InstrKind::Mul { flags: iaf, lhs, rhs },
+        0 => InstrKind::Add {
+            flags: iaf,
+            lhs,
+            rhs,
+        },
+        1 => InstrKind::Sub {
+            flags: iaf,
+            lhs,
+            rhs,
+        },
+        2 => InstrKind::Mul {
+            flags: iaf,
+            lhs,
+            rhs,
+        },
         4 => InstrKind::UDiv { exact, lhs, rhs },
         5 => InstrKind::SDiv { exact, lhs, rhs },
         6 => InstrKind::URem { lhs, rhs },
         7 => InstrKind::SRem { lhs, rhs },
-        10 => InstrKind::Shl { flags: iaf, lhs, rhs },
+        10 => InstrKind::Shl {
+            flags: iaf,
+            lhs,
+            rhs,
+        },
         11 => InstrKind::LShr { exact, lhs, rhs },
         12 => InstrKind::AShr { exact, lhs, rhs },
         13 => InstrKind::And { lhs, rhs },
         14 => InstrKind::Or { lhs, rhs },
         15 => InstrKind::Xor { lhs, rhs },
-        17 => InstrKind::FAdd { flags: fmf, lhs, rhs },
-        18 => InstrKind::FSub { flags: fmf, lhs, rhs },
-        19 => InstrKind::FMul { flags: fmf, lhs, rhs },
-        20 => InstrKind::FDiv { flags: fmf, lhs, rhs },
-        21 => InstrKind::FRem { flags: fmf, lhs, rhs },
-        _ => InstrKind::Add { flags: iaf, lhs, rhs },
+        17 => InstrKind::FAdd {
+            flags: fmf,
+            lhs,
+            rhs,
+        },
+        18 => InstrKind::FSub {
+            flags: fmf,
+            lhs,
+            rhs,
+        },
+        19 => InstrKind::FMul {
+            flags: fmf,
+            lhs,
+            rhs,
+        },
+        20 => InstrKind::FDiv {
+            flags: fmf,
+            lhs,
+            rhs,
+        },
+        21 => InstrKind::FRem {
+            flags: fmf,
+            lhs,
+            rhs,
+        },
+        _ => InstrKind::Add {
+            flags: iaf,
+            lhs,
+            rhs,
+        },
     })
 }
 
@@ -1921,7 +2115,7 @@ fn cmp_kind(pred: u64, lhs: ValueRef, rhs: ValueRef) -> InstrKind {
         }
     } else {
         let ip = match pred {
-            32 => IntPredicate::Eq,  // shouldn't happen
+            32 => IntPredicate::Eq, // shouldn't happen
             0 => IntPredicate::Eq,
             1 => IntPredicate::Ne,
             2 => IntPredicate::Ugt,
@@ -1957,7 +2151,11 @@ mod tests {
 
     impl BsWriter {
         fn new() -> Self {
-            BsWriter { buf: Vec::new(), pending: 0, pending_bits: 0 }
+            BsWriter {
+                buf: Vec::new(),
+                pending: 0,
+                pending_bits: 0,
+            }
         }
 
         fn write_bits(&mut self, val: u64, n: usize) {
@@ -2156,8 +2354,8 @@ mod tests {
 
         // Enter MODULE_BLOCK (id=8), new abbrev_len=3.
         w.write_bits(1, 2); // ENTER_SUBBLOCK
-        w.write_vbr(8, 8);  // block_id
-        w.write_vbr(3, 4);  // new abbrev_len
+        w.write_vbr(8, 8); // block_id
+        w.write_vbr(3, 4); // new abbrev_len
         w.align_32();
         // Placeholder for block length (in 32-bit words).
         let block_start_byte = w.buf.len();
@@ -2165,9 +2363,9 @@ mod tests {
 
         // MODULE_CODE_VERSION = 1, version = 2.
         w.write_bits(3, 3); // UNABBREV_RECORD in abbrev_len=3
-        w.write_vbr(1, 6);  // code = MODULE_CODE_VERSION
-        w.write_vbr(1, 6);  // num_ops = 1
-        w.write_vbr(2, 6);  // version = 2
+        w.write_vbr(1, 6); // code = MODULE_CODE_VERSION
+        w.write_vbr(1, 6); // num_ops = 1
+        w.write_vbr(2, 6); // version = 2
 
         // END_BLOCK.
         w.write_bits(0, 3); // END_BLOCK at abbrev_len=3
@@ -2199,12 +2397,13 @@ mod tests {
     fn test_type_table_void_and_integer() {
         // Construct a minimal .bc with a type block containing void + i32.
         // Then verify we can parse it without error.
-        let bc = build_type_table_bc(&[
-            (TYPE_CODE_VOID, vec![]),
-            (TYPE_CODE_INTEGER, vec![32]),
-        ]);
+        let bc = build_type_table_bc(&[(TYPE_CODE_VOID, vec![]), (TYPE_CODE_INTEGER, vec![32])]);
         let result = read_llvm_bc(&bc);
-        assert!(result.is_ok(), "type table parse failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "type table parse failed: {:?}",
+            result.err()
+        );
         let (ctx, _module) = result.unwrap();
         // void_ty and i32_ty are always built in; just check ctx has types.
         assert!(ctx.num_types() > 0);
@@ -2222,14 +2421,19 @@ mod tests {
         let abbrev_module = 3usize;
 
         // Enter MODULE_BLOCK.
-        w.write_bits(1, 2); w.write_vbr(8, 8); w.write_vbr(abbrev_module as u64, 4); w.align_32();
+        w.write_bits(1, 2);
+        w.write_vbr(8, 8);
+        w.write_vbr(abbrev_module as u64, 4);
+        w.align_32();
         let mod_len_offset = w.buf.len();
         w.buf.extend_from_slice(&[0u8; 4]);
 
         {
             // Enter TYPE_BLOCK (id=17), abbrev_len=4.
             w.write_bits(1, abbrev_module as u64 as usize); // ENTER_SUBBLOCK
-            w.write_vbr(17, 8); w.write_vbr(4u64, 4); w.align_32();
+            w.write_vbr(17, 8);
+            w.write_vbr(4u64, 4);
+            w.align_32();
             let type_len_offset = w.buf.len();
             w.buf.extend_from_slice(&[0u8; 4]);
 
@@ -2237,20 +2441,25 @@ mod tests {
             let n = type_records.len() as u64;
             w.write_bits(3, 4); // UNABBREV_RECORD at abbrev_len=4
             w.write_vbr(TYPE_CODE_NUMENTRY, 6);
-            w.write_vbr(1, 6); w.write_vbr(n, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(n, 6);
 
             for (code, fields) in type_records {
                 w.write_bits(3, 4);
                 w.write_vbr(*code, 6);
                 w.write_vbr(fields.len() as u64, 6);
-                for &f in fields { w.write_vbr(f, 6); }
+                for &f in fields {
+                    w.write_vbr(f, 6);
+                }
             }
 
             // END TYPE_BLOCK.
-            w.write_bits(0, 4); w.align_32();
+            w.write_bits(0, 4);
+            w.align_32();
             let type_end = w.buf.len();
             let type_words = (type_end - type_len_offset - 4) / 4;
-            w.buf[type_len_offset..type_len_offset+4].copy_from_slice(&(type_words as u32).to_le_bytes());
+            w.buf[type_len_offset..type_len_offset + 4]
+                .copy_from_slice(&(type_words as u32).to_le_bytes());
         }
 
         // END MODULE_BLOCK.
@@ -2258,7 +2467,8 @@ mod tests {
         w.align_32();
         let mod_end = w.buf.len();
         let mod_words = (mod_end - mod_len_offset - 4) / 4;
-        w.buf[mod_len_offset..mod_len_offset+4].copy_from_slice(&(mod_words as u32).to_le_bytes());
+        w.buf[mod_len_offset..mod_len_offset + 4]
+            .copy_from_slice(&(mod_words as u32).to_le_bytes());
 
         w.finish()
     }
@@ -2295,11 +2505,11 @@ mod tests {
     #[test]
     fn test_char6_lowercase() {
         use crate::bitstream::*; // for char6 helper
-        // 0..25 = a..z
-        // We verify by going through the bitstream reader reading 6-bit codes.
-        // Construct a byte stream with Char6 abbrev.
-        // Instead, test via the reader low-level. We'll just verify the logic
-        // by checking the VBR-decoded chars are sensible.
+                                 // 0..25 = a..z
+                                 // We verify by going through the bitstream reader reading 6-bit codes.
+                                 // Construct a byte stream with Char6 abbrev.
+                                 // Instead, test via the reader low-level. We'll just verify the logic
+                                 // by checking the VBR-decoded chars are sensible.
         let data: &[u8] = &[0b00000000]; // code 0 = 'a'
         let mut bs = BitStreamReader::new(data);
         assert_eq!(bs.read_bits(6).unwrap(), 0); // code 0 → 'a'
@@ -2326,29 +2536,48 @@ mod tests {
         let al = 3usize; // module abbrev_len
 
         // Enter MODULE_BLOCK.
-        w.write_bits(1, 2); w.write_vbr(8, 8); w.write_vbr(al as u64, 4); w.align_32();
-        let mod_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, 2);
+        w.write_vbr(8, 8);
+        w.write_vbr(al as u64, 4);
+        w.align_32();
+        let mod_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
 
         // TYPE_BLOCK: [void=slot0, i32=slot1, fn(i32)->void=slot2]
-        w.write_bits(1, al); w.write_vbr(17, 8); w.write_vbr(4u64, 4); w.align_32();
-        let ty_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, al);
+        w.write_vbr(17, 8);
+        w.write_vbr(4u64, 4);
+        w.align_32();
+        let ty_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
         {
             // NUMENTRY 3
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_NUMENTRY, 6); w.write_vbr(1, 6); w.write_vbr(3, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_NUMENTRY, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(3, 6);
             // void
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_VOID, 6); w.write_vbr(0, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_VOID, 6);
+            w.write_vbr(0, 6);
             // i32
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_INTEGER, 6); w.write_vbr(1, 6); w.write_vbr(32, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_INTEGER, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(32, 6);
             // fn(i32) -> void: FUNCTION vararg=0, ret=0(void), params=[1(i32)]
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_FUNCTION, 6); w.write_vbr(3, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_FUNCTION, 6);
+            w.write_vbr(3, 6);
             w.write_vbr(0, 6); // vararg
             w.write_vbr(0, 6); // ret = slot 0 (void)
             w.write_vbr(1, 6); // param = slot 1 (i32)
         }
-        w.write_bits(0, 4); w.align_32();
+        w.write_bits(0, 4);
+        w.align_32();
         let ty_end = w.buf.len();
         let ty_words = (ty_end - ty_off - 4) / 4;
-        w.buf[ty_off..ty_off+4].copy_from_slice(&(ty_words as u32).to_le_bytes());
+        w.buf[ty_off..ty_off + 4].copy_from_slice(&(ty_words as u32).to_le_bytes());
 
         // MODULE_CODE_FUNCTION record: ty=2, cc=0, is_decl=1, linkage=0
         w.write_bits(3, al);
@@ -2360,10 +2589,11 @@ mod tests {
         w.write_vbr(0, 6); // linkage = External
 
         // END MODULE.
-        w.write_bits(0, al); w.align_32();
+        w.write_bits(0, al);
+        w.align_32();
         let mod_end = w.buf.len();
         let mod_words = (mod_end - mod_off - 4) / 4;
-        w.buf[mod_off..mod_off+4].copy_from_slice(&(mod_words as u32).to_le_bytes());
+        w.buf[mod_off..mod_off + 4].copy_from_slice(&(mod_words as u32).to_le_bytes());
 
         with_magic(w.finish())
     }
@@ -2384,20 +2614,38 @@ mod tests {
         let al = 3usize;
 
         // Enter MODULE_BLOCK.
-        w.write_bits(1, 2); w.write_vbr(8, 8); w.write_vbr(al as u64, 4); w.align_32();
-        let mod_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, 2);
+        w.write_vbr(8, 8);
+        w.write_vbr(al as u64, 4);
+        w.align_32();
+        let mod_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
 
         // TYPE_BLOCK: void(0), i32(1)
-        w.write_bits(1, al); w.write_vbr(17, 8); w.write_vbr(4u64, 4); w.align_32();
-        let ty_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, al);
+        w.write_vbr(17, 8);
+        w.write_vbr(4u64, 4);
+        w.align_32();
+        let ty_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
         {
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_NUMENTRY, 6); w.write_vbr(1, 6); w.write_vbr(2, 6);
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_VOID, 6); w.write_vbr(0, 6);
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_INTEGER, 6); w.write_vbr(1, 6); w.write_vbr(32, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_NUMENTRY, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(2, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_VOID, 6);
+            w.write_vbr(0, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_INTEGER, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(32, 6);
         }
-        w.write_bits(0, 4); w.align_32();
+        w.write_bits(0, 4);
+        w.align_32();
         let ty_end = w.buf.len();
-        w.buf[ty_off..ty_off+4].copy_from_slice(&(((ty_end - ty_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[ty_off..ty_off + 4]
+            .copy_from_slice(&(((ty_end - ty_off - 4) / 4) as u32).to_le_bytes());
 
         // MODULE_CODE_GLOBALVAR: ty=1(i32), is_const=0, init_id=0 (none), linkage=0, align=0, section=0
         w.write_bits(3, al);
@@ -2411,9 +2659,11 @@ mod tests {
         w.write_vbr(0, 6); // section
 
         // END MODULE.
-        w.write_bits(0, al); w.align_32();
+        w.write_bits(0, al);
+        w.align_32();
         let mod_end = w.buf.len();
-        w.buf[mod_off..mod_off+4].copy_from_slice(&(((mod_end - mod_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[mod_off..mod_off + 4]
+            .copy_from_slice(&(((mod_end - mod_off - 4) / 4) as u32).to_le_bytes());
 
         with_magic(w.finish())
     }
@@ -2435,23 +2685,40 @@ mod tests {
         let al = 3usize;
 
         // Enter MODULE_BLOCK.
-        w.write_bits(1, 2); w.write_vbr(8, 8); w.write_vbr(al as u64, 4); w.align_32();
-        let mod_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, 2);
+        w.write_vbr(8, 8);
+        w.write_vbr(al as u64, 4);
+        w.align_32();
+        let mod_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
 
         // TYPE_BLOCK: void(0), fn()->void(1)
-        w.write_bits(1, al); w.write_vbr(17, 8); w.write_vbr(4u64, 4); w.align_32();
-        let ty_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, al);
+        w.write_vbr(17, 8);
+        w.write_vbr(4u64, 4);
+        w.align_32();
+        let ty_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
         {
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_NUMENTRY, 6); w.write_vbr(1, 6); w.write_vbr(2, 6);
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_VOID, 6); w.write_vbr(0, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_NUMENTRY, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(2, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_VOID, 6);
+            w.write_vbr(0, 6);
             // fn()->void: FUNCTION, vararg=0, ret=0
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_FUNCTION, 6); w.write_vbr(2, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_FUNCTION, 6);
+            w.write_vbr(2, 6);
             w.write_vbr(0, 6); // vararg
             w.write_vbr(0, 6); // ret = void (slot 0)
         }
-        w.write_bits(0, 4); w.align_32();
+        w.write_bits(0, 4);
+        w.align_32();
         let ty_end = w.buf.len();
-        w.buf[ty_off..ty_off+4].copy_from_slice(&(((ty_end - ty_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[ty_off..ty_off + 4]
+            .copy_from_slice(&(((ty_end - ty_off - 4) / 4) as u32).to_le_bytes());
 
         // MODULE_CODE_FUNCTION: ty=1, cc=0, is_decl=0, linkage=0
         w.write_bits(3, al);
@@ -2463,22 +2730,35 @@ mod tests {
         w.write_vbr(0, 6); // linkage
 
         // FUNCTION_BLOCK.
-        w.write_bits(1, al); w.write_vbr(12, 8); w.write_vbr(4u64, 4); w.align_32();
-        let fn_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, al);
+        w.write_vbr(12, 8);
+        w.write_vbr(4u64, 4);
+        w.align_32();
+        let fn_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
         {
             // DECLAREBLOCKS: 1 block.
-            w.write_bits(3, 4); w.write_vbr(FUNC_CODE_DECLAREBLOCKS, 6); w.write_vbr(1, 6); w.write_vbr(1, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(FUNC_CODE_DECLAREBLOCKS, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(1, 6);
             // INST_RET with no value.
-            w.write_bits(3, 4); w.write_vbr(FUNC_CODE_INST_RET, 6); w.write_vbr(0, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(FUNC_CODE_INST_RET, 6);
+            w.write_vbr(0, 6);
         }
-        w.write_bits(0, 4); w.align_32();
+        w.write_bits(0, 4);
+        w.align_32();
         let fn_end = w.buf.len();
-        w.buf[fn_off..fn_off+4].copy_from_slice(&(((fn_end - fn_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[fn_off..fn_off + 4]
+            .copy_from_slice(&(((fn_end - fn_off - 4) / 4) as u32).to_le_bytes());
 
         // END MODULE.
-        w.write_bits(0, al); w.align_32();
+        w.write_bits(0, al);
+        w.align_32();
         let mod_end = w.buf.len();
-        w.buf[mod_off..mod_off+4].copy_from_slice(&(((mod_end - mod_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[mod_off..mod_off + 4]
+            .copy_from_slice(&(((mod_end - mod_off - 4) / 4) as u32).to_le_bytes());
 
         with_magic(w.finish())
     }
@@ -2502,43 +2782,83 @@ mod tests {
         let mut w = BsWriter::new();
         let al = 3usize;
 
-        w.write_bits(1, 2); w.write_vbr(8, 8); w.write_vbr(al as u64, 4); w.align_32();
-        let mod_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, 2);
+        w.write_vbr(8, 8);
+        w.write_vbr(al as u64, 4);
+        w.align_32();
+        let mod_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
 
         // Types: void(0), fn()->void(1)
-        w.write_bits(1, al); w.write_vbr(17, 8); w.write_vbr(4u64, 4); w.align_32();
-        let ty_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, al);
+        w.write_vbr(17, 8);
+        w.write_vbr(4u64, 4);
+        w.align_32();
+        let ty_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
         {
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_NUMENTRY, 6); w.write_vbr(1, 6); w.write_vbr(2, 6);
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_VOID, 6); w.write_vbr(0, 6);
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_FUNCTION, 6); w.write_vbr(2, 6); w.write_vbr(0, 6); w.write_vbr(0, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_NUMENTRY, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(2, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_VOID, 6);
+            w.write_vbr(0, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_FUNCTION, 6);
+            w.write_vbr(2, 6);
+            w.write_vbr(0, 6);
+            w.write_vbr(0, 6);
         }
-        w.write_bits(0, 4); w.align_32();
+        w.write_bits(0, 4);
+        w.align_32();
         let ty_end = w.buf.len();
-        w.buf[ty_off..ty_off+4].copy_from_slice(&(((ty_end - ty_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[ty_off..ty_off + 4]
+            .copy_from_slice(&(((ty_end - ty_off - 4) / 4) as u32).to_le_bytes());
 
         // Function declaration.
-        w.write_bits(3, al); w.write_vbr(MODULE_CODE_FUNCTION, 6); w.write_vbr(4, 6);
-        w.write_vbr(1, 6); w.write_vbr(0, 6); w.write_vbr(0, 6); w.write_vbr(0, 6);
+        w.write_bits(3, al);
+        w.write_vbr(MODULE_CODE_FUNCTION, 6);
+        w.write_vbr(4, 6);
+        w.write_vbr(1, 6);
+        w.write_vbr(0, 6);
+        w.write_vbr(0, 6);
+        w.write_vbr(0, 6);
 
         // Function body.
-        w.write_bits(1, al); w.write_vbr(12, 8); w.write_vbr(4u64, 4); w.align_32();
-        let fn_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, al);
+        w.write_vbr(12, 8);
+        w.write_vbr(4u64, 4);
+        w.align_32();
+        let fn_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
         {
             // DECLAREBLOCKS: 2
-            w.write_bits(3, 4); w.write_vbr(FUNC_CODE_DECLAREBLOCKS, 6); w.write_vbr(1, 6); w.write_vbr(2, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(FUNC_CODE_DECLAREBLOCKS, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(2, 6);
             // Block 0: INST_BR dest=1 (unconditional)
-            w.write_bits(3, 4); w.write_vbr(FUNC_CODE_INST_BR, 6); w.write_vbr(1, 6); w.write_vbr(1, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(FUNC_CODE_INST_BR, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(1, 6);
             // Block 1: INST_RET (no value)
-            w.write_bits(3, 4); w.write_vbr(FUNC_CODE_INST_RET, 6); w.write_vbr(0, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(FUNC_CODE_INST_RET, 6);
+            w.write_vbr(0, 6);
         }
-        w.write_bits(0, 4); w.align_32();
+        w.write_bits(0, 4);
+        w.align_32();
         let fn_end = w.buf.len();
-        w.buf[fn_off..fn_off+4].copy_from_slice(&(((fn_end - fn_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[fn_off..fn_off + 4]
+            .copy_from_slice(&(((fn_end - fn_off - 4) / 4) as u32).to_le_bytes());
 
-        w.write_bits(0, al); w.align_32();
+        w.write_bits(0, al);
+        w.align_32();
         let mod_end = w.buf.len();
-        w.buf[mod_off..mod_off+4].copy_from_slice(&(((mod_end - mod_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[mod_off..mod_off + 4]
+            .copy_from_slice(&(((mod_end - mod_off - 4) / 4) as u32).to_le_bytes());
 
         with_magic(w.finish())
     }
@@ -2549,7 +2869,11 @@ mod tests {
     fn test_parse_alloca_load_store() {
         let bc = build_alloca_load_store_bc();
         let result = read_llvm_bc(&bc);
-        assert!(result.is_ok(), "alloca/load/store parse failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "alloca/load/store parse failed: {:?}",
+            result.err()
+        );
         let (_ctx, module) = result.unwrap();
         assert_eq!(module.functions.len(), 1);
         // Function should have instructions.
@@ -2561,52 +2885,96 @@ mod tests {
         let mut w = BsWriter::new();
         let al = 3usize;
 
-        w.write_bits(1, 2); w.write_vbr(8, 8); w.write_vbr(al as u64, 4); w.align_32();
-        let mod_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, 2);
+        w.write_vbr(8, 8);
+        w.write_vbr(al as u64, 4);
+        w.align_32();
+        let mod_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
 
         // Types: void(0), i32(1), ptr(2), fn(i32)->void(3)
-        w.write_bits(1, al); w.write_vbr(17, 8); w.write_vbr(4u64, 4); w.align_32();
-        let ty_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, al);
+        w.write_vbr(17, 8);
+        w.write_vbr(4u64, 4);
+        w.align_32();
+        let ty_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
         {
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_NUMENTRY, 6); w.write_vbr(1, 6); w.write_vbr(4, 6);
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_VOID, 6); w.write_vbr(0, 6);
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_INTEGER, 6); w.write_vbr(1, 6); w.write_vbr(32, 6);
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_OPAQUE_POINTER, 6); w.write_vbr(0, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_NUMENTRY, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(4, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_VOID, 6);
+            w.write_vbr(0, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_INTEGER, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(32, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_OPAQUE_POINTER, 6);
+            w.write_vbr(0, 6);
             // fn(i32)->void
-            w.write_bits(3, 4); w.write_vbr(TYPE_CODE_FUNCTION, 6); w.write_vbr(3, 6);
-            w.write_vbr(0, 6); w.write_vbr(0, 6); w.write_vbr(1, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(TYPE_CODE_FUNCTION, 6);
+            w.write_vbr(3, 6);
+            w.write_vbr(0, 6);
+            w.write_vbr(0, 6);
+            w.write_vbr(1, 6);
         }
-        w.write_bits(0, 4); w.align_32();
+        w.write_bits(0, 4);
+        w.align_32();
         let ty_end = w.buf.len();
-        w.buf[ty_off..ty_off+4].copy_from_slice(&(((ty_end - ty_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[ty_off..ty_off + 4]
+            .copy_from_slice(&(((ty_end - ty_off - 4) / 4) as u32).to_le_bytes());
 
         // Function decl.
-        w.write_bits(3, al); w.write_vbr(MODULE_CODE_FUNCTION, 6); w.write_vbr(4, 6);
-        w.write_vbr(3, 6); w.write_vbr(0, 6); w.write_vbr(0, 6); w.write_vbr(0, 6);
+        w.write_bits(3, al);
+        w.write_vbr(MODULE_CODE_FUNCTION, 6);
+        w.write_vbr(4, 6);
+        w.write_vbr(3, 6);
+        w.write_vbr(0, 6);
+        w.write_vbr(0, 6);
+        w.write_vbr(0, 6);
 
         // Function body.
-        w.write_bits(1, al); w.write_vbr(12, 8); w.write_vbr(4u64, 4); w.align_32();
-        let fn_off = w.buf.len(); w.buf.extend_from_slice(&[0u8; 4]);
+        w.write_bits(1, al);
+        w.write_vbr(12, 8);
+        w.write_vbr(4u64, 4);
+        w.align_32();
+        let fn_off = w.buf.len();
+        w.buf.extend_from_slice(&[0u8; 4]);
         {
             // DECLAREBLOCKS: 1
-            w.write_bits(3, 4); w.write_vbr(FUNC_CODE_DECLAREBLOCKS, 6); w.write_vbr(1, 6); w.write_vbr(1, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(FUNC_CODE_DECLAREBLOCKS, 6);
+            w.write_vbr(1, 6);
+            w.write_vbr(1, 6);
             // ALLOCA i32 (inst_ty=1=i32, op_ty=1=i32, size=1, align=0)
-            w.write_bits(3, 4); w.write_vbr(FUNC_CODE_INST_ALLOCA, 6); w.write_vbr(4, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(FUNC_CODE_INST_ALLOCA, 6);
+            w.write_vbr(4, 6);
             w.write_vbr(1, 6); // inst_ty = i32
             w.write_vbr(1, 6); // op_ty = i32
             w.write_vbr(1, 6); // size
             w.write_vbr(0, 6); // align_encoded
 
             // RET void
-            w.write_bits(3, 4); w.write_vbr(FUNC_CODE_INST_RET, 6); w.write_vbr(0, 6);
+            w.write_bits(3, 4);
+            w.write_vbr(FUNC_CODE_INST_RET, 6);
+            w.write_vbr(0, 6);
         }
-        w.write_bits(0, 4); w.align_32();
+        w.write_bits(0, 4);
+        w.align_32();
         let fn_end = w.buf.len();
-        w.buf[fn_off..fn_off+4].copy_from_slice(&(((fn_end - fn_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[fn_off..fn_off + 4]
+            .copy_from_slice(&(((fn_end - fn_off - 4) / 4) as u32).to_le_bytes());
 
-        w.write_bits(0, al); w.align_32();
+        w.write_bits(0, al);
+        w.align_32();
         let mod_end = w.buf.len();
-        w.buf[mod_off..mod_off+4].copy_from_slice(&(((mod_end - mod_off - 4) / 4) as u32).to_le_bytes());
+        w.buf[mod_off..mod_off + 4]
+            .copy_from_slice(&(((mod_end - mod_off - 4) / 4) as u32).to_le_bytes());
 
         with_magic(w.finish())
     }
@@ -2625,7 +2993,11 @@ mod tests {
             (TYPE_CODE_INTEGER, vec![64]),
         ]);
         let result = read_llvm_bc(&bc);
-        assert!(result.is_ok(), "float/double type parse failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "float/double type parse failed: {:?}",
+            result.err()
+        );
     }
 
     // ── 15. Opaque pointer type ───────────────────────────────────────────────
@@ -2637,6 +3009,10 @@ mod tests {
             (TYPE_CODE_OPAQUE_POINTER, vec![0]),
         ]);
         let result = read_llvm_bc(&bc);
-        assert!(result.is_ok(), "opaque ptr type parse failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "opaque ptr type parse failed: {:?}",
+            result.err()
+        );
     }
 }

@@ -11,14 +11,8 @@ use fuzz_diff::run_campaign_from;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let count: u32 = args
-        .get(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
-    let seed: u64 = args
-        .get(2)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(42);
+    let count: u32 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(100);
+    let seed: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(42);
 
     println!(
         "Running {} differential fuzz programs (base_seed={})...",

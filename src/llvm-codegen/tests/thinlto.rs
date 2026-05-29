@@ -71,7 +71,10 @@ fn embed_bitcode_adds_llvmcmd_section() {
     let mut obj = elf_obj();
     embed_bitcode(&mut obj, &ctx, &module, "--opt-level=2").unwrap();
     let cmd = obj.sections.iter().find(|s| s.name == ".llvmcmd").unwrap();
-    assert_eq!(cmd.data, b"--opt-level=2", ".llvmcmd must contain the cmdline string");
+    assert_eq!(
+        cmd.data, b"--opt-level=2",
+        ".llvmcmd must contain the cmdline string"
+    );
 }
 
 #[test]
@@ -89,7 +92,10 @@ fn embed_bitcode_empty_cmdline() {
     let mut obj = elf_obj();
     embed_bitcode(&mut obj, &ctx, &module, "").unwrap();
     let cmd = obj.sections.iter().find(|s| s.name == ".llvmcmd").unwrap();
-    assert_eq!(cmd.data, b"", ".llvmcmd with empty cmdline must be zero bytes");
+    assert_eq!(
+        cmd.data, b"",
+        ".llvmcmd with empty cmdline must be zero bytes"
+    );
 }
 
 #[test]
@@ -105,8 +111,15 @@ fn embed_bitcode_preserves_existing_sections() {
         debug_rows: Vec::new(),
     });
     embed_bitcode(&mut obj, &ctx, &module, "").unwrap();
-    assert_eq!(obj.sections[0].name, ".text", ".text must remain at index 0");
-    assert_eq!(obj.sections.len(), 3, "must have .text + .llvmbc + .llvmcmd");
+    assert_eq!(
+        obj.sections[0].name, ".text",
+        ".text must remain at index 0"
+    );
+    assert_eq!(
+        obj.sections.len(),
+        3,
+        "must have .text + .llvmbc + .llvmcmd"
+    );
 }
 
 // ── Mach-O tests ────────────────────────────────────────────────────────────
@@ -158,8 +171,7 @@ fn thinlto_roundtrip_module_name() {
     embed_bitcode(&mut obj, &ctx, &module, "").unwrap();
 
     let bc_sec = obj.sections.iter().find(|s| s.name == ".llvmbc").unwrap();
-    let (_, module2) = read_bitcode(&bc_sec.data)
-        .expect("embedded bitcode must be valid LRIR");
+    let (_, module2) = read_bitcode(&bc_sec.data).expect("embedded bitcode must be valid LRIR");
     assert_eq!(
         module2.name, "mymod",
         "module name must survive the embed/read round-trip"

@@ -14,7 +14,10 @@ use std::process::Command;
 use llvm_codegen::{
     emit_object,
     isel::IselBackend,
-    regalloc::{allocate_registers, apply_allocation, compute_live_intervals, insert_spill_reloads, RegAllocStrategy},
+    regalloc::{
+        allocate_registers, apply_allocation, compute_live_intervals, insert_spill_reloads,
+        RegAllocStrategy,
+    },
     ObjectFormat,
 };
 use llvm_ir::{printer::Printer, Context, Module};
@@ -579,8 +582,20 @@ fn compile_and_run_ours(ctx: &Context, module: &Module, label: &str) -> (Option<
 
     let mut mf = backend.lower_function(ctx, module, main_func);
     let intervals = compute_live_intervals(&mf);
-    let mut result = allocate_registers(&intervals, &mf.allocatable_pregs, &mf.allocatable_fp_pregs, RegAllocStrategy::LinearScan);
-    insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+    let mut result = allocate_registers(
+        &intervals,
+        &mf.allocatable_pregs,
+        &mf.allocatable_fp_pregs,
+        RegAllocStrategy::LinearScan,
+    );
+    insert_spill_reloads(
+        &mut mf,
+        &mut result,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+        MOV_LOAD_MR,
+        MOV_STORE_RM,
+    );
     apply_allocation(&mut mf, &result);
     let mut emitter = X86Emitter::new(ObjectFormat::Elf);
     let obj = emit_object(&mf, &mut emitter);
@@ -648,8 +663,8 @@ fn run_semantic_test(label: &str, src: &str, expected_exit: i32) {
         None => return,
     };
 
-    let (mut ctx, mut module) = parse(src)
-        .unwrap_or_else(|e| panic!("our parser rejected '{label}': {e}"));
+    let (mut ctx, mut module) =
+        parse(src).unwrap_or_else(|e| panic!("our parser rejected '{label}': {e}"));
     let mut pm = PassManager::new();
     pm.add_function_pass(Mem2Reg);
     pm.run(&mut ctx, &mut module);
@@ -837,60 +852,165 @@ fn check_fixture_hash(name: &str, src: &str) {
 #[test]
 fn check_regression_hashes() {
     let fixtures: &[(&str, &str)] = &[
-        ("01_int_arith_flags", include_str!("fixtures/01_int_arith_flags.ll")),
+        (
+            "01_int_arith_flags",
+            include_str!("fixtures/01_int_arith_flags.ll"),
+        ),
         ("02_udiv_urem", include_str!("fixtures/02_udiv_urem.ll")),
-        ("03_sdiv_exact_srem", include_str!("fixtures/03_sdiv_exact_srem.ll")),
-        ("04_fp_arith_double", include_str!("fixtures/04_fp_arith_double.ll")),
-        ("05_fp_arith_float", include_str!("fixtures/05_fp_arith_float.ll")),
+        (
+            "03_sdiv_exact_srem",
+            include_str!("fixtures/03_sdiv_exact_srem.ll"),
+        ),
+        (
+            "04_fp_arith_double",
+            include_str!("fixtures/04_fp_arith_double.ll"),
+        ),
+        (
+            "05_fp_arith_float",
+            include_str!("fixtures/05_fp_arith_float.ll"),
+        ),
         ("06_fp_fastmath", include_str!("fixtures/06_fp_fastmath.ll")),
         ("07_fcmp", include_str!("fixtures/07_fcmp.ll")),
-        ("08_icmp_all_preds", include_str!("fixtures/08_icmp_all_preds.ll")),
-        ("09_trunc_zext_sext", include_str!("fixtures/09_trunc_zext_sext.ll")),
-        ("10_fptrunc_fpext", include_str!("fixtures/10_fptrunc_fpext.ll")),
-        ("11_fp_int_casts", include_str!("fixtures/11_fp_int_casts.ll")),
+        (
+            "08_icmp_all_preds",
+            include_str!("fixtures/08_icmp_all_preds.ll"),
+        ),
+        (
+            "09_trunc_zext_sext",
+            include_str!("fixtures/09_trunc_zext_sext.ll"),
+        ),
+        (
+            "10_fptrunc_fpext",
+            include_str!("fixtures/10_fptrunc_fpext.ll"),
+        ),
+        (
+            "11_fp_int_casts",
+            include_str!("fixtures/11_fp_int_casts.ll"),
+        ),
         ("12_ptr_casts", include_str!("fixtures/12_ptr_casts.ll")),
-        ("14_alloca_align", include_str!("fixtures/14_alloca_align.ll")),
-        ("15_load_store_align", include_str!("fixtures/15_load_store_align.ll")),
-        ("15b_volatile_mem", include_str!("fixtures/15b_volatile_mem.ll")),
-        ("16_gep_inbounds", include_str!("fixtures/16_gep_inbounds.ll")),
+        (
+            "14_alloca_align",
+            include_str!("fixtures/14_alloca_align.ll"),
+        ),
+        (
+            "15_load_store_align",
+            include_str!("fixtures/15_load_store_align.ll"),
+        ),
+        (
+            "15b_volatile_mem",
+            include_str!("fixtures/15b_volatile_mem.ll"),
+        ),
+        (
+            "16_gep_inbounds",
+            include_str!("fixtures/16_gep_inbounds.ll"),
+        ),
         ("17_gep_struct", include_str!("fixtures/17_gep_struct.ll")),
-        ("18_extractvalue", include_str!("fixtures/18_extractvalue.ll")),
+        (
+            "18_extractvalue",
+            include_str!("fixtures/18_extractvalue.ll"),
+        ),
         ("19_insertvalue", include_str!("fixtures/19_insertvalue.ll")),
-        ("20_extractelement", include_str!("fixtures/20_extractelement.ll")),
-        ("21_insertelement", include_str!("fixtures/21_insertelement.ll")),
-        ("22_shufflevector", include_str!("fixtures/22_shufflevector.ll")),
+        (
+            "20_extractelement",
+            include_str!("fixtures/20_extractelement.ll"),
+        ),
+        (
+            "21_insertelement",
+            include_str!("fixtures/21_insertelement.ll"),
+        ),
+        (
+            "22_shufflevector",
+            include_str!("fixtures/22_shufflevector.ll"),
+        ),
         ("23_unreachable", include_str!("fixtures/23_unreachable.ll")),
         ("24_switch_many", include_str!("fixtures/24_switch_many.ll")),
-        ("25_switch_default_only", include_str!("fixtures/25_switch_default_only.ll")),
+        (
+            "25_switch_default_only",
+            include_str!("fixtures/25_switch_default_only.ll"),
+        ),
         ("26_phi_loop", include_str!("fixtures/26_phi_loop.ll")),
-        ("27_phi_multiple", include_str!("fixtures/27_phi_multiple.ll")),
+        (
+            "27_phi_multiple",
+            include_str!("fixtures/27_phi_multiple.ll"),
+        ),
         ("28_tail_calls", include_str!("fixtures/28_tail_calls.ll")),
-        ("29_indirect_call", include_str!("fixtures/29_indirect_call.ll")),
-        ("30_variadic_call", include_str!("fixtures/30_variadic_call.ll")),
+        (
+            "29_indirect_call",
+            include_str!("fixtures/29_indirect_call.ll"),
+        ),
+        (
+            "30_variadic_call",
+            include_str!("fixtures/30_variadic_call.ll"),
+        ),
         ("31_array_type", include_str!("fixtures/31_array_type.ll")),
         ("32_struct_anon", include_str!("fixtures/32_struct_anon.ll")),
-        ("33_vector_arith", include_str!("fixtures/33_vector_arith.ll")),
-        ("34_named_struct_nested", include_str!("fixtures/34_named_struct_nested.ll")),
+        (
+            "33_vector_arith",
+            include_str!("fixtures/33_vector_arith.ll"),
+        ),
+        (
+            "34_named_struct_nested",
+            include_str!("fixtures/34_named_struct_nested.ll"),
+        ),
         ("35_const_undef", include_str!("fixtures/35_const_undef.ll")),
-        ("36_const_zeroinitializer", include_str!("fixtures/36_const_zeroinitializer.ll")),
+        (
+            "36_const_zeroinitializer",
+            include_str!("fixtures/36_const_zeroinitializer.ll"),
+        ),
         ("37_const_null", include_str!("fixtures/37_const_null.ll")),
-        ("38_const_float_hex", include_str!("fixtures/38_const_float_hex.ll")),
-        ("39_private_linkage", include_str!("fixtures/39_private_linkage.ll")),
-        ("40_internal_linkage", include_str!("fixtures/40_internal_linkage.ll")),
-        ("41_module_header", include_str!("fixtures/41_module_header.ll")),
-        ("42_multi_function", include_str!("fixtures/42_multi_function.ll")),
-        ("43_declare_void", include_str!("fixtures/43_declare_void.ll")),
-        ("44_declare_ptr_ret", include_str!("fixtures/44_declare_ptr_ret.ll")),
-        ("45_select_chain", include_str!("fixtures/45_select_chain.ll")),
+        (
+            "38_const_float_hex",
+            include_str!("fixtures/38_const_float_hex.ll"),
+        ),
+        (
+            "39_private_linkage",
+            include_str!("fixtures/39_private_linkage.ll"),
+        ),
+        (
+            "40_internal_linkage",
+            include_str!("fixtures/40_internal_linkage.ll"),
+        ),
+        (
+            "41_module_header",
+            include_str!("fixtures/41_module_header.ll"),
+        ),
+        (
+            "42_multi_function",
+            include_str!("fixtures/42_multi_function.ll"),
+        ),
+        (
+            "43_declare_void",
+            include_str!("fixtures/43_declare_void.ll"),
+        ),
+        (
+            "44_declare_ptr_ret",
+            include_str!("fixtures/44_declare_ptr_ret.ll"),
+        ),
+        (
+            "45_select_chain",
+            include_str!("fixtures/45_select_chain.ll"),
+        ),
         ("46_phi_diamond", include_str!("fixtures/46_phi_diamond.ll")),
-        ("47_alloca_array", include_str!("fixtures/47_alloca_array.ll")),
+        (
+            "47_alloca_array",
+            include_str!("fixtures/47_alloca_array.ll"),
+        ),
         ("48_fp_loop", include_str!("fixtures/48_fp_loop.ll")),
         ("49_all_icmp_br", include_str!("fixtures/49_all_icmp_br.ll")),
-        ("50_bitwise_shifts", include_str!("fixtures/50_bitwise_shifts.ll")),
+        (
+            "50_bitwise_shifts",
+            include_str!("fixtures/50_bitwise_shifts.ll"),
+        ),
         ("51_cast_chain", include_str!("fixtures/51_cast_chain.ll")),
-        ("53_fp_scalar_ops", include_str!("fixtures/53_fp_scalar_ops.ll")),
+        (
+            "53_fp_scalar_ops",
+            include_str!("fixtures/53_fp_scalar_ops.ll"),
+        ),
         ("54_fp_compare", include_str!("fixtures/54_fp_compare.ll")),
-        ("55_fp_conversions", include_str!("fixtures/55_fp_conversions.ll")),
+        (
+            "55_fp_conversions",
+            include_str!("fixtures/55_fp_conversions.ll"),
+        ),
     ];
 
     for (name, src) in fixtures {

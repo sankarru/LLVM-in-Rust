@@ -1112,7 +1112,10 @@ fn encode_instr(w: &mut Writer, instr: &Instruction) {
             }
             encode_opt_u32(w, default.map(|b| b.0));
         }
-        CatchRet { catch_pad, successor } => {
+        CatchRet {
+            catch_pad,
+            successor,
+        } => {
             w.u32(instr_tag::CATCHRET);
             encode_vref(w, catch_pad);
             w.u32(successor.0);

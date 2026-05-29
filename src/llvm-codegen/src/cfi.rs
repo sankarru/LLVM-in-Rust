@@ -55,7 +55,10 @@ impl CfiInstr {
                 v.extend(encode_uleb128(*offset as u64));
                 v
             }
-            CfiInstr::Offset { reg, factored_offset } => {
+            CfiInstr::Offset {
+                reg,
+                factored_offset,
+            } => {
                 // DW_CFA_offset: high 2 bits = 0b10, low 6 bits = reg
                 let mut v = vec![0x80 | (reg & 0x3f)];
                 v.extend(encode_uleb128(*factored_offset as u64));
@@ -133,7 +136,13 @@ impl CfiWriter {
         // DW_CFA_def_cfa(RSP=7, 8): at function entry CFA = RSP+8
         body.extend(CfiInstr::DefCfa { reg: 7, offset: 8 }.encode());
         // DW_CFA_offset(RIP=16, 1): return address saved at CFA-8 (factored offset 8/8=1)
-        body.extend(CfiInstr::Offset { reg: 16, factored_offset: 1 }.encode());
+        body.extend(
+            CfiInstr::Offset {
+                reg: 16,
+                factored_offset: 1,
+            }
+            .encode(),
+        );
 
         // Pad to 8-byte boundary (length field + body must be 8-byte aligned).
         // The total record = 4 (length) + body.len(); pad body so total is multiple of 8.
@@ -254,7 +263,10 @@ pub fn x86_fp_prologue_cfi() -> Vec<CfiInstr> {
         CfiInstr::AdvanceLoc(1),
         CfiInstr::DefCfaOffset(16),
         // RBP was saved at CFA-16 (factored: 16/8 = 2).
-        CfiInstr::Offset { reg: 6, factored_offset: 2 },
+        CfiInstr::Offset {
+            reg: 6,
+            factored_offset: 2,
+        },
         // After "mov rbp, rsp" (3 bytes), CFA register switches to RBP.
         CfiInstr::AdvanceLoc(3),
         CfiInstr::DefCfaRegister(6),
@@ -311,7 +323,11 @@ mod tests {
     fn cfi_offset_reg6_factor2() {
         // DW_CFA_offset(reg=6, factored_offset=2): 0x80 | 6 = 0x86, then ULEB128(2)=0x02
         assert_eq!(
-            CfiInstr::Offset { reg: 6, factored_offset: 2 }.encode(),
+            CfiInstr::Offset {
+                reg: 6,
+                factored_offset: 2
+            }
+            .encode(),
             vec![0x86, 0x02]
         );
     }
@@ -320,7 +336,11 @@ mod tests {
     fn cfi_offset_rip_factor1() {
         // DW_CFA_offset(reg=16, factored_offset=1): 0x80 | 16 = 0x90, ULEB128(1)=0x01
         assert_eq!(
-            CfiInstr::Offset { reg: 16, factored_offset: 1 }.encode(),
+            CfiInstr::Offset {
+                reg: 16,
+                factored_offset: 1
+            }
+            .encode(),
             vec![0x90, 0x01]
         );
     }
@@ -397,7 +417,10 @@ mod tests {
         let cie_len = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         // The CIE record occupies 4 (length field) + cie_len bytes.
         let cie_total = 4 + cie_len;
-        assert!(bytes.len() > cie_total, "output must contain more than the CIE");
+        assert!(
+            bytes.len() > cie_total,
+            "output must contain more than the CIE"
+        );
 
         // The FDE starts at cie_total.
         let fde_off = cie_total;
@@ -456,14 +479,26 @@ mod tests {
         assert_eq!(instrs.len(), 5);
         assert_eq!(instrs[0], CfiInstr::AdvanceLoc(1));
         assert_eq!(instrs[1], CfiInstr::DefCfaOffset(16));
-        assert_eq!(instrs[2], CfiInstr::Offset { reg: 6, factored_offset: 2 });
+        assert_eq!(
+            instrs[2],
+            CfiInstr::Offset {
+                reg: 6,
+                factored_offset: 2
+            }
+        );
         assert_eq!(instrs[3], CfiInstr::AdvanceLoc(3));
         assert_eq!(instrs[4], CfiInstr::DefCfaRegister(6));
 
         // Verify the encoded bytes include def_cfa_offset and def_cfa_register opcodes.
         let encoded: Vec<u8> = instrs.iter().flat_map(|i| i.encode()).collect();
-        assert!(encoded.contains(&0x0e), "must contain DW_CFA_def_cfa_offset");
-        assert!(encoded.contains(&0x0d), "must contain DW_CFA_def_cfa_register");
+        assert!(
+            encoded.contains(&0x0e),
+            "must contain DW_CFA_def_cfa_offset"
+        );
+        assert!(
+            encoded.contains(&0x0d),
+            "must contain DW_CFA_def_cfa_register"
+        );
     }
 
     #[test]

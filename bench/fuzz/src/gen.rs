@@ -45,11 +45,7 @@ impl FuzzGen {
     ///
     /// The function body has 3–12 arithmetic instructions (no branches).
     /// Returns the `FunctionId` of the generated function.
-    pub fn gen_function(
-        &mut self,
-        ctx: &mut Context,
-        module: &mut Module,
-    ) -> FunctionId {
+    pub fn gen_function(&mut self, ctx: &mut Context, module: &mut Module) -> FunctionId {
         let n_args: usize = self.rng.random_range(1..=3);
         let n_instrs: usize = self.rng.random_range(3..=12);
 
@@ -71,9 +67,7 @@ impl FuzzGen {
         b.position_at_end(entry);
 
         // `defined` holds all ValueRefs we can use as operands.
-        let mut defined: Vec<ValueRef> = (0..n_args as u32)
-            .map(|i| b.get_arg(i))
-            .collect();
+        let mut defined: Vec<ValueRef> = (0..n_args as u32).map(|i| b.get_arg(i)).collect();
 
         for idx in 0..n_instrs {
             // Pick two random operands from the currently defined values.
@@ -90,7 +84,7 @@ impl FuzzGen {
                 BinOp::Sub => b.build_sub(name, lhs, rhs),
                 BinOp::Mul => b.build_mul(name, lhs, rhs),
                 BinOp::And => b.build_and(name, lhs, rhs),
-                BinOp::Or  => b.build_or(name, lhs, rhs),
+                BinOp::Or => b.build_or(name, lhs, rhs),
                 BinOp::Xor => b.build_xor(name, lhs, rhs),
             };
 
@@ -125,19 +119,18 @@ impl FuzzGen {
             std::collections::HashMap::new();
 
         // Helper: resolve a ValueRef to an i64.
-        let resolve = |vref: ValueRef,
-                       values: &std::collections::HashMap<llvm_ir::InstrId, i64>|
-         -> i64 {
-            match vref {
-                ValueRef::Argument(aid) => arg_vals.get(aid.0 as usize).copied().unwrap_or(0),
-                ValueRef::Instruction(iid) => *values.get(&iid).expect("use before def"),
-                ValueRef::Constant(cid) => match ctx.get_const(cid) {
-                    llvm_ir::ConstantData::Int { val, .. } => *val as i64,
-                    _ => 0,
-                },
-                ValueRef::Global(_) => 0,
-            }
-        };
+        let resolve =
+            |vref: ValueRef, values: &std::collections::HashMap<llvm_ir::InstrId, i64>| -> i64 {
+                match vref {
+                    ValueRef::Argument(aid) => arg_vals.get(aid.0 as usize).copied().unwrap_or(0),
+                    ValueRef::Instruction(iid) => *values.get(&iid).expect("use before def"),
+                    ValueRef::Constant(cid) => match ctx.get_const(cid) {
+                        llvm_ir::ConstantData::Int { val, .. } => *val as i64,
+                        _ => 0,
+                    },
+                    ValueRef::Global(_) => 0,
+                }
+            };
 
         // Interpret body instructions.
         for &iid in &entry.body {
@@ -152,16 +145,13 @@ impl FuzzGen {
                 InstrKind::Mul { lhs, rhs, .. } => {
                     resolve(*lhs, &values).wrapping_mul(resolve(*rhs, &values))
                 }
-                InstrKind::And { lhs, rhs } => {
-                    resolve(*lhs, &values) & resolve(*rhs, &values)
-                }
-                InstrKind::Or { lhs, rhs } => {
-                    resolve(*lhs, &values) | resolve(*rhs, &values)
-                }
-                InstrKind::Xor { lhs, rhs } => {
-                    resolve(*lhs, &values) ^ resolve(*rhs, &values)
-                }
-                _ => panic!("unexpected instruction kind in generated function: {:?}", instr.kind),
+                InstrKind::And { lhs, rhs } => resolve(*lhs, &values) & resolve(*rhs, &values),
+                InstrKind::Or { lhs, rhs } => resolve(*lhs, &values) | resolve(*rhs, &values),
+                InstrKind::Xor { lhs, rhs } => resolve(*lhs, &values) ^ resolve(*rhs, &values),
+                _ => panic!(
+                    "unexpected instruction kind in generated function: {:?}",
+                    instr.kind
+                ),
             };
             values.insert(iid, result);
         }
@@ -196,7 +186,9 @@ mod tests {
         let func = module.function(fid);
         assert!(!func.blocks.is_empty(), "function should have blocks");
         let entry = &func.blocks[0];
-        let tid = entry.terminator.expect("entry block must have a terminator");
+        let tid = entry
+            .terminator
+            .expect("entry block must have a terminator");
         match &func.instr(tid).kind {
             InstrKind::Ret { .. } => {}
             other => panic!("expected ret terminator, got {:?}", other),

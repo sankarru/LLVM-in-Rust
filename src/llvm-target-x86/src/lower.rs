@@ -16,9 +16,8 @@ use llvm_codegen::isel::{
 use llvm_codegen::lsda::CallSiteRecord;
 use llvm_codegen::sizeof_ty;
 use llvm_ir::{
-    ArgId, BlockId, ConstantData, Context, FloatKind, FloatPredicate, Function, InstrId,
-    InstrKind, InstrprofIntrinsic, IntPredicate, Module, TailCallKind, TypeData, ValueRef,
-    VpIntrinsic,
+    ArgId, BlockId, ConstantData, Context, FloatKind, FloatPredicate, Function, InstrId, InstrKind,
+    InstrprofIntrinsic, IntPredicate, Module, TailCallKind, TypeData, ValueRef, VpIntrinsic,
 };
 use std::collections::HashMap;
 
@@ -161,11 +160,7 @@ impl IselBackend for X86Backend {
         }
 
         // Lower function arguments: copy from ABI registers into VRegs.
-        let is_fp_arg: Vec<bool> = func
-            .args
-            .iter()
-            .map(|a| is_fp_type(ctx, a.ty))
-            .collect();
+        let is_fp_arg: Vec<bool> = func.args.iter().map(|a| is_fp_type(ctx, a.ty)).collect();
         let arg_locs = cc.classify_args_typed(&is_fp_arg);
         for (i, _arg) in func.args.iter().enumerate() {
             let vr = if is_fp_arg[i] {
@@ -373,9 +368,15 @@ fn vector_fp_opcode(
         (TypeData::Float(FloatKind::Single), 8, VecFpOp::Add) if features.avx2 => Some(ADDPS_RR),
         (TypeData::Float(FloatKind::Single), 8, VecFpOp::Mul) if features.avx2 => Some(MULPS_RR),
         (TypeData::Float(FloatKind::Single), 8, VecFpOp::Div) if features.avx2 => Some(DIVPS_RR),
-        (TypeData::Float(FloatKind::Single), 16, VecFpOp::Add) if features.avx512f => Some(ADDPS_RR),
-        (TypeData::Float(FloatKind::Single), 16, VecFpOp::Mul) if features.avx512f => Some(MULPS_RR),
-        (TypeData::Float(FloatKind::Single), 16, VecFpOp::Div) if features.avx512f => Some(DIVPS_RR),
+        (TypeData::Float(FloatKind::Single), 16, VecFpOp::Add) if features.avx512f => {
+            Some(ADDPS_RR)
+        }
+        (TypeData::Float(FloatKind::Single), 16, VecFpOp::Mul) if features.avx512f => {
+            Some(MULPS_RR)
+        }
+        (TypeData::Float(FloatKind::Single), 16, VecFpOp::Div) if features.avx512f => {
+            Some(DIVPS_RR)
+        }
 
         // f64 vectors: 128/256/512-bit lanes gate on SSE4.2/AVX2/AVX-512F.
         (TypeData::Float(FloatKind::Double), 2, VecFpOp::Add) if features.sse42 => Some(ADDPD_RR),
@@ -421,7 +422,11 @@ fn is_double(ctx: &Context, ty: llvm_ir::TypeId) -> bool {
 /// Return the SSE2 scalar binary opcode for the given FP type.
 /// Returns `(double_op, single_op)` and the caller picks by `is_double`.
 fn fp_binop(ctx: &Context, ty: llvm_ir::TypeId, sd_op: MOpcode, ss_op: MOpcode) -> MOpcode {
-    if is_double(ctx, ty) { sd_op } else { ss_op }
+    if is_double(ctx, ty) {
+        sd_op
+    } else {
+        ss_op
+    }
 }
 
 /// Resolve a constant FP value to the raw bit pattern stored in a fresh VReg.
@@ -448,7 +453,10 @@ fn resolve_fp(
             // correctness of arithmetic operations on FP variables).
             let bits_vreg = mf.fresh_vreg(); // int vreg for the raw bits
             let imm = const_to_imm(ctx.get_const(cid));
-            mf.push(mblock, MInstr::new(MOV_RI).with_dst(bits_vreg).with_imm(imm));
+            mf.push(
+                mblock,
+                MInstr::new(MOV_RI).with_dst(bits_vreg).with_imm(imm),
+            );
             // Convert the raw integer bits to float VReg via CVTSI2SD.
             // (Note: this converts the integer *value* not the bit pattern,
             // so a constant `1.0` stored as 0x3FF0000000000000 bits would
@@ -456,7 +464,10 @@ fn resolve_fp(
             // via rodata is deferred — for now zero is safe for the smoke tests
             // which only test arithmetic on function arguments.)
             let dst = mf.fresh_float_vreg();
-            mf.push(mblock, MInstr::new(CVTSI2SD_RR).with_dst(dst).with_vreg(bits_vreg));
+            mf.push(
+                mblock,
+                MInstr::new(CVTSI2SD_RR).with_dst(dst).with_vreg(bits_vreg),
+            );
             dst
         }
         _ => {
@@ -622,12 +633,24 @@ fn lower_instr(
                 let dst = new_dst!();
                 let l = res!(*lhs);
                 mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(l));
-                mf.push(mblock, MInstr::new(IMUL_RRI).with_dst(dst).with_vreg(dst).with_imm(k));
+                mf.push(
+                    mblock,
+                    MInstr::new(IMUL_RRI)
+                        .with_dst(dst)
+                        .with_vreg(dst)
+                        .with_imm(k),
+                );
             } else if let Some(k) = const_i64(ctx, *lhs).filter(|v| i32::try_from(*v).is_ok()) {
                 let dst = new_dst!();
                 let r = res!(*rhs);
                 mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(r));
-                mf.push(mblock, MInstr::new(IMUL_RRI).with_dst(dst).with_vreg(dst).with_imm(k));
+                mf.push(
+                    mblock,
+                    MInstr::new(IMUL_RRI)
+                        .with_dst(dst)
+                        .with_vreg(dst)
+                        .with_imm(k),
+                );
             } else {
                 emit_binop!(IMUL_RR, *lhs, *rhs);
             }
@@ -739,7 +762,11 @@ fn lower_instr(
             let l = res_fp!(*lhs);
             let r = res_fp!(*rhs);
             let op_ty = func.type_of_value(*lhs).unwrap_or(instr.ty);
-            let ucomi_op = if is_double(ctx, op_ty) { UCOMISD_RR } else { UCOMISS_RR };
+            let ucomi_op = if is_double(ctx, op_ty) {
+                UCOMISD_RR
+            } else {
+                UCOMISS_RR
+            };
             mf.push(mblock, MInstr::new(ucomi_op).with_vreg(l).with_vreg(r));
             let cc = match pred {
                 FloatPredicate::Oeq | FloatPredicate::Ueq => CC_EQ,
@@ -836,21 +863,31 @@ fn lower_instr(
             // f64 → f32
             let dst = new_dst_float!();
             let src = res_fp!(*val);
-            mf.push(mblock, MInstr::new(CVTSD2SS_RR).with_dst(dst).with_vreg(src));
+            mf.push(
+                mblock,
+                MInstr::new(CVTSD2SS_RR).with_dst(dst).with_vreg(src),
+            );
         }
 
         FPExt { val, .. } => {
             // f32 → f64
             let dst = new_dst_float!();
             let src = res_fp!(*val);
-            mf.push(mblock, MInstr::new(CVTSS2SD_RR).with_dst(dst).with_vreg(src));
+            mf.push(
+                mblock,
+                MInstr::new(CVTSS2SD_RR).with_dst(dst).with_vreg(src),
+            );
         }
 
         FPToSI { val, .. } => {
             let dst = new_dst!();
             let src_ty = func.type_of_value(*val).unwrap_or(instr.ty);
             let src = res_fp!(*val);
-            let op = if is_double(ctx, src_ty) { CVTTSD2SI_RR } else { CVTTSS2SI_RR };
+            let op = if is_double(ctx, src_ty) {
+                CVTTSD2SI_RR
+            } else {
+                CVTTSS2SI_RR
+            };
             mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(src));
         }
 
@@ -860,14 +897,22 @@ fn lower_instr(
             let dst = new_dst!();
             let src_ty = func.type_of_value(*val).unwrap_or(instr.ty);
             let src = res_fp!(*val);
-            let op = if is_double(ctx, src_ty) { CVTTSD2SI_RR } else { CVTTSS2SI_RR };
+            let op = if is_double(ctx, src_ty) {
+                CVTTSD2SI_RR
+            } else {
+                CVTTSS2SI_RR
+            };
             mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(src));
         }
 
         SIToFP { val, .. } => {
             let dst = new_dst_float!();
             let src = res!(*val);
-            let op = if is_double(ctx, instr.ty) { CVTSI2SD_RR } else { CVTSI2SS_RR };
+            let op = if is_double(ctx, instr.ty) {
+                CVTSI2SD_RR
+            } else {
+                CVTSI2SS_RR
+            };
             mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(src));
         }
 
@@ -875,7 +920,11 @@ fn lower_instr(
             // No direct CVTSI2SD for unsigned; use signed (correct for [0, INT64_MAX]).
             let dst = new_dst_float!();
             let src = res!(*val);
-            let op = if is_double(ctx, instr.ty) { CVTSI2SD_RR } else { CVTSI2SS_RR };
+            let op = if is_double(ctx, instr.ty) {
+                CVTSI2SD_RR
+            } else {
+                CVTSI2SS_RR
+            };
             mf.push(mblock, MInstr::new(op).with_dst(dst).with_vreg(src));
         }
 
@@ -901,7 +950,9 @@ fn lower_instr(
         }
 
         // ── calls ──────────────────────────────────────────────────────────
-        Call { callee, args, tail, .. } => {
+        Call {
+            callee, args, tail, ..
+        } => {
             if let Some(ip) = instrprof_from_callee(ctx, *callee) {
                 eprintln!(
                     "warning: PGO intrinsic {} elided — counter emission not implemented",
@@ -1025,7 +1076,10 @@ fn lower_instr(
                     let dst = new_dst!();
                     // Placeholder: result formally exists but the JMP means we
                     // never actually read it; DCE will clean this up.
-                    mf.push(mblock, MInstr::new(MOV_RR).with_dst(dst).with_vreg(callee_vr));
+                    mf.push(
+                        mblock,
+                        MInstr::new(MOV_RR).with_dst(dst).with_vreg(callee_vr),
+                    );
                 }
             } else {
                 let mut call_mi = MInstr::new(CALL_R).with_vreg(callee_vr);
@@ -1043,7 +1097,9 @@ fn lower_instr(
             }
         }
 
-        InlineAsm { asm_string, args, .. } => {
+        InlineAsm {
+            asm_string, args, ..
+        } => {
             for &arg in args {
                 let _ = res!(arg);
             }
@@ -1059,7 +1115,9 @@ fn lower_instr(
         Fence { .. } => {
             mf.push(mblock, MInstr::new(MFENCE));
         }
-        CmpXchg { ptr, cmp, new_val, .. } => {
+        CmpXchg {
+            ptr, cmp, new_val, ..
+        } => {
             let ptr_vr = res!(*ptr);
             let cmp_vr = res!(*cmp);
             let new_vr = res!(*new_val);
@@ -1085,7 +1143,11 @@ fn lower_instr(
             let is_64bit = instr.ty == ctx.i64_ty;
             let (opcode, result_in_val) = match op {
                 RmwOp::Add | RmwOp::Sub => {
-                    if is_64bit { (LOCK_XADD_MR, true) } else { (LOCK_XADD32_MR, true) }
+                    if is_64bit {
+                        (LOCK_XADD_MR, true)
+                    } else {
+                        (LOCK_XADD32_MR, true)
+                    }
                 }
                 RmwOp::Xchg => (XCHG_MR, true),
                 RmwOp::And | RmwOp::Nand => (LOCK_AND_MR, false),
@@ -1124,7 +1186,9 @@ fn lower_instr(
         // ── memory: non-promotable alloca/load/store (SP-relative frame slots) ──
         // mem2reg eliminates promotable alloca/load/store; anything remaining here
         // is non-promotable (address escapes to a callee or non-constant GEP index).
-        Alloca { alloc_ty, align, .. } => {
+        Alloca {
+            alloc_ty, align, ..
+        } => {
             let dst = new_dst!();
             let size_bytes = sizeof_ty(ctx, *alloc_ty) as u32;
             let align_bytes = align.unwrap_or(8);
@@ -1180,7 +1244,9 @@ fn lower_instr(
             let ptr_vr = res!(*ptr);
             mf.push(
                 mblock,
-                MInstr::new(MOV_STORE_REG_RM).with_vreg(ptr_vr).with_vreg(src),
+                MInstr::new(MOV_STORE_REG_RM)
+                    .with_vreg(ptr_vr)
+                    .with_vreg(src),
             );
         }
 
@@ -1242,7 +1308,10 @@ fn lower_instr(
                 let zero = mf.fresh_float_vreg();
                 let zero_bits = mf.fresh_vreg();
                 mf.push(mblock, MInstr::new(MOV_RI).with_dst(zero_bits).with_imm(0));
-                mf.push(mblock, MInstr::new(CVTSI2SD_RR).with_dst(zero).with_vreg(zero_bits));
+                mf.push(
+                    mblock,
+                    MInstr::new(CVTSI2SD_RR).with_dst(zero).with_vreg(zero_bits),
+                );
                 let src = res_fp!(*operand);
                 let dst = new_dst_float!();
                 let op = fp_binop(ctx, instr.ty, SUBSD_RR, SUBSS_RR);
@@ -1299,8 +1368,16 @@ fn lower_instr(
         CatchPad { .. } | CleanupPad { .. } => {}
 
         // Terminators handled in lower_terminator.
-        Ret { .. } | Br { .. } | CondBr { .. } | Invoke { .. } | Switch { .. } | Unreachable
-        | Resume { .. } | CatchSwitch { .. } | CatchRet { .. } | CleanupRet { .. } => {}
+        Ret { .. }
+        | Br { .. }
+        | CondBr { .. }
+        | Invoke { .. }
+        | Switch { .. }
+        | Unreachable
+        | Resume { .. }
+        | CatchSwitch { .. }
+        | CatchRet { .. }
+        | CleanupRet { .. } => {}
     }
 }
 
@@ -1379,7 +1456,12 @@ fn lower_terminator(
             }
             let callee_src = resolve(ctx, mf, mblock, vmap, *callee);
             let callee_vr = mf.fresh_vreg();
-            mf.push(mblock, MInstr::new(MOV_RR).with_dst(callee_vr).with_vreg(callee_src));
+            mf.push(
+                mblock,
+                MInstr::new(MOV_RR)
+                    .with_dst(callee_vr)
+                    .with_vreg(callee_src),
+            );
             // Record the instruction index of the CALL before pushing it.
             let call_instr_idx = mf.blocks[mblock].instrs.len();
             let lsda_rec_idx = mf.lsda_call_sites.len();
@@ -1395,12 +1477,8 @@ fn lower_terminator(
                 action: 0,
             });
             // Track: (machine_block, call_instr_in_block, lsda_record_idx, unwind_dest_mblock)
-            mf.invoke_tracking.push((
-                mblock,
-                call_instr_idx,
-                lsda_rec_idx,
-                unwind_dest.0 as usize,
-            ));
+            mf.invoke_tracking
+                .push((mblock, call_instr_idx, lsda_rec_idx, unwind_dest.0 as usize));
             if term.ty != ctx.void_ty {
                 let dst = mf.fresh_vreg();
                 vmap.insert(ValueRef::Instruction(tid), dst);
@@ -1443,7 +1521,9 @@ fn lower_terminator(
         }
 
         // CatchSwitch — lower first handler as unconditional branch (stub).
-        CatchSwitch { handlers, default, .. } => {
+        CatchSwitch {
+            handlers, default, ..
+        } => {
             if let Some(&h) = handlers.first() {
                 mf.push(mblock, MInstr::new(JMP).with_block(h.0 as usize));
             } else if let Some(d) = default {
@@ -1578,8 +1658,9 @@ mod tests {
         allocate_registers, apply_allocation, compute_live_intervals, insert_spill_reloads,
         RegAllocStrategy,
     };
-    use llvm_ir::{Builder, ConstantData, Context, GlobalId, Linkage, MemOrdering, Module,
-                  RmwOp, ValueRef};
+    use llvm_ir::{
+        Builder, ConstantData, Context, GlobalId, Linkage, MemOrdering, Module, RmwOp, ValueRef,
+    };
 
     fn make_add_fn() -> (Context, Module) {
         let mut ctx = Context::new();
@@ -1733,7 +1814,10 @@ mod tests {
             .iter()
             .flat_map(|b| &b.instrs)
             .any(|i| i.opcode == LOCK_XADD32_MR);
-        assert!(has_xadd, "i32 AtomicRmw Add must lower to LOCK_XADD32_MR opcode");
+        assert!(
+            has_xadd,
+            "i32 AtomicRmw Add must lower to LOCK_XADD32_MR opcode"
+        );
 
         // No INLINE_ASM should appear for atomic ops anymore.
         let inline_asm_count = mf
@@ -1752,10 +1836,7 @@ mod tests {
 
         // MFENCE = 0F AE F0
         assert!(
-            section
-                .data
-                .windows(3)
-                .any(|w| w == [0x0F, 0xAE, 0xF0]),
+            section.data.windows(3).any(|w| w == [0x0F, 0xAE, 0xF0]),
             "MFENCE bytes (0F AE F0) not found in emitted text section"
         );
         // LOCK prefix should be present somewhere (CMPXCHG / XADD lowering)
@@ -1793,7 +1874,10 @@ mod tests {
 
         let mut emitter = X86Emitter::new(ObjectFormat::Elf);
         let section = emitter.emit_function(&mf);
-        assert!(section.data.contains(&0x90), "x86 inline asm nop must emit 0x90");
+        assert!(
+            section.data.contains(&0x90),
+            "x86 inline asm nop must emit 0x90"
+        );
     }
 
     #[test]
@@ -2650,7 +2734,15 @@ mod tests {
         let ptr_arg = b.get_arg(0);
         let i32_ty = b.ctx.i32_ty;
         let one = b.const_int(i32_ty, 1);
-        b.build_atomicrmw("old", RmwOp::Add, i32_ty, ptr_arg, one, MemOrdering::SeqCst, false);
+        b.build_atomicrmw(
+            "old",
+            RmwOp::Add,
+            i32_ty,
+            ptr_arg,
+            one,
+            MemOrdering::SeqCst,
+            false,
+        );
         b.build_ret_void();
         drop(b);
 
@@ -2664,7 +2756,10 @@ mod tests {
             .iter()
             .flat_map(|b| &b.instrs)
             .any(|i| i.opcode == LOCK_XADD32_MR);
-        assert!(has_xadd32, "i32 atomicrmw add must lower to LOCK_XADD32_MR (not LOCK_XADD_MR)");
+        assert!(
+            has_xadd32,
+            "i32 atomicrmw add must lower to LOCK_XADD32_MR (not LOCK_XADD_MR)"
+        );
 
         // Must NOT use the 64-bit opcode for an i32 element type.
         let has_xadd64 = mf
@@ -2672,7 +2767,10 @@ mod tests {
             .iter()
             .flat_map(|b| &b.instrs)
             .any(|i| i.opcode == LOCK_XADD_MR);
-        assert!(!has_xadd64, "i32 atomicrmw must not emit the 64-bit LOCK_XADD_MR opcode");
+        assert!(
+            !has_xadd64,
+            "i32 atomicrmw must not emit the 64-bit LOCK_XADD_MR opcode"
+        );
 
         // Run register allocation
         let intervals = compute_live_intervals(&mf);
@@ -2697,7 +2795,10 @@ mod tests {
         let section = emitter.emit_function(&mf);
 
         // Print the bytes for diagnosis
-        eprintln!("increment text section bytes ({} bytes):", section.data.len());
+        eprintln!(
+            "increment text section bytes ({} bytes):",
+            section.data.len()
+        );
         for (i, chunk) in section.data.chunks(16).enumerate() {
             eprint!("  {:04x}: ", i * 16);
             for b in chunk {
@@ -2718,10 +2819,7 @@ mod tests {
         // For i32 atomicrmw: LOCK XADD32 = F0 [no REX.W] 0F C1 /r.
         // With typical registers (RAX/RCX/RDX — not R8-R15), no REX byte is emitted.
         // Check that 0xF0 0x0F 0xC1 appears (no REX.W = 0x48 between F0 and 0F).
-        let has_32bit_lock_xadd = section
-            .data
-            .windows(3)
-            .any(|w| w == [0xF0, 0x0F, 0xC1]);
+        let has_32bit_lock_xadd = section.data.windows(3).any(|w| w == [0xF0, 0x0F, 0xC1]);
         assert!(
             has_32bit_lock_xadd,
             "32-bit LOCK XADD sequence F0 0F C1 not found in emitted bytes — \
@@ -2770,7 +2868,10 @@ mod tests {
         // %p = alloca i64
         let p = b.build_alloca("p", b.ctx.i64_ty);
         // store i64 42, ptr %p
-        let v42 = ValueRef::Constant(b.ctx.push_const(ConstantData::Int { ty: b.ctx.i64_ty, val: 42 }));
+        let v42 = ValueRef::Constant(b.ctx.push_const(ConstantData::Int {
+            ty: b.ctx.i64_ty,
+            val: 42,
+        }));
         b.build_store(v42, p);
         // %v = load i64, ptr %p
         let v = b.build_load("v", b.ctx.i64_ty, p);
@@ -2836,10 +2937,7 @@ mod tests {
 
         // Verify LEA [RBP + disp32] (0x8D 0x85) appears in the emitted code.
         // This confirms that the alloca slot was materialized as a frame-pointer-relative address.
-        let has_lea_rbp = section
-            .data
-            .windows(2)
-            .any(|w| w == [0x8D, 0x85]);
+        let has_lea_rbp = section.data.windows(2).any(|w| w == [0x8D, 0x85]);
         assert!(
             has_lea_rbp,
             "alloca lowering must emit LEA [RBP+disp32] (bytes 8D 85); got: {:02X?}",
@@ -2848,11 +2946,17 @@ mod tests {
 
         // Verify MOV [ptr_reg] load (0x8B) appears — from the load through the alloca pointer.
         let has_load = section.data.contains(&0x8B);
-        assert!(has_load, "load through alloca pointer must emit 0x8B (MOV r64, r/m64)");
+        assert!(
+            has_load,
+            "load through alloca pointer must emit 0x8B (MOV r64, r/m64)"
+        );
 
         // Verify MOV [ptr_reg] store (0x89) appears — from the store through the alloca pointer.
         let has_store = section.data.contains(&0x89);
-        assert!(has_store, "store through alloca pointer must emit 0x89 (MOV r/m64, r64)");
+        assert!(
+            has_store,
+            "store through alloca pointer must emit 0x89 (MOV r/m64, r64)"
+        );
     }
 
     #[test]
@@ -2873,7 +2977,10 @@ mod tests {
         let entry = b.add_block("entry");
         b.position_at_end(entry);
         let p = b.get_arg(0);
-        let idx0 = ValueRef::Constant(b.ctx.push_const(ConstantData::Int { ty: b.ctx.i64_ty, val: 0 }));
+        let idx0 = ValueRef::Constant(b.ctx.push_const(ConstantData::Int {
+            ty: b.ctx.i64_ty,
+            val: 0,
+        }));
         let gep = b.build_gep("g", b.ctx.i64_ty, p, vec![idx0]);
         b.build_ret(gep);
 
@@ -2884,7 +2991,10 @@ mod tests {
             .iter()
             .flat_map(|b| &b.instrs)
             .any(|i| i.opcode == MOV_RR);
-        assert!(has_mov_rr, "GEP lowering should emit a MOV_RR (pointer copy)");
+        assert!(
+            has_mov_rr,
+            "GEP lowering should emit a MOV_RR (pointer copy)"
+        );
     }
 
     // ── SSE2 scalar FP lowering tests (issue #291) ────────────────────────────
@@ -3178,16 +3288,16 @@ mod tests {
         let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
         // The entry block should contain MOVAPD_RR instructions for the FP args.
-        let has_movapd = mf.blocks[0]
-            .instrs
-            .iter()
-            .any(|i| i.opcode == MOVAPD_RR);
+        let has_movapd = mf.blocks[0].instrs.iter().any(|i| i.opcode == MOVAPD_RR);
         assert!(has_movapd, "FP args must use MOVAPD_RR copy from XMM reg");
         // All dst VRegs from MOVAPD_RR must be Float class.
         for instr in mf.blocks[0].instrs.iter().filter(|i| i.opcode == MOVAPD_RR) {
             if let Some(dst) = instr.dst {
-                assert_eq!(dst.class(), RegClass::Float,
-                           "FP arg copy dst vreg must have Float class");
+                assert_eq!(
+                    dst.class(),
+                    RegClass::Float,
+                    "FP arg copy dst vreg must have Float class"
+                );
             }
         }
     }
@@ -3198,10 +3308,14 @@ mod tests {
         let (ctx, module) = make_fp_add_fn();
         let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
-        assert!(!mf.allocatable_fp_pregs.is_empty(),
-                "allocatable_fp_pregs must be populated for FP functions");
-        assert!(mf.allocatable_fp_pregs.contains(&crate::regs::XMM0),
-                "XMM0 must be in allocatable_fp_pregs");
+        assert!(
+            !mf.allocatable_fp_pregs.is_empty(),
+            "allocatable_fp_pregs must be populated for FP functions"
+        );
+        assert!(
+            mf.allocatable_fp_pregs.contains(&crate::regs::XMM0),
+            "XMM0 must be in allocatable_fp_pregs"
+        );
     }
 
     #[test]
@@ -3220,7 +3334,14 @@ mod tests {
             &fp_pregs,
             RegAllocStrategy::LinearScan,
         );
-        insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOVSD_LOAD_MR, MOVSD_STORE_RM);
+        insert_spill_reloads(
+            &mut mf,
+            &mut result,
+            MOV_LOAD_MR,
+            MOV_STORE_RM,
+            MOVSD_LOAD_MR,
+            MOVSD_STORE_RM,
+        );
         apply_allocation(&mut mf, &result);
 
         let mut emitter = X86Emitter::new(ObjectFormat::Elf);
@@ -3286,15 +3407,12 @@ mod tests {
         let (ctx, module) = make_fp_add_fn();
         let mut be = X86Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
-        let ret_to_xmm0 = mf
-            .blocks
-            .iter()
-            .flat_map(|bl| bl.instrs.iter())
-            .any(|i| {
-                i.opcode == MOV_PR
-                    && i.operands.first() == Some(&MOperand::PReg(crate::regs::XMM0))
-            });
-        assert!(ret_to_xmm0,
-                "FP return must emit MOV_PR with XMM0 as destination");
+        let ret_to_xmm0 = mf.blocks.iter().flat_map(|bl| bl.instrs.iter()).any(|i| {
+            i.opcode == MOV_PR && i.operands.first() == Some(&MOperand::PReg(crate::regs::XMM0))
+        });
+        assert!(
+            ret_to_xmm0,
+            "FP return must emit MOV_PR with XMM0 as destination"
+        );
     }
 }

@@ -46,11 +46,15 @@ pub fn extract_lto_payload(obj: &ObjectFile) -> Option<&[u8]> {
 }
 
 /// Merge all embedded IR payloads from `objects`, then run LTO passes.
-pub fn run_lto_from_objects(objects: &[ObjectFile], level: OptLevel) -> Result<(Context, Module), String> {
+pub fn run_lto_from_objects(
+    objects: &[ObjectFile],
+    level: OptLevel,
+) -> Result<(Context, Module), String> {
     let mut modules = Vec::new();
     for obj in objects {
         if let Some(bytes) = extract_lto_payload(obj) {
-            let decoded = read_bitcode(bytes).map_err(|e| format!("failed to decode LTO payload: {e:?}"))?;
+            let decoded =
+                read_bitcode(bytes).map_err(|e| format!("failed to decode LTO payload: {e:?}"))?;
             modules.push(decoded);
         }
     }
@@ -68,7 +72,12 @@ pub fn run_lto_from_objects(objects: &[ObjectFile], level: OptLevel) -> Result<(
     Ok((merged_ctx, merged_mod))
 }
 
-fn merge_module_into(dst_ctx: &mut Context, dst: &mut Module, src_ctx: Context, mut src: Module) -> Result<(), String> {
+fn merge_module_into(
+    dst_ctx: &mut Context,
+    dst: &mut Module,
+    src_ctx: Context,
+    mut src: Module,
+) -> Result<(), String> {
     // Merge globals (naive name-based policy).
     for gv in src.globals.drain(..) {
         if dst.get_global_id(&gv.name).is_none() {
@@ -87,7 +96,10 @@ fn merge_module_into(dst_ctx: &mut Context, dst: &mut Module, src_ctx: Context, 
                 if existing_is_decl && !f.is_declaration {
                     dst.functions[fid.0 as usize] = f;
                 } else if !existing_is_decl && !f.is_declaration {
-                    return Err(format!("duplicate function definition during LTO merge: {}", dst.function(fid).name));
+                    return Err(format!(
+                        "duplicate function definition during LTO merge: {}",
+                        dst.function(fid).name
+                    ));
                 }
             }
         }
@@ -185,7 +197,12 @@ mod tests {
         embed_lto_payload(&mut o2, &ctx_b, &m_b);
 
         let (_ctx_m, merged) = run_lto_from_objects(&[o1, o2], OptLevel::O2).expect("run lto");
-        let (_, callee) = merged.get_function("callee").expect("callee in merged module");
-        assert!(!callee.is_declaration, "callee definition should be available after merge");
+        let (_, callee) = merged
+            .get_function("callee")
+            .expect("callee in merged module");
+        assert!(
+            !callee.is_declaration,
+            "callee definition should be available after merge"
+        );
     }
 }

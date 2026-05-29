@@ -47,4 +47,3 @@ pub fn ir_ty_to_valtype(ctx: &Context, ty: TypeId) -> Option<u8> {
 pub fn is_i64_type(ctx: &Context, ty: TypeId) -> bool {
     matches!(ctx.get_type(ty), TypeData::Integer(bits) if *bits > 32)
 }
-

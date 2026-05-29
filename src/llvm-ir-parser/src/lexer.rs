@@ -11,11 +11,11 @@ use std::fmt;
 pub enum Keyword {
     // Directives
     /// `Source` variant.
-    Source,     // source_filename
+    Source, // source_filename
     /// `Target` variant.
-    Target,     // target
+    Target, // target
     /// `Triple` variant.
-    Triple,     // triple
+    Triple, // triple
     /// `Datalayout` variant.
     Datalayout, // datalayout
     /// `Define` variant.
@@ -312,7 +312,7 @@ pub enum Keyword {
     /// `Unwind` variant.
     Unwind,
     /// `X` variant.
-    X,      // "x" in vector / array size
+    X, // "x" in vector / array size
     /// `Vscale` variant.
     Vscale, // "vscale" before "x" in scalable vector
 }

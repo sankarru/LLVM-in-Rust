@@ -41,7 +41,9 @@ fn main() {
                 )
             }
             "--help" | "-h" => {
-                eprintln!("usage: llvm-test-suite-compat [--suite-dir DIR] [--report PATH] [--limit N]");
+                eprintln!(
+                    "usage: llvm-test-suite-compat [--suite-dir DIR] [--report PATH] [--limit N]"
+                );
                 return;
             }
             other => panic!("unknown argument: {other}"),
@@ -82,7 +84,9 @@ fn main() {
                 continue;
             }
             Err(_) => {
-                stats.failures.push((rel, "parse-panic".into(), "panic".into()));
+                stats
+                    .failures
+                    .push((rel, "parse-panic".into(), "panic".into()));
                 continue;
             }
         };
@@ -95,7 +99,9 @@ fn main() {
             pm.run(&mut ctx, &mut module);
         }));
         if optimized.is_err() {
-            stats.failures.push((rel, "optimize-panic".into(), "panic".into()));
+            stats
+                .failures
+                .push((rel, "optimize-panic".into(), "panic".into()));
             continue;
         }
         stats.optimized += 1;
@@ -109,7 +115,9 @@ fn main() {
             }
         }));
         if codegen.is_err() {
-            stats.failures.push((rel, "codegen-panic".into(), "panic".into()));
+            stats
+                .failures
+                .push((rel, "codegen-panic".into(), "panic".into()));
             continue;
         }
         stats.codegen += 1;
@@ -153,9 +161,21 @@ fn write_report(path: &Path, suite_dir: &Path, stats: &Stats) -> std::io::Result
     body.push_str(&format!("Suite dir: `{}`\n\n", suite_dir.display()));
     body.push_str("| Stage | Count | Rate |\n|---|---:|---:|\n");
     body.push_str(&format!("| Total `.ll` files | {} | 100% |\n", stats.total));
-    body.push_str(&format!("| Parsed | {} | {:.1}% |\n", stats.parsed, pct(stats.parsed, stats.total)));
-    body.push_str(&format!("| Optimized | {} | {:.1}% |\n", stats.optimized, pct(stats.optimized, stats.total)));
-    body.push_str(&format!("| x86 codegen lowered | {} | {:.1}% |\n\n", stats.codegen, pct(stats.codegen, stats.total)));
+    body.push_str(&format!(
+        "| Parsed | {} | {:.1}% |\n",
+        stats.parsed,
+        pct(stats.parsed, stats.total)
+    ));
+    body.push_str(&format!(
+        "| Optimized | {} | {:.1}% |\n",
+        stats.optimized,
+        pct(stats.optimized, stats.total)
+    ));
+    body.push_str(&format!(
+        "| x86 codegen lowered | {} | {:.1}% |\n\n",
+        stats.codegen,
+        pct(stats.codegen, stats.total)
+    ));
 
     body.push_str("## First failures by file\n\n");
     for (file, stage, err) in stats.failures.iter().take(50) {

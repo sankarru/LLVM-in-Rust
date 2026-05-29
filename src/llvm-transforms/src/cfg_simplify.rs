@@ -140,8 +140,10 @@ fn prune_unreachable(func: &mut Function) -> bool {
                     .collect();
                 if new_incoming.len() != incoming.len() {
                     let ty = *ty;
-                    func.instructions[iid.0 as usize].kind =
-                        InstrKind::Phi { ty, incoming: new_incoming };
+                    func.instructions[iid.0 as usize].kind = InstrKind::Phi {
+                        ty,
+                        incoming: new_incoming,
+                    };
                 }
             }
         }
@@ -242,7 +244,11 @@ fn remap_block_ids(func: &mut Function, new_idx: &[Option<u32>]) {
     for instr in &mut func.instructions {
         match &mut instr.kind {
             InstrKind::Br { dest } => remap(dest),
-            InstrKind::CondBr { then_dest, else_dest, .. } => {
+            InstrKind::CondBr {
+                then_dest,
+                else_dest,
+                ..
+            } => {
                 remap(then_dest);
                 remap(else_dest);
             }
@@ -252,7 +258,11 @@ fn remap_block_ids(func: &mut Function, new_idx: &[Option<u32>]) {
                     remap(blk);
                 }
             }
-            InstrKind::Invoke { normal_dest, unwind_dest, .. } => {
+            InstrKind::Invoke {
+                normal_dest,
+                unwind_dest,
+                ..
+            } => {
                 remap(normal_dest);
                 remap(unwind_dest);
             }
@@ -346,7 +356,10 @@ fn merge_fallthrough(func: &mut Function) -> bool {
         // B must not have phi nodes (they should have been eliminated by
         // simplify_trivial_phis, but guard anyway).
         let b_has_phi = func.blocks[b_idx].body.iter().any(|&iid| {
-            matches!(func.instructions[iid.0 as usize].kind, InstrKind::Phi { .. })
+            matches!(
+                func.instructions[iid.0 as usize].kind,
+                InstrKind::Phi { .. }
+            )
         });
         if b_has_phi {
             continue;
@@ -489,14 +502,12 @@ mod tests {
         match &f.instr(tid).kind {
             InstrKind::Ret {
                 val: Some(ValueRef::Constant(cid)),
-            } => {
-                match ctx.get_const(*cid) {
-                    llvm_ir::ConstantData::Int { val, .. } => {
-                        assert_eq!(*val, 1, "should return 1, not 99 from dead block")
-                    }
-                    other => panic!("unexpected constant: {other:?}"),
+            } => match ctx.get_const(*cid) {
+                llvm_ir::ConstantData::Int { val, .. } => {
+                    assert_eq!(*val, 1, "should return 1, not 99 from dead block")
                 }
-            }
+                other => panic!("unexpected constant: {other:?}"),
+            },
             other => panic!("expected ret i32 constant, got {other:?}"),
         }
     }
@@ -580,8 +591,11 @@ mod tests {
         let found_ret_const = f.blocks.iter().any(|bb| {
             bb.terminator
                 .map(|tid| {
-                    matches!(&f.instr(tid).kind,
-                        InstrKind::Ret { val: Some(ValueRef::Constant(_)) }
+                    matches!(
+                        &f.instr(tid).kind,
+                        InstrKind::Ret {
+                            val: Some(ValueRef::Constant(_))
+                        }
                     )
                 })
                 .unwrap_or(false)
@@ -692,8 +706,11 @@ mod tests {
         let found_ret_const = f.blocks.iter().any(|bb| {
             bb.terminator
                 .map(|tid| {
-                    matches!(&f.instr(tid).kind,
-                        InstrKind::Ret { val: Some(ValueRef::Constant(_)) }
+                    matches!(
+                        &f.instr(tid).kind,
+                        InstrKind::Ret {
+                            val: Some(ValueRef::Constant(_))
+                        }
                     )
                 })
                 .unwrap_or(false)

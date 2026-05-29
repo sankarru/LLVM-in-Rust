@@ -176,7 +176,8 @@ pub fn emit_object(mf: &MachineFunction, emitter: &mut dyn Emitter) -> ObjectFil
             });
         }
         ObjectFormat::Coff => {
-            let (xdata, pdata) = build_coff_unwind_tables(size, mf.frame_size, &mf.used_callee_saved);
+            let (xdata, pdata) =
+                build_coff_unwind_tables(size, mf.frame_size, &mf.used_callee_saved);
             sections.push(Section {
                 name: ".xdata".into(),
                 data: xdata,
@@ -276,18 +277,21 @@ pub fn emit_object(mf: &MachineFunction, emitter: &mut dyn Emitter) -> ObjectFil
     for sec in &mut sections {
         for reloc in &mut sec.relocs {
             if let Some(ref ext) = reloc.external_name.clone() {
-                let idx = symbols.iter().position(|s| &s.name == ext).unwrap_or_else(|| {
-                    let i = symbols.len();
-                    symbols.push(Symbol {
-                        name: ext.clone(),
-                        section: 0,
-                        offset: 0,
-                        size: 0,
-                        global: true,
-                        undefined: true,
+                let idx = symbols
+                    .iter()
+                    .position(|s| &s.name == ext)
+                    .unwrap_or_else(|| {
+                        let i = symbols.len();
+                        symbols.push(Symbol {
+                            name: ext.clone(),
+                            section: 0,
+                            offset: 0,
+                            size: 0,
+                            global: true,
+                            undefined: true,
+                        });
+                        i
                     });
-                    i
-                });
                 reloc.symbol = idx;
             }
         }
@@ -341,9 +345,13 @@ fn serialize_elf(obj: &ObjectFile) -> Vec<u8> {
         }
     };
     let sec_align = |name: &str| -> u64 {
-        if name == ".text" || name == "__text" { 16 }
-        else if name == ".data" || name.starts_with(".rodata") { 8 }
-        else { 1 }
+        if name == ".text" || name == "__text" {
+            16
+        } else if name == ".data" || name.starts_with(".rodata") {
+            8
+        } else {
+            1
+        }
     };
 
     // Identify sections with relocs — we'll emit a .rela.<name> for each.
@@ -607,11 +615,11 @@ fn build_debug_line(source_file: &str, rows: &[DebugLineRow]) -> Vec<u8> {
     let file = source_file.rsplit('/').next().unwrap_or(source_file);
 
     let mut header_body = vec![
-        1u8, // minimum_instruction_length
-        1,   // default_is_stmt
+        1u8,          // minimum_instruction_length
+        1,            // default_is_stmt
         (-5i8) as u8, // line_base
-        14,  // line_range
-        13,  // opcode_base
+        14,           // line_range
+        13,           // opcode_base
     ];
     header_body.extend_from_slice(&[0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1]); // std opcode lengths
     header_body.push(0); // include_directories terminator
@@ -868,7 +876,10 @@ fn build_eh_frame(text_size: u64, frame_size: u32, used_callee_saved: &[PReg]) -
         // After "push rbp" (1 byte): CFA = RSP+16, RBP saved at CFA-16.
         prologue_cfi.push(CfiInstr::AdvanceLoc(1));
         prologue_cfi.push(CfiInstr::DefCfaOffset(16));
-        prologue_cfi.push(CfiInstr::Offset { reg: 6, factored_offset: 2 });
+        prologue_cfi.push(CfiInstr::Offset {
+            reg: 6,
+            factored_offset: 2,
+        });
 
         // After "mov rbp, rsp" (3 bytes): CFA register = RBP.
         prologue_cfi.push(CfiInstr::AdvanceLoc(3));
@@ -884,20 +895,23 @@ fn build_eh_frame(text_size: u64, frame_size: u32, used_callee_saved: &[PReg]) -
             // Our PReg: 0=RAX,1=RCX,2=RDX,3=RBX,4=RSP,5=RBP,6=RSI,7=RDI,8=R8..15=R15
             // DWARF:    RAX=0,RDX=1,RCX=2,RBX=3,RSI=4,RDI=5,RBP=6,RSP=7,R8-R15=8-15
             let dwarf_reg: u8 = match pr.0 {
-                0 => 0,  // RAX
-                1 => 2,  // RCX → DWARF 2
-                2 => 1,  // RDX → DWARF 1
-                3 => 3,  // RBX → DWARF 3
-                4 => 7,  // RSP → DWARF 7
-                5 => 6,  // RBP → DWARF 6
-                6 => 4,  // RSI → DWARF 4
-                7 => 5,  // RDI → DWARF 5
-                n => n,  // R8-R15 → DWARF 8-15 (same number)
+                0 => 0, // RAX
+                1 => 2, // RCX → DWARF 2
+                2 => 1, // RDX → DWARF 1
+                3 => 3, // RBX → DWARF 3
+                4 => 7, // RSP → DWARF 7
+                5 => 6, // RBP → DWARF 6
+                6 => 4, // RSI → DWARF 4
+                7 => 5, // RDI → DWARF 5
+                n => n, // R8-R15 → DWARF 8-15 (same number)
             };
             if reg <= 0x3f {
                 prologue_cfi.push(CfiInstr::AdvanceLoc(push_len));
                 let factored = 3u32 + idx as u32; // CFA-((3+idx)*8): after RA+RBP slots
-                prologue_cfi.push(CfiInstr::Offset { reg: dwarf_reg, factored_offset: factored });
+                prologue_cfi.push(CfiInstr::Offset {
+                    reg: dwarf_reg,
+                    factored_offset: factored,
+                });
             }
         }
     }
@@ -906,7 +920,11 @@ fn build_eh_frame(text_size: u64, frame_size: u32, used_callee_saved: &[PReg]) -
     cfi.assemble()
 }
 
-fn build_coff_unwind_tables(text_size: u64, frame_size: u32, used_callee_saved: &[PReg]) -> (Vec<u8>, Vec<u8>) {
+fn build_coff_unwind_tables(
+    text_size: u64,
+    frame_size: u32,
+    used_callee_saved: &[PReg],
+) -> (Vec<u8>, Vec<u8>) {
     // Build UNWIND_INFO from prologue facts.
     //
     // Normal prologue byte layout (alloc ≤ 4096):
@@ -928,7 +946,11 @@ fn build_coff_unwind_tables(text_size: u64, frame_size: u32, used_callee_saved: 
     let has_frame = frame_size > 0 || !used_callee_saved.is_empty();
 
     // Round frame allocation up to 16-byte boundary.
-    let alloc_size: u32 = if frame_size == 0 { 0 } else { (frame_size + 15) & !15 };
+    let alloc_size: u32 = if frame_size == 0 {
+        0
+    } else {
+        (frame_size + 15) & !15
+    };
 
     // Instruction bytes consumed by callee-saved pushes (1 byte for rax-rdi, 2 for r8-r15).
     let callee_push_instr_bytes: u32 = used_callee_saved
@@ -1287,14 +1309,14 @@ fn write_coff_name_field(buf: &mut Vec<u8>, name: &str, strtab_off: u32) {
 
 fn coff_section_characteristics(name: &str) -> u32 {
     match name {
-        ".text" => 0x60000020,  // CNT_CODE | MEM_EXECUTE | MEM_READ
+        ".text" => 0x60000020, // CNT_CODE | MEM_EXECUTE | MEM_READ
         // .pdata/.xdata require explicit alignment so the SEH unwinder can
         // locate entries at load time; lld-link rejects missing alignment flags.
         ".pdata" => 0x40300040, // CNT_INITIALIZED_DATA | MEM_READ | ALIGN_4BYTES
         ".xdata" => 0x40400040, // CNT_INITIALIZED_DATA | MEM_READ | ALIGN_8BYTES
         ".rdata" => 0x40000040, // CNT_INITIALIZED_DATA | MEM_READ
         n if n.starts_with(".debug") => 0x42000040, // CNT_INITIALIZED_DATA | MEM_READ | MEM_DISCARDABLE
-        _ => 0x40000040, // CNT_INITIALIZED_DATA | MEM_READ
+        _ => 0x40000040,                            // CNT_INITIALIZED_DATA | MEM_READ
     }
 }
 
@@ -1355,7 +1377,7 @@ fn build_codeview_debug_s(
     sym_payload.push(0); // flags
     sym_payload.extend_from_slice(name_bytes);
     sym_payload.push(0); // null terminator
-    // S_END (0x0006) — closes the GPROC32 block
+                         // S_END (0x0006) — closes the GPROC32 block
     w16(&mut sym_payload, 2); // reclen
     w16(&mut sym_payload, 0x0006); // S_END
 
@@ -1414,7 +1436,7 @@ fn build_codeview_debug_s(
     w16(&mut lines_payload, 1); // iSeg (.text = section 1)
     w16(&mut lines_payload, 0); // flags (no columns)
     w32(&mut lines_payload, text_size as u32); // cbCon
-    // File block
+                                               // File block
     w32(&mut lines_payload, 0); // fileid (offset 0 in FILECHKSMS)
     w32(&mut lines_payload, nlines);
     w32(&mut lines_payload, cb_file_info);
@@ -1766,9 +1788,15 @@ mod tests {
             .clone();
 
         // Expect def_cfa_offset opcode (0x0e) in FDE program when frame facts exist.
-        assert!(eh.contains(&0x0e), "expected DW_CFA_def_cfa_offset in frame-aware FDE");
+        assert!(
+            eh.contains(&0x0e),
+            "expected DW_CFA_def_cfa_offset in frame-aware FDE"
+        );
         // Expect def_cfa_register opcode (0x0d) when frame pointer model is active.
-        assert!(eh.contains(&0x0d), "expected DW_CFA_def_cfa_register in frame-aware FDE");
+        assert!(
+            eh.contains(&0x0d),
+            "expected DW_CFA_def_cfa_register in frame-aware FDE"
+        );
     }
 
     #[test]
@@ -1815,12 +1843,25 @@ mod tests {
 
         // FDE starts at aligned boundary after first record.
         let fde_off = (4 + cie_len + 7) & !7;
-        let fde_len = u32::from_le_bytes([eh[fde_off], eh[fde_off + 1], eh[fde_off + 2], eh[fde_off + 3]]) as usize;
-        assert!(fde_len >= 12, "FDE should contain init loc + range + aug len");
+        let fde_len = u32::from_le_bytes([
+            eh[fde_off],
+            eh[fde_off + 1],
+            eh[fde_off + 2],
+            eh[fde_off + 3],
+        ]) as usize;
+        assert!(
+            fde_len >= 12,
+            "FDE should contain init loc + range + aug len"
+        );
 
         // FDE payload: [CIE ptr][init loc][range][aug-len]
         let range_off = fde_off + 4 + 4 + 4;
-        let range = u32::from_le_bytes([eh[range_off], eh[range_off + 1], eh[range_off + 2], eh[range_off + 3]]);
+        let range = u32::from_le_bytes([
+            eh[range_off],
+            eh[range_off + 1],
+            eh[range_off + 2],
+            eh[range_off + 3],
+        ]);
         assert_eq!(range, 3, "FDE range should match text size");
 
         // .eh_frame terminator record exists.
@@ -1862,9 +1903,15 @@ mod tests {
             .expect(".xdata section")
             .data
             .clone();
-        assert!(xdata.len() >= 8, "unwind info should include at least one code slot");
+        assert!(
+            xdata.len() >= 8,
+            "unwind info should include at least one code slot"
+        );
         assert_eq!(xdata[0] & 0x7, 1, "UNWIND_INFO version 1");
-        assert!(xdata[2] >= 1, "count_of_codes should be non-zero when frame facts exist");
+        assert!(
+            xdata[2] >= 1,
+            "count_of_codes should be non-zero when frame facts exist"
+        );
         assert_eq!(xdata[3] & 0x0f, 5, "frame register should be RBP");
     }
 
@@ -1919,7 +1966,10 @@ mod tests {
 
         assert_eq!(begin, 0);
         assert_eq!(end, 2, "runtime function end should match text size");
-        assert_eq!(unwind_info_rva, 0, "points at section-local xdata start in this object model");
+        assert_eq!(
+            unwind_info_rva, 0,
+            "points at section-local xdata start in this object model"
+        );
     }
 
     #[test]
@@ -1978,17 +2028,29 @@ mod tests {
         struct NopCoff;
         impl Emitter for NopCoff {
             fn emit_function(&mut self, _mf: &MachineFunction) -> Section {
-                Section { name: ".text".into(), data: vec![0xC3], relocs: vec![], debug_rows: vec![] }
+                Section {
+                    name: ".text".into(),
+                    data: vec![0xC3],
+                    relocs: vec![],
+                    debug_rows: vec![],
+                }
             }
-            fn object_format(&self) -> ObjectFormat { ObjectFormat::Coff }
+            fn object_format(&self) -> ObjectFormat {
+                ObjectFormat::Coff
+            }
         }
         let mut mf = MachineFunction::new("pdata_test".into());
-        mf.blocks.push(MachineBlock { label: "entry".into(), instrs: vec![] });
+        mf.blocks.push(MachineBlock {
+            label: "entry".into(),
+            instrs: vec![],
+        });
         mf.frame_size = 8;
         let bytes = emit_object(&mf, &mut NopCoff).to_bytes();
-        let chars = coff_section_chars(&bytes, b".pdata")
-            .expect(".pdata section not found");
-        assert_eq!(chars, 0x40300040, ".pdata must have ALIGN_4BYTES (0x40300040)");
+        let chars = coff_section_chars(&bytes, b".pdata").expect(".pdata section not found");
+        assert_eq!(
+            chars, 0x40300040,
+            ".pdata must have ALIGN_4BYTES (0x40300040)"
+        );
     }
 
     #[test]
@@ -1999,17 +2061,29 @@ mod tests {
         struct NopCoff;
         impl Emitter for NopCoff {
             fn emit_function(&mut self, _mf: &MachineFunction) -> Section {
-                Section { name: ".text".into(), data: vec![0xC3], relocs: vec![], debug_rows: vec![] }
+                Section {
+                    name: ".text".into(),
+                    data: vec![0xC3],
+                    relocs: vec![],
+                    debug_rows: vec![],
+                }
             }
-            fn object_format(&self) -> ObjectFormat { ObjectFormat::Coff }
+            fn object_format(&self) -> ObjectFormat {
+                ObjectFormat::Coff
+            }
         }
         let mut mf = MachineFunction::new("xdata_test".into());
-        mf.blocks.push(MachineBlock { label: "entry".into(), instrs: vec![] });
+        mf.blocks.push(MachineBlock {
+            label: "entry".into(),
+            instrs: vec![],
+        });
         mf.frame_size = 8;
         let bytes = emit_object(&mf, &mut NopCoff).to_bytes();
-        let chars = coff_section_chars(&bytes, b".xdata")
-            .expect(".xdata section not found");
-        assert_eq!(chars, 0x40400040, ".xdata must have ALIGN_8BYTES (0x40400040)");
+        let chars = coff_section_chars(&bytes, b".xdata").expect(".xdata section not found");
+        assert_eq!(
+            chars, 0x40400040,
+            ".xdata must have ALIGN_8BYTES (0x40400040)"
+        );
     }
 
     #[test]
@@ -2020,15 +2094,30 @@ mod tests {
             format: ObjectFormat::Coff,
             elf_machine: 0,
             coff_machine: 0x8664,
-            sections: vec![Section { name: ".text".into(), data: vec![0xC3], relocs: vec![], debug_rows: vec![] }],
-            symbols: vec![Symbol { name: "fn".into(), section: 0, offset: 0, size: 1, global: true, undefined: false }],
+            sections: vec![Section {
+                name: ".text".into(),
+                data: vec![0xC3],
+                relocs: vec![],
+                debug_rows: vec![],
+            }],
+            symbols: vec![Symbol {
+                name: "fn".into(),
+                section: 0,
+                offset: 0,
+                size: 1,
+                global: true,
+                undefined: false,
+            }],
         };
         let bytes = obj.to_bytes();
         let symtab_ptr = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
         // IMAGE_SYMBOL layout: Name(8) + Value(4) + SectionNumber(2) + Type(2) + ...
         // Type field starts at offset 14 within each 18-byte symbol record.
         let type_field = u16::from_le_bytes([bytes[symtab_ptr + 14], bytes[symtab_ptr + 15]]);
-        assert_eq!(type_field, 0x0020, "external function symbols must have Type = 0x0020");
+        assert_eq!(
+            type_field, 0x0020,
+            "external function symbols must have Type = 0x0020"
+        );
     }
 
     #[test]
@@ -2039,22 +2128,48 @@ mod tests {
         struct NopCoff;
         impl Emitter for NopCoff {
             fn emit_function(&mut self, _mf: &MachineFunction) -> Section {
-                Section { name: ".text".into(), data: vec![0xC3], relocs: vec![], debug_rows: vec![] }
+                Section {
+                    name: ".text".into(),
+                    data: vec![0xC3],
+                    relocs: vec![],
+                    debug_rows: vec![],
+                }
             }
-            fn object_format(&self) -> ObjectFormat { ObjectFormat::Coff }
+            fn object_format(&self) -> ObjectFormat {
+                ObjectFormat::Coff
+            }
         }
         let mut mf = MachineFunction::new("large_frame".into());
-        mf.blocks.push(MachineBlock { label: "entry".into(), instrs: vec![] });
+        mf.blocks.push(MachineBlock {
+            label: "entry".into(),
+            instrs: vec![],
+        });
         mf.frame_size = 256;
         let obj = emit_object(&mf, &mut NopCoff);
-        let xdata = obj.sections.iter().find(|s| s.name == ".xdata")
-            .expect(".xdata section").data.clone();
+        let xdata = obj
+            .sections
+            .iter()
+            .find(|s| s.name == ".xdata")
+            .expect(".xdata section")
+            .data
+            .clone();
         // CountOfCodes = xdata[2]. ALLOC_LARGE uses 2 slots, PUSH_NONVOL for RBP = 1 → total = 3.
-        assert_eq!(xdata[2], 3, "ALLOC_LARGE(2 slots) + PUSH_NONVOL(1 slot) = 3 total");
+        assert_eq!(
+            xdata[2], 3,
+            "ALLOC_LARGE(2 slots) + PUSH_NONVOL(1 slot) = 3 total"
+        );
         // Header is 4 bytes; first code slot at offset 4.
         // First code must be UWOP_ALLOC_LARGE (op=1, info=0) → byte[5] low nibble = 1.
-        assert_eq!(xdata[5] & 0x0f, 1, "first unwind op must be UWOP_ALLOC_LARGE (1)");
-        assert_eq!(xdata[5] >> 4, 0, "UWOP_ALLOC_LARGE info must be 0 for sizes ≤ 512 KiB");
+        assert_eq!(
+            xdata[5] & 0x0f,
+            1,
+            "first unwind op must be UWOP_ALLOC_LARGE (1)"
+        );
+        assert_eq!(
+            xdata[5] >> 4,
+            0,
+            "UWOP_ALLOC_LARGE info must be 0 for sizes ≤ 512 KiB"
+        );
         // Slots 1 encodes alloc_size/8 = 256/8 = 32.
         let operand = u16::from_le_bytes([xdata[6], xdata[7]]);
         assert_eq!(operand, 32, "ALLOC_LARGE operand must be alloc_size/8 = 32");
@@ -2064,8 +2179,7 @@ mod tests {
 // ── Global-variable data section emission ─────────────────────────────────
 
 use llvm_ir::{
-    context::ConstId,
-    ConstExprOp, ConstantData, Context, FloatKind, Linkage, Module, TypeData,
+    context::ConstId, ConstExprOp, ConstantData, Context, FloatKind, Linkage, Module, TypeData,
 };
 use std::collections::HashMap;
 
@@ -2157,8 +2271,7 @@ fn gep_byte_offset(ctx: &Context, base_ty: llvm_ir::context::TypeId, indices: &[
                 TypeData::Struct(st) => {
                     let fi = idx as usize;
                     let flds: Vec<_> = st.fields.clone();
-                    offset +=
-                        struct_field_byte_offset(ctx, &flds, fi, st.packed) as i64;
+                    offset += struct_field_byte_offset(ctx, &flds, fi, st.packed) as i64;
                     if fi < flds.len() {
                         cur_ty = flds[fi];
                     }
@@ -2198,7 +2311,8 @@ fn eval_const_bytes(
             let byte_count = (match ctx.get_type(ty) {
                 TypeData::Integer(b) => *b,
                 _ => 64,
-            } as u64).div_ceil(8);
+            } as u64)
+                .div_ceil(8);
             for i in 0..byte_count {
                 out.push((val >> (i * 8)) as u8);
             }
@@ -2240,9 +2354,17 @@ fn eval_const_bytes(
             let struct_start = out.len();
             for (i, fld_cid) in fields.iter().enumerate() {
                 let fty = field_tys.get(i).copied().unwrap_or(ctx.i8_ty);
-                let al = if is_packed { 1 } else { align_of_ty(ctx, fty) as usize };
+                let al = if is_packed {
+                    1
+                } else {
+                    align_of_ty(ctx, fty) as usize
+                };
                 let local_pos = out.len() - struct_start;
-                let pad = if al > 0 { (al - local_pos % al) % al } else { 0 };
+                let pad = if al > 0 {
+                    (al - local_pos % al) % al
+                } else {
+                    0
+                };
                 out.extend(std::iter::repeat_n(0u8, pad));
                 eval_const_bytes(ctx, *fld_cid, sec_base, global_sym_map, relocs, out);
             }
@@ -2266,8 +2388,10 @@ fn eval_const_bytes(
                     }
                 }
                 ConstExprOp::GetElementPtr { base_ty, .. } => {
-                    let indices: Vec<i64> =
-                        operands[1..].iter().map(|&c| const_as_i64(ctx, c)).collect();
+                    let indices: Vec<i64> = operands[1..]
+                        .iter()
+                        .map(|&c| const_as_i64(ctx, c))
+                        .collect();
                     let addend = gep_byte_offset(ctx, base_ty, &indices);
                     match ctx.get_const(operands[0]).clone() {
                         ConstantData::GlobalRef { name, .. } => {
@@ -2275,7 +2399,12 @@ fn eval_const_bytes(
                         }
                         _ => {
                             eval_const_bytes(
-                                ctx, operands[0], sec_base, global_sym_map, relocs, out,
+                                ctx,
+                                operands[0],
+                                sec_base,
+                                global_sym_map,
+                                relocs,
+                                out,
                             );
                         }
                     }
@@ -2300,7 +2429,9 @@ fn eval_const_bytes(
                     };
                     let byte_count = (int_bits as usize).div_ceil(8);
                     if let Some(&base_cid) = operands.first() {
-                        if let ConstantData::GlobalRef { name, .. } = ctx.get_const(base_cid).clone() {
+                        if let ConstantData::GlobalRef { name, .. } =
+                            ctx.get_const(base_cid).clone()
+                        {
                             push_ptr_reloc(sec_base, &name, 0, global_sym_map, relocs, out);
                             // push_ptr_reloc always emits 8 bytes; truncate if int is narrower
                             if byte_count < 8 {
@@ -2322,11 +2453,19 @@ fn eval_const_bytes(
                     if let Some(&src_cid) = operands.first() {
                         let mut src_buf = Vec::new();
                         eval_const_bytes(
-                            ctx, src_cid, sec_base, global_sym_map, relocs, &mut src_buf,
+                            ctx,
+                            src_cid,
+                            sec_base,
+                            global_sym_map,
+                            relocs,
+                            &mut src_buf,
                         );
                         let sign_extend = op == ConstExprOp::SExt;
                         let fill = if sign_extend {
-                            src_buf.last().map(|&b| if b & 0x80 != 0 { 0xFF } else { 0 }).unwrap_or(0)
+                            src_buf
+                                .last()
+                                .map(|&b| if b & 0x80 != 0 { 0xFF } else { 0 })
+                                .unwrap_or(0)
                         } else {
                             0
                         };
@@ -2437,7 +2576,11 @@ pub fn emit_globals(
         // Natural alignment: min of sizeof(ty), 16.
         let sz = sizeof_ty(ctx, gv.ty) as usize;
         let al = (sz as u64).clamp(1, 16) as usize;
-        let pad = if al > 0 { (al - sec.data.len() % al) % al } else { 0 };
+        let pad = if al > 0 {
+            (al - sec.data.len() % al) % al
+        } else {
+            0
+        };
         sec.data.extend(std::iter::repeat_n(0u8, pad));
 
         let global_offset = sec.data.len() as u64;

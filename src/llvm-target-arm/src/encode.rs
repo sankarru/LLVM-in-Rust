@@ -7,7 +7,10 @@
 //! Each AArch64 instruction is exactly 4 bytes.  Branches are patched in a
 //! second pass once all block offsets are known.
 
-use crate::{instructions::*, regs::{fp_enc, is_fp_reg, reg_enc}};
+use crate::{
+    instructions::*,
+    regs::{fp_enc, is_fp_reg, reg_enc},
+};
 use llvm_codegen::{
     emit::{DebugLineRow, Emitter, ObjectFormat, Reloc, Section},
     isel::{MInstr, MOperand, MachineFunction, PReg},
@@ -34,7 +37,10 @@ pub struct AArch64Emitter {
 impl AArch64Emitter {
     /// Public API for `new`.
     pub fn new(format: ObjectFormat) -> Self {
-        Self { format, lsda_section: None }
+        Self {
+            format,
+            lsda_section: None,
+        }
     }
 
     /// Return and clear the LSDA bytes produced during the last
@@ -666,7 +672,8 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
         // Encoding (ADD immediate, 64-bit): 0x91000000 | (imm12<<10) | (Rn<<5) | Rd
         // Rn = 29 (FP), imm12 = (2 + cs_save_count + slot_idx) * 8.
         SUB_FP_IMM => {
-            if let (Some(dst), Some(MOperand::Imm(slot_idx))) = (instr.dst, instr.operands.first()) {
+            if let (Some(dst), Some(MOperand::Imm(slot_idx))) = (instr.dst, instr.operands.first())
+            {
                 let rd = reg_enc(PReg(dst.0 as u8)) as u32;
                 let byte_off = ((2 + ctx.cs_save_count + *slot_idx as u32) * 8) & 0xFFF;
                 ctx.emit4(0x91000000 | (byte_off << 10) | (29 << 5) | rd);
@@ -678,12 +685,13 @@ fn encode_instr(instr: &MInstr, ctx: &mut EncodeCtx) {
         // LDR_REG: ldr xd, [xn]  — 64-bit load via pointer register, no offset.
         // Encoding (unsigned offset = 0): 0xF9400000 | (0 << 10) | (Rn << 5) | Rd
         LDR_REG => {
-            if let (Some(dst), Some(ptr)) =
-                (instr.dst, instr.operands.first().and_then(|op| match op {
+            if let (Some(dst), Some(ptr)) = (
+                instr.dst,
+                instr.operands.first().and_then(|op| match op {
                     MOperand::PReg(r) => Some(*r),
                     _ => None,
-                }))
-            {
+                }),
+            ) {
                 let rd = reg_enc(PReg(dst.0 as u8)) as u32;
                 let rn = reg_enc(ptr) as u32;
                 ctx.emit4(0xF9400000 | (rn << 5) | rd);
@@ -943,13 +951,25 @@ fn encode_fp_rrr3(ctx: &mut EncodeCtx, instr: &MInstr, base: u32) {
     let rn = instr
         .operands
         .first()
-        .and_then(|op| if let MOperand::PReg(r) = op { Some(*r) } else { None })
+        .and_then(|op| {
+            if let MOperand::PReg(r) = op {
+                Some(*r)
+            } else {
+                None
+            }
+        })
         .map(|r| fp_enc(r) as u32)
         .unwrap_or(0);
     let rm = instr
         .operands
         .get(1)
-        .and_then(|op| if let MOperand::PReg(r) = op { Some(*r) } else { None })
+        .and_then(|op| {
+            if let MOperand::PReg(r) = op {
+                Some(*r)
+            } else {
+                None
+            }
+        })
         .map(|r| fp_enc(r) as u32)
         .unwrap_or(0);
     ctx.emit4(base | (rm << 16) | (rn << 5) | rd);
@@ -965,7 +985,13 @@ fn fp_dst_src(instr: &MInstr) -> (u32, u32) {
     let rn = instr
         .operands
         .iter()
-        .find_map(|op| if let MOperand::PReg(r) = op { Some(fp_enc(*r) as u32) } else { None })
+        .find_map(|op| {
+            if let MOperand::PReg(r) = op {
+                Some(fp_enc(*r) as u32)
+            } else {
+                None
+            }
+        })
         .unwrap_or(0);
     (rd, rn)
 }
@@ -974,7 +1000,11 @@ fn fp_dst_src(instr: &MInstr) -> (u32, u32) {
 /// (e.g. `FCMPE Dn, Dm`).
 fn fp_two_src_pregs(instr: &MInstr) -> (Option<PReg>, Option<PReg>) {
     let mut it = instr.operands.iter().filter_map(|op| {
-        if let MOperand::PReg(r) = op { Some(*r) } else { None }
+        if let MOperand::PReg(r) = op {
+            Some(*r)
+        } else {
+            None
+        }
     });
     (it.next(), it.next())
 }
@@ -983,7 +1013,11 @@ fn fp_two_src_pregs(instr: &MInstr) -> (Option<PReg>, Option<PReg>) {
 fn fp_first_src_preg(instr: &MInstr) -> Option<PReg> {
     instr.operands.iter().find_map(|op| {
         if let MOperand::PReg(r) = op {
-            if is_fp_reg(*r) { Some(*r) } else { None }
+            if is_fp_reg(*r) {
+                Some(*r)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -997,7 +1031,9 @@ fn fp_second_src_preg(instr: &MInstr) -> Option<PReg> {
         if let MOperand::PReg(r) = op {
             if is_fp_reg(*r) {
                 count += 1;
-                if count == 2 { return Some(*r); }
+                if count == 2 {
+                    return Some(*r);
+                }
             }
         }
         None
@@ -1008,7 +1044,11 @@ fn fp_second_src_preg(instr: &MInstr) -> Option<PReg> {
 fn int_first_src_preg(instr: &MInstr) -> Option<PReg> {
     instr.operands.iter().find_map(|op| {
         if let MOperand::PReg(r) = op {
-            if !is_fp_reg(*r) { Some(*r) } else { None }
+            if !is_fp_reg(*r) {
+                Some(*r)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -1805,7 +1845,10 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         let expected = 0x1E602800u32 | (2 << 16) | (1 << 5) | 0;
-        assert_eq!(word, expected, "FADD D0, D1, D2 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FADD D0, D1, D2 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1818,7 +1861,10 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         let expected = 0x1E603800u32 | (2 << 16) | (1 << 5) | 0;
-        assert_eq!(word, expected, "FSUB D0, D1, D2 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FSUB D0, D1, D2 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1831,7 +1877,10 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         let expected = 0x1E600800u32 | (2 << 16) | (1 << 5) | 0;
-        assert_eq!(word, expected, "FMUL D0, D1, D2 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FMUL D0, D1, D2 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1844,7 +1893,10 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         let expected = 0x1E601800u32 | (2 << 16) | (1 << 5) | 0;
-        assert_eq!(word, expected, "FDIV D0, D1, D2 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FDIV D0, D1, D2 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1857,7 +1909,10 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         let expected = 0x1E614000u32 | (1 << 5) | 0;
-        assert_eq!(word, expected, "FNEG D0, D1 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FNEG D0, D1 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1870,7 +1925,10 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         let expected = 0x1E61C000u32 | (1 << 5) | 0;
-        assert_eq!(word, expected, "FSQRT D0, D1 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FSQRT D0, D1 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1890,7 +1948,10 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         let expected = 0x1E602010u32 | (2 << 16) | (1 << 5);
-        assert_eq!(word, expected, "FCMPE D1, D2 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FCMPE D1, D2 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1903,7 +1964,10 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         let expected = 0x1E604000u32 | (1 << 5) | 0;
-        assert_eq!(word, expected, "FMOV D0, D1 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FMOV D0, D1 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1913,7 +1977,7 @@ mod tests {
         use crate::regs::{D0, X0};
         let mi = MInstr {
             opcode: FCVTZS_RR,
-            dst: Some(VReg(X0.0 as u32)), // integer destination
+            dst: Some(VReg(X0.0 as u32)),       // integer destination
             operands: vec![MOperand::PReg(D0)], // FP source
             phys_uses: vec![],
             clobbers: vec![],
@@ -1925,7 +1989,10 @@ mod tests {
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // Rd = X0 = reg 0 (low 5 bits of X0.0 = 0); Rn = fp_enc(D0) = 0
         let expected = 0x9E780000u32 | (0 << 5) | 0;
-        assert_eq!(word, expected, "FCVTZS X0, D0 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FCVTZS X0, D0 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1946,7 +2013,10 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         let expected = 0x9E780000u32 | (2 << 5) | 1;
-        assert_eq!(word, expected, "FCVTZS X1, D2 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FCVTZS X1, D2 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1956,7 +2026,7 @@ mod tests {
         use crate::regs::{D0, X1};
         let mi = MInstr {
             opcode: SCVTF_RR,
-            dst: Some(VReg(D0.0 as u32)), // FP destination
+            dst: Some(VReg(D0.0 as u32)),       // FP destination
             operands: vec![MOperand::PReg(X1)], // integer source
             phys_uses: vec![],
             clobbers: vec![],
@@ -1968,7 +2038,10 @@ mod tests {
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // rd = dst.0 & 0x1F = 32 & 0x1F = 0; rn = reg_enc(X1) = 1
         let expected = 0x9E620000u32 | (1 << 5) | 0;
-        assert_eq!(word, expected, "SCVTF D0, X1 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "SCVTF D0, X1 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -1978,7 +2051,7 @@ mod tests {
         use crate::regs::D0;
         let mi = MInstr {
             opcode: MOVSD_LOAD_MR,
-            dst: Some(VReg(D0.0 as u32)), // D0 = PReg(32) → hw reg 0
+            dst: Some(VReg(D0.0 as u32)),     // D0 = PReg(32) → hw reg 0
             operands: vec![MOperand::Imm(0)], // slot 0
             phys_uses: vec![],
             clobbers: vec![],
@@ -1990,7 +2063,10 @@ mod tests {
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // rt = D0.0 & 0x1F = 32 & 0x1F = 0; imm12 = 2 + 0 + 0 = 2
         let expected = 0xFD400000u32 | (2 << 10) | (29 << 5) | 0;
-        assert_eq!(word, expected, "MOVSD_LOAD_MR D0, [x29, #16] should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "MOVSD_LOAD_MR D0, [x29, #16] should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -2000,7 +2076,7 @@ mod tests {
         use crate::regs::D1;
         let mi = MInstr {
             opcode: MOVSD_STORE_RM,
-            dst: None, // no destination
+            dst: None,                                            // no destination
             operands: vec![MOperand::Imm(0), MOperand::PReg(D1)], // slot 0, src
             phys_uses: vec![],
             clobbers: vec![],
@@ -2012,7 +2088,10 @@ mod tests {
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         // rt = fp_enc(D1) = 1; imm12 = 2 + 0 + 0 = 2
         let expected = 0xFD000000u32 | (2 << 10) | (29 << 5) | 1;
-        assert_eq!(word, expected, "MOVSD_STORE_RM [x29, #16], D1 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "MOVSD_STORE_RM [x29, #16], D1 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
@@ -2028,15 +2107,18 @@ mod tests {
         let sec = e.emit_function(&mf);
         let word = u32::from_le_bytes([sec.data[0], sec.data[1], sec.data[2], sec.data[3]]);
         let expected = 0x1E602800u32 | (18 << 16) | (17 << 5) | 16;
-        assert_eq!(word, expected, "FADD D16, D17, D18 should encode as 0x{expected:08X}");
+        assert_eq!(
+            word, expected,
+            "FADD D16, D17, D18 should encode as 0x{expected:08X}"
+        );
     }
 
     #[test]
     fn fp_lower_fadd_produces_fadd_rr_opcode() {
         // End-to-end lowering test: an FAdd IR instruction must produce FADD_RR opcode.
         use crate::lower::AArch64Backend;
-        use llvm_ir::{Builder, Context, FloatKind, Linkage, Module};
         use llvm_codegen::isel::IselBackend;
+        use llvm_ir::{Builder, Context, FloatKind, Linkage, Module};
 
         let mut ctx = Context::new();
         let f64_ty = ctx.mk_float(FloatKind::Double);
@@ -2060,7 +2142,10 @@ mod tests {
         let mut be = AArch64Backend::default();
         let mf = be.lower_function(&ctx, &module, &module.functions[0]);
 
-        let has_fadd = mf.blocks.iter().any(|bl| bl.instrs.iter().any(|i| i.opcode == FADD_RR));
+        let has_fadd = mf
+            .blocks
+            .iter()
+            .any(|bl| bl.instrs.iter().any(|i| i.opcode == FADD_RR));
         assert!(has_fadd, "FAdd IR must lower to FADD_RR opcode");
     }
 }

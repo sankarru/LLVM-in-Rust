@@ -14,19 +14,15 @@ use llvm_transforms::{pass::PassManager, DeadCodeElim, Mem2Reg};
 const SAMPLE_LL: &str = include_str!("../../llvm-bench/fixtures/sample.ll");
 
 fn find_objdump() -> Option<PathBuf> {
-    [
-        "riscv64-linux-gnu-objdump",
-        "llvm-objdump",
-        "objdump",
-    ]
-    .iter()
-    .find_map(|name| {
-        Command::new(name)
-            .arg("--version")
-            .output()
-            .ok()
-            .map(|_| PathBuf::from(name))
-    })
+    ["riscv64-linux-gnu-objdump", "llvm-objdump", "objdump"]
+        .iter()
+        .find_map(|name| {
+            Command::new(name)
+                .arg("--version")
+                .output()
+                .ok()
+                .map(|_| PathBuf::from(name))
+        })
 }
 
 #[test]

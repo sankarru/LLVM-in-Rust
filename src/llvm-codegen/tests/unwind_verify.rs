@@ -87,7 +87,11 @@ fn coff_unwind_tables_visible_to_llvm_readobj() {
     emit_obj(ObjectFormat::Coff, &obj_path);
 
     if let Some(readobj) = require_tool(
-        &["llvm-readobj", "llvm-readobj-19", "/usr/lib/llvm-19/bin/llvm-readobj"],
+        &[
+            "llvm-readobj",
+            "llvm-readobj-19",
+            "/usr/lib/llvm-19/bin/llvm-readobj",
+        ],
         "llvm-readobj",
     ) {
         let out = Command::new(&readobj)

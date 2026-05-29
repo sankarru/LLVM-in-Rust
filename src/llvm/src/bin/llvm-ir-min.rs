@@ -114,7 +114,8 @@ fn minimize_lines(
                 continue;
             }
             stats.attempts += 1;
-            fs::write(work_file, &trial_text).map_err(|e| format!("write trial file failed: {e}"))?;
+            fs::write(work_file, &trial_text)
+                .map_err(|e| format!("write trial file failed: {e}"))?;
             if run_predicate(predicate, work_file)? {
                 log.push(format!("remove line {i}: {removed}"));
                 lines = trial;
@@ -130,12 +131,18 @@ fn minimize_lines(
     Ok((format!("{}\n", lines.join("\n")), stats))
 }
 
-fn write_evidence_package(config: &Config, original: &str, minimized: &str, log_text: &str) -> Result<(), String> {
+fn write_evidence_package(
+    config: &Config,
+    original: &str,
+    minimized: &str,
+    log_text: &str,
+) -> Result<(), String> {
     let Some(dir) = &config.evidence_dir else {
         return Ok(());
     };
 
-    fs::create_dir_all(dir).map_err(|e| format!("failed to create evidence dir {}: {e}", dir.display()))?;
+    fs::create_dir_all(dir)
+        .map_err(|e| format!("failed to create evidence dir {}: {e}", dir.display()))?;
     fs::write(dir.join("original.ll"), original)
         .map_err(|e| format!("failed to write original.ll: {e}"))?;
     fs::write(dir.join("minimized.ll"), minimized)
@@ -144,10 +151,16 @@ fn write_evidence_package(config: &Config, original: &str, minimized: &str, log_
         .map_err(|e| format!("failed to write reducer.log: {e}"))?;
     fs::write(
         dir.join("repro.sh"),
-        format!("#!/usr/bin/env sh\nset -eu\n{}\n", config.predicate.replace("{{input}}", "${1:-minimized.ll}")),
+        format!(
+            "#!/usr/bin/env sh\nset -eu\n{}\n",
+            config.predicate.replace("{{input}}", "${1:-minimized.ll}")
+        ),
     )
     .map_err(|e| format!("failed to write repro.sh: {e}"))?;
-    let _ = Command::new("chmod").arg("+x").arg(dir.join("repro.sh")).status();
+    let _ = Command::new("chmod")
+        .arg("+x")
+        .arg(dir.join("repro.sh"))
+        .status();
 
     let manifest = format!(
         "input={}\noutput={}\nbucket_signature={}\noriginal_bytes={}\nminimized_bytes={}\n",

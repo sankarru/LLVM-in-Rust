@@ -1,8 +1,8 @@
 //! x86_64 calling-convention support (System V AMD64 and Windows x64).
 
 use crate::regs::{
-    FP_ALLOCATABLE, R10, R11, R12, R13, R14, R15, R8, R9, RAX, RBP, RBX, RCX, RDI, RDX, RSI,
-    XMM0, XMM1, XMM2, XMM3,
+    FP_ALLOCATABLE, R10, R11, R12, R13, R14, R15, R8, R9, RAX, RBP, RBX, RCX, RDI, RDX, RSI, XMM0,
+    XMM1, XMM2, XMM3,
 };
 use llvm_codegen::isel::PReg;
 use llvm_ir::{Context, FloatKind, TypeData, TypeId};

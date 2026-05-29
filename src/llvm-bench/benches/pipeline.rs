@@ -16,7 +16,11 @@ use llvm_target_x86::{
     instructions::{MOV_LOAD_MR, MOV_STORE_RM},
     X86Backend, X86Emitter,
 };
-use llvm_transforms::{build_pipeline, pass::{FunctionPass, PassManager}, DeadCodeElim, Mem2Reg, OptLevel};
+use llvm_transforms::{
+    build_pipeline,
+    pass::{FunctionPass, PassManager},
+    DeadCodeElim, Mem2Reg, OptLevel,
+};
 
 const FIXTURE: &str = include_str!("../fixtures/sample.ll");
 
@@ -39,7 +43,14 @@ fn codegen_module(ctx: &Context, module: &Module) {
             &mf.allocatable_fp_pregs,
             RegAllocStrategy::LinearScan,
         );
-        insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+        insert_spill_reloads(
+            &mut mf,
+            &mut result,
+            MOV_LOAD_MR,
+            MOV_STORE_RM,
+            MOV_LOAD_MR,
+            MOV_STORE_RM,
+        );
         apply_allocation(&mut mf, &result);
         let mut emitter = X86Emitter::new(ObjectFormat::Elf);
         emit_object(&mf, &mut emitter);
@@ -61,7 +72,14 @@ fn codegen_module_integrated_assembler(ctx: &Context, module: &Module) {
             &mf.allocatable_fp_pregs,
             RegAllocStrategy::LinearScan,
         );
-        insert_spill_reloads(&mut mf, &mut result, MOV_LOAD_MR, MOV_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM);
+        insert_spill_reloads(
+            &mut mf,
+            &mut result,
+            MOV_LOAD_MR,
+            MOV_STORE_RM,
+            MOV_LOAD_MR,
+            MOV_STORE_RM,
+        );
         apply_allocation(&mut mf, &result);
         let mut emitter = X86Emitter::new(ObjectFormat::Elf);
         let assembled = assemble_with_report(&mf, &mut emitter);

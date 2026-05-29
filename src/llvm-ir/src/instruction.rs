@@ -399,32 +399,17 @@ pub enum InstrKind {
         rhs: ValueRef,
     },
     /// `URem` variant.
-    URem {
-        lhs: ValueRef,
-        rhs: ValueRef,
-    },
+    URem { lhs: ValueRef, rhs: ValueRef },
     /// `SRem` variant.
-    SRem {
-        lhs: ValueRef,
-        rhs: ValueRef,
-    },
+    SRem { lhs: ValueRef, rhs: ValueRef },
 
     // --- Bitwise ---
     /// `And` variant.
-    And {
-        lhs: ValueRef,
-        rhs: ValueRef,
-    },
+    And { lhs: ValueRef, rhs: ValueRef },
     /// `Or` variant.
-    Or {
-        lhs: ValueRef,
-        rhs: ValueRef,
-    },
+    Or { lhs: ValueRef, rhs: ValueRef },
     /// `Xor` variant.
-    Xor {
-        lhs: ValueRef,
-        rhs: ValueRef,
-    },
+    Xor { lhs: ValueRef, rhs: ValueRef },
     /// `Shl` variant.
     Shl {
         flags: IntArithFlags,
@@ -527,74 +512,33 @@ pub enum InstrKind {
 
     // --- Casts ---
     /// `Trunc` variant.
-    Trunc {
-        val: ValueRef,
-        to: TypeId,
-    },
+    Trunc { val: ValueRef, to: TypeId },
     /// `ZExt` variant.
-    ZExt {
-        val: ValueRef,
-        to: TypeId,
-    },
+    ZExt { val: ValueRef, to: TypeId },
     /// `SExt` variant.
-    SExt {
-        val: ValueRef,
-        to: TypeId,
-    },
+    SExt { val: ValueRef, to: TypeId },
     /// `FPTrunc` variant.
-    FPTrunc {
-        val: ValueRef,
-        to: TypeId,
-    },
+    FPTrunc { val: ValueRef, to: TypeId },
     /// `FPExt` variant.
-    FPExt {
-        val: ValueRef,
-        to: TypeId,
-    },
+    FPExt { val: ValueRef, to: TypeId },
     /// `FPToUI` variant.
-    FPToUI {
-        val: ValueRef,
-        to: TypeId,
-    },
+    FPToUI { val: ValueRef, to: TypeId },
     /// `FPToSI` variant.
-    FPToSI {
-        val: ValueRef,
-        to: TypeId,
-    },
+    FPToSI { val: ValueRef, to: TypeId },
     /// `UIToFP` variant.
-    UIToFP {
-        val: ValueRef,
-        to: TypeId,
-    },
+    UIToFP { val: ValueRef, to: TypeId },
     /// `SIToFP` variant.
-    SIToFP {
-        val: ValueRef,
-        to: TypeId,
-    },
+    SIToFP { val: ValueRef, to: TypeId },
     /// `PtrToInt` variant.
-    PtrToInt {
-        val: ValueRef,
-        to: TypeId,
-    },
+    PtrToInt { val: ValueRef, to: TypeId },
     /// `IntToPtr` variant.
-    IntToPtr {
-        val: ValueRef,
-        to: TypeId,
-    },
+    IntToPtr { val: ValueRef, to: TypeId },
     /// `BitCast` variant.
-    BitCast {
-        val: ValueRef,
-        to: TypeId,
-    },
+    BitCast { val: ValueRef, to: TypeId },
     /// `AddrSpaceCast` variant.
-    AddrSpaceCast {
-        val: ValueRef,
-        to: TypeId,
-    },
+    AddrSpaceCast { val: ValueRef, to: TypeId },
     /// `Freeze` variant.
-    Freeze {
-        val: ValueRef,
-    },
+    Freeze { val: ValueRef },
 
     // --- Misc ---
     /// `Select` variant.
@@ -620,10 +564,7 @@ pub enum InstrKind {
         indices: Vec<u32>,
     },
     /// `ExtractElement` variant.
-    ExtractElement {
-        vec: ValueRef,
-        idx: ValueRef,
-    },
+    ExtractElement { vec: ValueRef, idx: ValueRef },
     /// `InsertElement` variant.
     InsertElement {
         vec: ValueRef,
@@ -717,13 +658,9 @@ pub enum InstrKind {
 
     // --- Terminators ---
     /// `Ret` variant.
-    Ret {
-        val: Option<ValueRef>,
-    },
+    Ret { val: Option<ValueRef> },
     /// `Br` variant.
-    Br {
-        dest: BlockId,
-    },
+    Br { dest: BlockId },
     /// `CondBr` variant.
     CondBr {
         cond: ValueRef,
@@ -1045,9 +982,7 @@ impl InstrKind {
                 v
             }
             InstrKind::CatchRet { successor, .. } => vec![*successor],
-            InstrKind::CleanupRet { unwind_dest, .. } => {
-                unwind_dest.iter().copied().collect()
-            }
+            InstrKind::CleanupRet { unwind_dest, .. } => unwind_dest.iter().copied().collect(),
             // Non-terminators and exit terminators (Ret, Unreachable, Resume) have no
             // successors.  Listed explicitly so the compiler enforces that every
             // future variant is consciously placed in one arm or the other.
@@ -1151,12 +1086,24 @@ mod tests {
     use crate::context::{BlockId, ConstId, Context, InstrId};
 
     // ── tiny helpers ────────────────────────────────────────────────────────
-    fn c0() -> ValueRef { ValueRef::Constant(ConstId(0)) }
-    fn c1() -> ValueRef { ValueRef::Constant(ConstId(1)) }
-    fn c2() -> ValueRef { ValueRef::Constant(ConstId(2)) }
-    fn v0() -> ValueRef { ValueRef::Instruction(InstrId(0)) }
-    fn b0() -> BlockId  { BlockId(0) }
-    fn b1() -> BlockId  { BlockId(1) }
+    fn c0() -> ValueRef {
+        ValueRef::Constant(ConstId(0))
+    }
+    fn c1() -> ValueRef {
+        ValueRef::Constant(ConstId(1))
+    }
+    fn c2() -> ValueRef {
+        ValueRef::Constant(ConstId(2))
+    }
+    fn v0() -> ValueRef {
+        ValueRef::Instruction(InstrId(0))
+    }
+    fn b0() -> BlockId {
+        BlockId(0)
+    }
+    fn b1() -> BlockId {
+        BlockId(1)
+    }
 
     // ── existing tests ───────────────────────────────────────────────────────
 
@@ -1184,43 +1131,69 @@ mod tests {
 
     #[test]
     fn operands_add() {
-        let k = InstrKind::Add { flags: IntArithFlags::default(), lhs: c0(), rhs: c1() };
+        let k = InstrKind::Add {
+            flags: IntArithFlags::default(),
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_sub() {
-        let k = InstrKind::Sub { flags: IntArithFlags::default(), lhs: c0(), rhs: c1() };
+        let k = InstrKind::Sub {
+            flags: IntArithFlags::default(),
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_mul() {
-        let k = InstrKind::Mul { flags: IntArithFlags::default(), lhs: c0(), rhs: c1() };
+        let k = InstrKind::Mul {
+            flags: IntArithFlags::default(),
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_udiv() {
-        let k = InstrKind::UDiv { exact: false, lhs: c0(), rhs: c1() };
+        let k = InstrKind::UDiv {
+            exact: false,
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_sdiv() {
-        let k = InstrKind::SDiv { exact: true, lhs: c0(), rhs: c1() };
+        let k = InstrKind::SDiv {
+            exact: true,
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_urem() {
-        let k = InstrKind::URem { lhs: c0(), rhs: c1() };
+        let k = InstrKind::URem {
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_srem() {
-        let k = InstrKind::SRem { lhs: c0(), rhs: c1() };
+        let k = InstrKind::SRem {
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
@@ -1228,70 +1201,134 @@ mod tests {
 
     #[test]
     fn operands_and() {
-        assert_eq!(InstrKind::And { lhs: c0(), rhs: c1() }.operands(), vec![c0(), c1()]);
+        assert_eq!(
+            InstrKind::And {
+                lhs: c0(),
+                rhs: c1()
+            }
+            .operands(),
+            vec![c0(), c1()]
+        );
     }
 
     #[test]
     fn operands_or() {
-        assert_eq!(InstrKind::Or { lhs: c0(), rhs: c1() }.operands(), vec![c0(), c1()]);
+        assert_eq!(
+            InstrKind::Or {
+                lhs: c0(),
+                rhs: c1()
+            }
+            .operands(),
+            vec![c0(), c1()]
+        );
     }
 
     #[test]
     fn operands_xor() {
-        assert_eq!(InstrKind::Xor { lhs: c0(), rhs: c1() }.operands(), vec![c0(), c1()]);
+        assert_eq!(
+            InstrKind::Xor {
+                lhs: c0(),
+                rhs: c1()
+            }
+            .operands(),
+            vec![c0(), c1()]
+        );
     }
 
     #[test]
     fn operands_shl() {
-        let k = InstrKind::Shl { flags: IntArithFlags::default(), lhs: c0(), rhs: c1() };
+        let k = InstrKind::Shl {
+            flags: IntArithFlags::default(),
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_lshr() {
-        assert_eq!(InstrKind::LShr { exact: false, lhs: c0(), rhs: c1() }.operands(), vec![c0(), c1()]);
+        assert_eq!(
+            InstrKind::LShr {
+                exact: false,
+                lhs: c0(),
+                rhs: c1()
+            }
+            .operands(),
+            vec![c0(), c1()]
+        );
     }
 
     #[test]
     fn operands_ashr() {
-        assert_eq!(InstrKind::AShr { exact: false, lhs: c0(), rhs: c1() }.operands(), vec![c0(), c1()]);
+        assert_eq!(
+            InstrKind::AShr {
+                exact: false,
+                lhs: c0(),
+                rhs: c1()
+            }
+            .operands(),
+            vec![c0(), c1()]
+        );
     }
 
     // ── operands() — FP arithmetic (6 variants) ───────────────────────────────
 
     #[test]
     fn operands_fadd() {
-        let k = InstrKind::FAdd { flags: FastMathFlags::default(), lhs: c0(), rhs: c1() };
+        let k = InstrKind::FAdd {
+            flags: FastMathFlags::default(),
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_fsub() {
-        let k = InstrKind::FSub { flags: FastMathFlags::default(), lhs: c0(), rhs: c1() };
+        let k = InstrKind::FSub {
+            flags: FastMathFlags::default(),
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_fmul() {
-        let k = InstrKind::FMul { flags: FastMathFlags::default(), lhs: c0(), rhs: c1() };
+        let k = InstrKind::FMul {
+            flags: FastMathFlags::default(),
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_fdiv() {
-        let k = InstrKind::FDiv { flags: FastMathFlags::default(), lhs: c0(), rhs: c1() };
+        let k = InstrKind::FDiv {
+            flags: FastMathFlags::default(),
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_frem() {
-        let k = InstrKind::FRem { flags: FastMathFlags::default(), lhs: c0(), rhs: c1() };
+        let k = InstrKind::FRem {
+            flags: FastMathFlags::default(),
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_fneg() {
-        let k = InstrKind::FNeg { flags: FastMathFlags::default(), operand: c0() };
+        let k = InstrKind::FNeg {
+            flags: FastMathFlags::default(),
+            operand: c0(),
+        };
         assert_eq!(k.operands(), vec![c0()]);
     }
 
@@ -1299,7 +1336,11 @@ mod tests {
 
     #[test]
     fn operands_icmp() {
-        let k = InstrKind::ICmp { pred: IntPredicate::Eq, lhs: c0(), rhs: c1() };
+        let k = InstrKind::ICmp {
+            pred: IntPredicate::Eq,
+            lhs: c0(),
+            rhs: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
@@ -1319,27 +1360,45 @@ mod tests {
     #[test]
     fn operands_alloca_no_count() {
         let ctx = Context::new();
-        let k = InstrKind::Alloca { alloc_ty: ctx.i32_ty, num_elements: None, align: None };
+        let k = InstrKind::Alloca {
+            alloc_ty: ctx.i32_ty,
+            num_elements: None,
+            align: None,
+        };
         assert_eq!(k.operands(), vec![]);
     }
 
     #[test]
     fn operands_alloca_with_count() {
         let ctx = Context::new();
-        let k = InstrKind::Alloca { alloc_ty: ctx.i32_ty, num_elements: Some(c0()), align: None };
+        let k = InstrKind::Alloca {
+            alloc_ty: ctx.i32_ty,
+            num_elements: Some(c0()),
+            align: None,
+        };
         assert_eq!(k.operands(), vec![c0()]);
     }
 
     #[test]
     fn operands_load() {
         let ctx = Context::new();
-        let k = InstrKind::Load { ty: ctx.i32_ty, ptr: c0(), align: None, volatile: false };
+        let k = InstrKind::Load {
+            ty: ctx.i32_ty,
+            ptr: c0(),
+            align: None,
+            volatile: false,
+        };
         assert_eq!(k.operands(), vec![c0()]);
     }
 
     #[test]
     fn operands_store() {
-        let k = InstrKind::Store { val: c0(), ptr: c1(), align: None, volatile: false };
+        let k = InstrKind::Store {
+            val: c0(),
+            ptr: c1(),
+            align: None,
+            volatile: false,
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
@@ -1372,100 +1431,198 @@ mod tests {
     #[test]
     fn operands_trunc() {
         let ctx = Context::new();
-        assert_eq!(InstrKind::Trunc { val: c0(), to: ctx.i8_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::Trunc {
+                val: c0(),
+                to: ctx.i8_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_zext() {
         let ctx = Context::new();
-        assert_eq!(InstrKind::ZExt { val: c0(), to: ctx.i64_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::ZExt {
+                val: c0(),
+                to: ctx.i64_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_sext() {
         let ctx = Context::new();
-        assert_eq!(InstrKind::SExt { val: c0(), to: ctx.i64_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::SExt {
+                val: c0(),
+                to: ctx.i64_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_fptrunc() {
         let ctx = Context::new();
         let f32_ty = ctx.f32_ty;
-        assert_eq!(InstrKind::FPTrunc { val: c0(), to: f32_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::FPTrunc {
+                val: c0(),
+                to: f32_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_fpext() {
         let ctx = Context::new();
         let f64_ty = ctx.f64_ty;
-        assert_eq!(InstrKind::FPExt { val: c0(), to: f64_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::FPExt {
+                val: c0(),
+                to: f64_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_fptoui() {
         let ctx = Context::new();
-        assert_eq!(InstrKind::FPToUI { val: c0(), to: ctx.i64_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::FPToUI {
+                val: c0(),
+                to: ctx.i64_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_fptosi() {
         let ctx = Context::new();
-        assert_eq!(InstrKind::FPToSI { val: c0(), to: ctx.i64_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::FPToSI {
+                val: c0(),
+                to: ctx.i64_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_uitofp() {
         let ctx = Context::new();
         let f64_ty = ctx.f64_ty;
-        assert_eq!(InstrKind::UIToFP { val: c0(), to: f64_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::UIToFP {
+                val: c0(),
+                to: f64_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_sitofp() {
         let ctx = Context::new();
         let f64_ty = ctx.f64_ty;
-        assert_eq!(InstrKind::SIToFP { val: c0(), to: f64_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::SIToFP {
+                val: c0(),
+                to: f64_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_ptrtoint() {
         let ctx = Context::new();
-        assert_eq!(InstrKind::PtrToInt { val: c0(), to: ctx.i64_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::PtrToInt {
+                val: c0(),
+                to: ctx.i64_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_inttoptr() {
         let ctx = Context::new();
         let ptr_ty = ctx.ptr_ty;
-        assert_eq!(InstrKind::IntToPtr { val: c0(), to: ptr_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::IntToPtr {
+                val: c0(),
+                to: ptr_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_bitcast() {
         let ctx = Context::new();
         let ptr_ty = ctx.ptr_ty;
-        assert_eq!(InstrKind::BitCast { val: c0(), to: ptr_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::BitCast {
+                val: c0(),
+                to: ptr_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     #[test]
     fn operands_addrspacecast() {
         let ctx = Context::new();
         let ptr_ty = ctx.ptr_ty;
-        assert_eq!(InstrKind::AddrSpaceCast { val: c0(), to: ptr_ty }.operands(), vec![c0()]);
+        assert_eq!(
+            InstrKind::AddrSpaceCast {
+                val: c0(),
+                to: ptr_ty
+            }
+            .operands(),
+            vec![c0()]
+        );
     }
 
     // ── operands() — misc (7 variants) ───────────────────────────────────────
 
     #[test]
     fn operands_select() {
-        let k = InstrKind::Select { cond: c0(), then_val: c1(), else_val: v0() };
+        let k = InstrKind::Select {
+            cond: c0(),
+            then_val: c1(),
+            else_val: v0(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1(), v0()]);
     }
 
     #[test]
     fn operands_phi_empty() {
         let ctx = Context::new();
-        let k = InstrKind::Phi { ty: ctx.i32_ty, incoming: vec![] };
+        let k = InstrKind::Phi {
+            ty: ctx.i32_ty,
+            incoming: vec![],
+        };
         assert_eq!(k.operands(), vec![]);
     }
 
@@ -1482,32 +1639,50 @@ mod tests {
 
     #[test]
     fn operands_extractvalue() {
-        let k = InstrKind::ExtractValue { aggregate: c0(), indices: vec![0, 1] };
+        let k = InstrKind::ExtractValue {
+            aggregate: c0(),
+            indices: vec![0, 1],
+        };
         assert_eq!(k.operands(), vec![c0()]);
     }
 
     #[test]
     fn operands_insertvalue() {
-        let k = InstrKind::InsertValue { aggregate: c0(), val: c1(), indices: vec![0] };
+        let k = InstrKind::InsertValue {
+            aggregate: c0(),
+            val: c1(),
+            indices: vec![0],
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_extractelement() {
-        let k = InstrKind::ExtractElement { vec: c0(), idx: c1() };
+        let k = InstrKind::ExtractElement {
+            vec: c0(),
+            idx: c1(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
     #[test]
     fn operands_insertelement() {
-        let k = InstrKind::InsertElement { vec: c0(), val: c1(), idx: v0() };
+        let k = InstrKind::InsertElement {
+            vec: c0(),
+            val: c1(),
+            idx: v0(),
+        };
         assert_eq!(k.operands(), vec![c0(), c1(), v0()]);
     }
 
     #[test]
     fn operands_shufflevector() {
         // mask is Vec<i32> (integer literals, not ValueRefs) — v1 and v2 only.
-        let k = InstrKind::ShuffleVector { v1: c0(), v2: c1(), mask: vec![0, 1, 0, 1] };
+        let k = InstrKind::ShuffleVector {
+            v1: c0(),
+            v2: c1(),
+            mask: vec![0, 1, 0, 1],
+        };
         assert_eq!(k.operands(), vec![c0(), c1()]);
     }
 
@@ -1560,7 +1735,11 @@ mod tests {
 
     #[test]
     fn operands_condbr() {
-        let k = InstrKind::CondBr { cond: c0(), then_dest: b0(), else_dest: b1() };
+        let k = InstrKind::CondBr {
+            cond: c0(),
+            then_dest: b0(),
+            else_dest: b1(),
+        };
         // Only the condition is a value operand; block targets are not.
         assert_eq!(k.operands(), vec![c0()]);
     }
@@ -1590,7 +1769,11 @@ mod tests {
 
     #[test]
     fn successors_condbr() {
-        let k = InstrKind::CondBr { cond: c0(), then_dest: b0(), else_dest: b1() };
+        let k = InstrKind::CondBr {
+            cond: c0(),
+            then_dest: b0(),
+            else_dest: b1(),
+        };
         assert_eq!(k.successors(), vec![b0(), b1()]);
     }
 
@@ -1606,7 +1789,11 @@ mod tests {
 
     #[test]
     fn successors_switch_no_cases() {
-        let k = InstrKind::Switch { val: c0(), default: b1(), cases: vec![] };
+        let k = InstrKind::Switch {
+            val: c0(),
+            default: b1(),
+            cases: vec![],
+        };
         assert_eq!(k.successors(), vec![b1()]);
     }
 
@@ -1633,52 +1820,219 @@ mod tests {
         let callee_ty = ctx.mk_fn_type(ctx.void_ty, vec![], false);
         // One representative from each group of non-terminators.
         let cases: &[InstrKind] = &[
-            InstrKind::Add { flags: IntArithFlags::default(), lhs: c0(), rhs: c1() },
-            InstrKind::Sub { flags: IntArithFlags::default(), lhs: c0(), rhs: c1() },
-            InstrKind::Mul { flags: IntArithFlags::default(), lhs: c0(), rhs: c1() },
-            InstrKind::UDiv { exact: false, lhs: c0(), rhs: c1() },
-            InstrKind::SDiv { exact: false, lhs: c0(), rhs: c1() },
-            InstrKind::URem { lhs: c0(), rhs: c1() },
-            InstrKind::SRem { lhs: c0(), rhs: c1() },
-            InstrKind::And { lhs: c0(), rhs: c1() },
-            InstrKind::Or  { lhs: c0(), rhs: c1() },
-            InstrKind::Xor { lhs: c0(), rhs: c1() },
-            InstrKind::Shl { flags: IntArithFlags::default(), lhs: c0(), rhs: c1() },
-            InstrKind::LShr { exact: false, lhs: c0(), rhs: c1() },
-            InstrKind::AShr { exact: false, lhs: c0(), rhs: c1() },
-            InstrKind::FAdd { flags: FastMathFlags::default(), lhs: c0(), rhs: c1() },
-            InstrKind::FSub { flags: FastMathFlags::default(), lhs: c0(), rhs: c1() },
-            InstrKind::FMul { flags: FastMathFlags::default(), lhs: c0(), rhs: c1() },
-            InstrKind::FDiv { flags: FastMathFlags::default(), lhs: c0(), rhs: c1() },
-            InstrKind::FRem { flags: FastMathFlags::default(), lhs: c0(), rhs: c1() },
-            InstrKind::FNeg { flags: FastMathFlags::default(), operand: c0() },
-            InstrKind::ICmp { pred: IntPredicate::Eq, lhs: c0(), rhs: c1() },
-            InstrKind::FCmp { flags: FastMathFlags::default(), pred: FloatPredicate::Oeq, lhs: c0(), rhs: c1() },
-            InstrKind::Alloca { alloc_ty: ctx.i32_ty, num_elements: None, align: None },
-            InstrKind::Load  { ty: ctx.i32_ty, ptr: c0(), align: None, volatile: false },
-            InstrKind::Store { val: c0(), ptr: c1(), align: None, volatile: false },
-            InstrKind::GetElementPtr { inbounds: false, base_ty: ctx.i32_ty, ptr: c0(), indices: vec![] },
-            InstrKind::Trunc { val: c0(), to: ctx.i8_ty },
-            InstrKind::ZExt  { val: c0(), to: ctx.i64_ty },
-            InstrKind::SExt  { val: c0(), to: ctx.i64_ty },
-            InstrKind::FPTrunc { val: c0(), to: ctx.f32_ty },
-            InstrKind::FPExt   { val: c0(), to: ctx.f64_ty },
-            InstrKind::FPToUI  { val: c0(), to: ctx.i64_ty },
-            InstrKind::FPToSI  { val: c0(), to: ctx.i64_ty },
-            InstrKind::UIToFP  { val: c0(), to: ctx.f64_ty },
-            InstrKind::SIToFP  { val: c0(), to: ctx.f64_ty },
-            InstrKind::PtrToInt { val: c0(), to: ctx.i64_ty },
-            InstrKind::IntToPtr { val: c0(), to: ctx.ptr_ty },
-            InstrKind::BitCast  { val: c0(), to: ctx.ptr_ty },
-            InstrKind::AddrSpaceCast { val: c0(), to: ctx.ptr_ty },
-            InstrKind::Select { cond: c0(), then_val: c1(), else_val: v0() },
-            InstrKind::Phi { ty: ctx.i32_ty, incoming: vec![] },
-            InstrKind::ExtractValue { aggregate: c0(), indices: vec![0] },
-            InstrKind::InsertValue  { aggregate: c0(), val: c1(), indices: vec![0] },
-            InstrKind::ExtractElement { vec: c0(), idx: c1() },
-            InstrKind::InsertElement  { vec: c0(), val: c1(), idx: v0() },
-            InstrKind::ShuffleVector  { v1: c0(), v2: c1(), mask: vec![0, 1] },
-            InstrKind::Call { tail: TailCallKind::None, callee_ty, callee: c0(), args: vec![] },
+            InstrKind::Add {
+                flags: IntArithFlags::default(),
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::Sub {
+                flags: IntArithFlags::default(),
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::Mul {
+                flags: IntArithFlags::default(),
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::UDiv {
+                exact: false,
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::SDiv {
+                exact: false,
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::URem {
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::SRem {
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::And {
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::Or {
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::Xor {
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::Shl {
+                flags: IntArithFlags::default(),
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::LShr {
+                exact: false,
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::AShr {
+                exact: false,
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::FAdd {
+                flags: FastMathFlags::default(),
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::FSub {
+                flags: FastMathFlags::default(),
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::FMul {
+                flags: FastMathFlags::default(),
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::FDiv {
+                flags: FastMathFlags::default(),
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::FRem {
+                flags: FastMathFlags::default(),
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::FNeg {
+                flags: FastMathFlags::default(),
+                operand: c0(),
+            },
+            InstrKind::ICmp {
+                pred: IntPredicate::Eq,
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::FCmp {
+                flags: FastMathFlags::default(),
+                pred: FloatPredicate::Oeq,
+                lhs: c0(),
+                rhs: c1(),
+            },
+            InstrKind::Alloca {
+                alloc_ty: ctx.i32_ty,
+                num_elements: None,
+                align: None,
+            },
+            InstrKind::Load {
+                ty: ctx.i32_ty,
+                ptr: c0(),
+                align: None,
+                volatile: false,
+            },
+            InstrKind::Store {
+                val: c0(),
+                ptr: c1(),
+                align: None,
+                volatile: false,
+            },
+            InstrKind::GetElementPtr {
+                inbounds: false,
+                base_ty: ctx.i32_ty,
+                ptr: c0(),
+                indices: vec![],
+            },
+            InstrKind::Trunc {
+                val: c0(),
+                to: ctx.i8_ty,
+            },
+            InstrKind::ZExt {
+                val: c0(),
+                to: ctx.i64_ty,
+            },
+            InstrKind::SExt {
+                val: c0(),
+                to: ctx.i64_ty,
+            },
+            InstrKind::FPTrunc {
+                val: c0(),
+                to: ctx.f32_ty,
+            },
+            InstrKind::FPExt {
+                val: c0(),
+                to: ctx.f64_ty,
+            },
+            InstrKind::FPToUI {
+                val: c0(),
+                to: ctx.i64_ty,
+            },
+            InstrKind::FPToSI {
+                val: c0(),
+                to: ctx.i64_ty,
+            },
+            InstrKind::UIToFP {
+                val: c0(),
+                to: ctx.f64_ty,
+            },
+            InstrKind::SIToFP {
+                val: c0(),
+                to: ctx.f64_ty,
+            },
+            InstrKind::PtrToInt {
+                val: c0(),
+                to: ctx.i64_ty,
+            },
+            InstrKind::IntToPtr {
+                val: c0(),
+                to: ctx.ptr_ty,
+            },
+            InstrKind::BitCast {
+                val: c0(),
+                to: ctx.ptr_ty,
+            },
+            InstrKind::AddrSpaceCast {
+                val: c0(),
+                to: ctx.ptr_ty,
+            },
+            InstrKind::Select {
+                cond: c0(),
+                then_val: c1(),
+                else_val: v0(),
+            },
+            InstrKind::Phi {
+                ty: ctx.i32_ty,
+                incoming: vec![],
+            },
+            InstrKind::ExtractValue {
+                aggregate: c0(),
+                indices: vec![0],
+            },
+            InstrKind::InsertValue {
+                aggregate: c0(),
+                val: c1(),
+                indices: vec![0],
+            },
+            InstrKind::ExtractElement {
+                vec: c0(),
+                idx: c1(),
+            },
+            InstrKind::InsertElement {
+                vec: c0(),
+                val: c1(),
+                idx: v0(),
+            },
+            InstrKind::ShuffleVector {
+                v1: c0(),
+                v2: c1(),
+                mask: vec![0, 1],
+            },
+            InstrKind::Call {
+                tail: TailCallKind::None,
+                callee_ty,
+                callee: c0(),
+                args: vec![],
+            },
         ];
         for k in cases {
             assert_eq!(k.successors(), vec![], "{:?} should have no successors", k);
@@ -1689,7 +2043,9 @@ mod tests {
 
     #[test]
     fn operands_fence_has_no_value_operands() {
-        let k = InstrKind::Fence { ordering: MemOrdering::SeqCst };
+        let k = InstrKind::Fence {
+            ordering: MemOrdering::SeqCst,
+        };
         assert_eq!(k.operands(), vec![]);
     }
 
@@ -1723,7 +2079,9 @@ mod tests {
 
     #[test]
     fn successors_atomics_are_empty() {
-        let fence = InstrKind::Fence { ordering: MemOrdering::SeqCst };
+        let fence = InstrKind::Fence {
+            ordering: MemOrdering::SeqCst,
+        };
         let cas = InstrKind::CmpXchg {
             ptr: c0(),
             cmp: c1(),
@@ -1750,7 +2108,9 @@ mod tests {
 
     #[test]
     fn opcode_names_atomics() {
-        let fence = InstrKind::Fence { ordering: MemOrdering::SeqCst };
+        let fence = InstrKind::Fence {
+            ordering: MemOrdering::SeqCst,
+        };
         let cas = InstrKind::CmpXchg {
             ptr: c0(),
             cmp: c1(),

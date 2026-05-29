@@ -68,10 +68,26 @@ pub fn declare_personality_fn(ctx: &mut Context, module: &mut Module) -> Functio
     let fn_ty = ctx.mk_fn_type(i32_ty, vec![i32_ty, i64_ty, ptr_ty, ptr_ty], false);
 
     let args = vec![
-        Argument { name: String::new(), ty: i32_ty, index: 0 },
-        Argument { name: String::new(), ty: i64_ty, index: 1 },
-        Argument { name: String::new(), ty: ptr_ty, index: 2 },
-        Argument { name: String::new(), ty: ptr_ty, index: 3 },
+        Argument {
+            name: String::new(),
+            ty: i32_ty,
+            index: 0,
+        },
+        Argument {
+            name: String::new(),
+            ty: i64_ty,
+            index: 1,
+        },
+        Argument {
+            name: String::new(),
+            ty: ptr_ty,
+            index: 2,
+        },
+        Argument {
+            name: String::new(),
+            ty: ptr_ty,
+            index: 3,
+        },
     ];
     let decl = llvm_ir::function::Function::new_declaration(NAME, fn_ty, args, Linkage::External);
     module.add_function(decl)
@@ -121,11 +137,7 @@ pub fn emit_landingpad_block(
     );
 
     // Branch to cleanup_dest
-    let br_instr = Instruction::new(
-        None,
-        ctx.void_ty,
-        InstrKind::Br { dest: cleanup_dest },
-    );
+    let br_instr = Instruction::new(None, ctx.void_ty, InstrKind::Br { dest: cleanup_dest });
 
     let mut bb = BasicBlock::new("landingpad");
     let lp_id = func.alloc_instr(lp_instr);
@@ -182,7 +194,9 @@ pub struct LsdaBuilder {
 impl LsdaBuilder {
     /// Create an empty builder.
     pub fn new() -> Self {
-        LsdaBuilder { call_sites: Vec::new() }
+        LsdaBuilder {
+            call_sites: Vec::new(),
+        }
     }
 
     /// Append one call-site record.
@@ -296,8 +310,15 @@ mod tests {
         let (mut ctx, mut module) = mk_ctx_module();
         let id1 = declare_personality_fn(&mut ctx, &mut module);
         let id2 = declare_personality_fn(&mut ctx, &mut module);
-        assert_eq!(id1, id2, "double declaration must return the same FunctionId");
-        assert_eq!(module.num_functions(), 1, "only one function must be in the module");
+        assert_eq!(
+            id1, id2,
+            "double declaration must return the same FunctionId"
+        );
+        assert_eq!(
+            module.num_functions(),
+            1,
+            "only one function must be in the module"
+        );
     }
 
     // ── 3. landingpad_block_exists ────────────────────────────────────────────
@@ -341,7 +362,10 @@ mod tests {
         let first_iid = bb.body[0];
         let first_instr = func.instr(first_iid);
         assert!(
-            matches!(first_instr.kind, InstrKind::LandingPad { cleanup: true, .. }),
+            matches!(
+                first_instr.kind,
+                InstrKind::LandingPad { cleanup: true, .. }
+            ),
             "first instruction in landing-pad block must be LandingPad{{cleanup:true}}, got {:?}",
             first_instr.kind,
         );
@@ -363,7 +387,10 @@ mod tests {
         // Header: lpstart=0xff, ttype=0xff, cs_encoding=0x01
         assert_eq!(bytes[0], 0xff, "lpstart_encoding must be DW_EH_PE_omit");
         assert_eq!(bytes[1], 0xff, "ttype_encoding must be DW_EH_PE_omit");
-        assert_eq!(bytes[2], 0x01, "call_site_encoding must be DW_EH_PE_uleb128");
+        assert_eq!(
+            bytes[2], 0x01,
+            "call_site_encoding must be DW_EH_PE_uleb128"
+        );
 
         // After the header and the table-length uleb128, the record should
         // encode cs_start=10, cs_len=5, lp_offset=20, action=0.

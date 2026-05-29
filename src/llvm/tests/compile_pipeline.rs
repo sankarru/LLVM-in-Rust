@@ -3,8 +3,8 @@
 //! These tests call the compile logic directly without subprocesses so they
 //! run on every platform in the standard `cargo test` suite.
 
-use llvm::compile::{compile_ir_to_object, host_object_format, regalloc_strategy_for};
 use llvm::codegen::regalloc::RegAllocStrategy;
+use llvm::compile::{compile_ir_to_object, host_object_format, regalloc_strategy_for};
 use llvm_transforms::OptLevel;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -38,8 +38,7 @@ entry:
 }
 "#;
     let fmt = host_object_format();
-    let bytes = compile_ir_to_object(src, OptLevel::O0, fmt)
-        .expect("compile failed");
+    let bytes = compile_ir_to_object(src, OptLevel::O0, fmt).expect("compile failed");
     assert!(!bytes.is_empty(), "expected non-empty object");
     assert!(
         looks_like_object(&bytes),
@@ -64,15 +63,12 @@ entry:
 }
 "#;
     let fmt = host_object_format();
-    let bytes = compile_ir_to_object(src, OptLevel::O0, fmt)
-        .expect("compile failed");
+    let bytes = compile_ir_to_object(src, OptLevel::O0, fmt).expect("compile failed");
     assert!(!bytes.is_empty());
     // The object bytes should contain the symbol names somewhere as strings.
     let _text = std::str::from_utf8(&bytes).unwrap_or("");
     // ELF/Mach-O/COFF all store symbol names as ASCII in a string table.
-    let raw_contains = |needle: &[u8]| {
-        bytes.windows(needle.len()).any(|w| w == needle)
-    };
+    let raw_contains = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
     assert!(raw_contains(b"main"), "missing 'main' symbol in object");
     assert!(raw_contains(b"helper"), "missing 'helper' symbol in object");
 }
@@ -216,7 +212,10 @@ entry:
 "#;
     let fmt = host_object_format();
     let bytes = compile_ir_to_object(src, OptLevel::O2, fmt).expect("O2 compile failed");
-    assert!(looks_like_object(&bytes), "O2 output must be a valid object file");
+    assert!(
+        looks_like_object(&bytes),
+        "O2 output must be a valid object file"
+    );
 }
 
 #[test]
@@ -230,7 +229,10 @@ entry:
 "#;
     let fmt = host_object_format();
     let bytes = compile_ir_to_object(src, OptLevel::O3, fmt).expect("O3 compile failed");
-    assert!(looks_like_object(&bytes), "O3 output must be a valid object file");
+    assert!(
+        looks_like_object(&bytes),
+        "O3 output must be a valid object file"
+    );
 }
 
 #[test]
@@ -246,8 +248,8 @@ entry:
 }
 "#;
     let fmt = host_object_format();
-    let bytes = compile_ir_to_object(src, OptLevel::O2, fmt)
-        .expect("pressure-free O2 compile failed");
+    let bytes =
+        compile_ir_to_object(src, OptLevel::O2, fmt).expect("pressure-free O2 compile failed");
     assert!(
         looks_like_object(&bytes),
         "graph-coloring O2 output must be a valid object file"
