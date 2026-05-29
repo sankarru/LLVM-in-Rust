@@ -2,6 +2,11 @@
 name = "rustc-backend-validation"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
+publish = false
+description = "Validation fixture for the LLVM-in-Rust rustc backend smoke path."
+repository = "https://github.com/yudongusa/LLVM-in-Rust"
+homepage = "https://github.com/yudongusa/LLVM-in-Rust"
 
 [profile.dev]
 codegen-units = 1

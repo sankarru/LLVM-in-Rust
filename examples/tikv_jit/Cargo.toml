@@ -5,6 +5,8 @@ edition = "2021"
 license = "Apache-2.0"
 publish = false
 description = "Example: using LLVM-in-Rust as a JIT backend for expression evaluation (TiKV-style coprocessor predicates)"
+repository = "https://github.com/yudongusa/LLVM-in-Rust"
+homepage = "https://github.com/yudongusa/LLVM-in-Rust"
 
 [dependencies]
 llvm-ir         = { version = "0.1.0", package = "llvm-in-rust-ir", path = "../../src/llvm-ir" }

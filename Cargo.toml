@@ -19,3 +19,8 @@ members = [
     "examples/tikv_jit",
     "bench/fuzz",
 ]
+
+[workspace.package]
+license = "Apache-2.0"
+repository = "https://github.com/yudongusa/LLVM-in-Rust"
+homepage = "https://github.com/yudongusa/LLVM-in-Rust"

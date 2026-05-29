@@ -50,24 +50,25 @@ elimination (`opt_pipeline.rs`) and a full hello-world IR program (`hello_world.
 
 ## Status
 
-Core roadmap phases are implemented and actively extended. Current workspace test inventory is **523 tests (all passing)**.
+LLVM-in-Rust is in a production-readiness stage, not a general drop-in LLVM
+replacement. Milestones A-U in the production roadmap are complete; the
+2026-05-26 audit added release-blocking follow-up Milestones V-Z before any
+general production-ready declaration.
 
-| Phase | What | Status |
-|-------|------|--------|
-| 1 | IR foundation — types, values, instructions, builder, printer, `.ll` parser | Done |
-| 2 | Analysis — CFG, dominator tree, use-def chains, loop detection | Done |
-| 3 | Optimization — mem2reg, DCE, constant folding/propagation, inlining | Done |
-| 4 | x86_64 backend — instruction selection, register allocation, object emission | Done |
-| 5 | AArch64 backend + LRIR reader/writer | Done |
-| 6 | Debug + unwind hardening (DWARF5 sections, `.eh_frame`, `.xdata/.pdata`, verifier-oriented tests) | Done |
-| 7 | SIMD/FP expansion (feature-gated SSE4.2/AVX2/AVX-512F vector lowering paths) | Done |
-| 8 | LTO baseline (IR payload embedding in objects + link-time cross-module re-optimization path) | Done |
+| Use case | Status | Boundary |
+|---|---|---|
+| Constrained production pilots | Supported with controls | Trusted LLVM 15+ opaque-pointer IR, pinned commits/releases, green release-blocking CI, and an explicitly supported backend/object-format combination. |
+| General LLVM replacement | Not supported yet | The project still has open V-Z audit follow-ups, backend contract gaps, and RC burn-in requirements. |
+| Untrusted or adversarial input | Not supported without sandboxing | Parser, optimizer, codegen, and JIT paths must run behind external process/container isolation, CPU/memory limits, and JIT disablement where inputs are not trusted. |
 
-### Recently completed milestones
+The workspace test inventory changes frequently and is intentionally not
+hard-coded here. Treat CI plus the validation commands in
+[`docs/production_operations.md`](docs/production_operations.md) as the current
+source of truth for release-blocking quality status.
 
-- **DWARF / unwind completeness:** frame-aware unwind metadata emission with structural and tool-backed verification (`readelf`, `llvm-dwarfdump`, `llvm-readobj` where available).
-- **SIMD/FP widening:** x86 lowering now includes explicit width/feature gating for SSE4.2, AVX2, and AVX-512F paths with fallback safety tests.
-- **LTO-ready flow:** top-level `llvm::lto` helpers now support embedding/recovering LRIR payloads and running cross-module optimization at link time.
+See [`docs/production_support_boundaries.md`](docs/production_support_boundaries.md)
+for the public support contract, API stability matrix, and backend/platform
+boundaries.
 
 ---
 
@@ -76,10 +77,13 @@ Core roadmap phases are implemented and actively extended. Current workspace tes
 LLVM-in-Rust follows [Semantic Versioning](https://semver.org/) with an explicit pre-1.0 stability policy:
 
 - **`0.x.y` releases:** no public API stability guarantee. Any `0.x` minor-version bump may include breaking public API changes as the IR model, pass interfaces, and backend traits continue to mature.
-- **`1.0.0` readiness:** the project will not declare a stable 1.0 API until at least one real compiler frontend integration is validated end-to-end, all Milestone B IR coverage gaps are closed, and COFF object emission is complete.
+- **`1.0.0` readiness:** the project will not declare a stable 1.0 API until the production-readiness roadmap's V-Z follow-up milestones are complete, release-candidate burn-in has passed, and maintainers have signed off at least one constrained production pilot with documented fallback.
 - **Post-1.0 releases:** standard SemVer rules apply. Breaking API changes are reserved for major versions and include a documented deprecation/migration cycle.
 
-Release notes live in [CHANGELOG.md](CHANGELOG.md); the `v0.1.0` GitHub release should link to the [`0.1.0` changelog entry](CHANGELOG.md#010---unreleased).
+The pre-1.0 API stability matrix lives in
+[`docs/production_support_boundaries.md`](docs/production_support_boundaries.md#pre-10-api-stability-matrix).
+Release notes live in [CHANGELOG.md](CHANGELOG.md); the `v0.1.0` GitHub release
+links to the [`0.1.0` changelog entry](CHANGELOG.md#010---2026-05-13).
 
 ---
 
@@ -137,8 +141,10 @@ Benchmarks use Criterion and run on stable Rust; no nightly-only bench harness i
   of IR instructions). At that scale LLVM's mature optimisations will outperform this project.
   These benchmarks target the small-module embedded-library use case.
 
-- **Code quality**: this project does not attempt to produce code as optimised as LLVM `-O2`.
-  The codegen benchmarks compare `-O0` (unoptimised) compilation speed only.
+- **Code quality**: the repository has deterministic codegen, large-program,
+  and performance-budget gates, but it does not claim broad LLVM `-O2` parity.
+  Treat output quality as scoped to the backend and workload contract documented
+  in the production support boundaries.
 
 ---
 
@@ -156,7 +162,8 @@ This project is a **standalone re-implementation**, not a wrapper around LLVM. "
 | 17 | Compatible | Compatible |
 | 18 – 22 | Compatible | Compatible |
 
-**Current LLVM stable release:** 22.1.0 (February 2026)
+This table records the parser/printer compatibility target, not a claim about
+the latest upstream LLVM release.
 
 ### Key IR feature versions
 
@@ -170,13 +177,17 @@ This project is a **standalone re-implementation**, not a wrapper around LLVM. "
 | Fast-math flags (`nnan`, `ninf`, `fast`, …) | **Yes** | LLVM 3.1 |
 | Tail-call kinds (`tail`, `musttail`, `notail`) | **Yes** | LLVM 3.0 |
 | `fneg` instruction | **Yes** | LLVM 9 |
-| `freeze` instruction | **No** | LLVM 10 |
-| `vp.*` vector-predication intrinsics | **No** | LLVM 11 |
+| `freeze` instruction | **Yes** | LLVM 10 |
+| `vp.*` vector-predication intrinsics | **Yes** — recognized as intrinsic calls and lowered through implemented vector paths | LLVM 11 |
+| Inline assembly | **Partial** — parse/print plus `nop` template lowering on x86-64/AArch64 | LLVM IR feature |
+| Atomics (`fence`, `cmpxchg`, `atomicrmw`) | **Yes** — backend coverage varies by target and operation | LLVM IR feature |
+| EH paths (`invoke`, `landingpad`, funclet pads) | **Partial** — IR round-trip and metadata/object support are present; runtime language interop remains experimental | LLVM IR feature |
 
 ### What this means in practice
 
 - **Reading LLVM 15+ output:** `.ll` files generated by `clang -S -emit-llvm` with LLVM 15 or
-  later can be parsed directly by `llvm-ir-parser`.
+  later are accepted for the implemented subset. Unsupported IR constructs should fail with
+  diagnostics rather than being treated as a production-supported path.
 - **Reading LLVM ≤14 output:** Not supported. LLVM 14 and earlier emit typed-pointer syntax
   (`i32*`, `i8**`) that this parser does not recognise. Pass those files through
   `opt --opaque-pointers -S` with LLVM 15 to upgrade them first.
@@ -694,17 +705,14 @@ Inline assembly support is intentionally small in v0.1.x: textual IR can parse
 and print LLVM-style inline asm calls such as `call void asm sideeffect "nop", ""()`,
 and x86-64/AArch64 lowering recognizes `nop` templates for direct machine-byte
 emission. Constraint solving, output operands, and register allocation across
-asm operands are not implemented yet; unsupported templates conservatively emit
-NOP bytes instead of attempting to assemble arbitrary text.
+general asm operands remain outside the production support contract.
 
-Exception-handling IR support covers the core `invoke`/`landingpad` shape used
-by Itanium-style unwinding: the parser, printer, binary IR round-trip, CFG
-successors, value rewriting, and tier-1 backends all preserve the normal and
-unwind edges. Lowering emits a normal call edge and keeps landingpad values
-defined conservatively while `.eh_frame`/personality integration matures.
-Windows SEH remains limited to the existing `.pdata`/`.xdata` and CodeView/PDB
-building blocks; full `landingpad` lowering to SEH funclets is not implemented
-yet.
+Exception-handling IR support covers the core `invoke`/`landingpad` and funclet
+shapes used by Itanium-style and Windows-style unwinding: the parser, printer,
+binary IR round-trip, CFG successors, value rewriting, LSDA/xdata builders, and
+tier-1 backends preserve the relevant edges and metadata. Cross-language runtime
+throw/catch behavior remains experimental and is scoped in
+[`docs/unwind_compatibility_matrix.md`](docs/unwind_compatibility_matrix.md).
 
 macOS (Mach-O):
 

@@ -1,5 +1,10 @@
 # rustc Codegen Backend Gap Analysis
 
+> Historical note: this document records the original gap analysis that guided
+> the staged rustc-backend work. For the current production support contract and
+> pre-1.0 stability boundaries, see
+> [`docs/production_support_boundaries.md`](production_support_boundaries.md).
+
 This document records the gap between the current LLVM-in-Rust pipeline and a
 production-grade `rustc_codegen_ssa` backend, capturing every blocking item and
 the estimated effort to close it.
