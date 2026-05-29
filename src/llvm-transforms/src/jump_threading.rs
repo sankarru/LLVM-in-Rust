@@ -158,6 +158,20 @@ impl FunctionPass for JumpThreading {
                 let new_else = bypass_if_empty(func, else_dest);
 
                 if new_then != then_dest || new_else != else_dest {
+                    // Before redirecting the edge, fix up the destination's phi
+                    // nodes.  Bypassing `bidx → empty → succ` means `succ` now
+                    // has a direct edge from `bidx`; every phi entry that
+                    // attributed a value to the empty block must also attribute
+                    // that value to `bidx`.  Without this, the empty block is
+                    // later pruned as unreachable and the phi loses an incoming
+                    // value entirely — silently miscompiling loops whose header
+                    // phis carry a preheader value (see jit_fibonacci).
+                    if new_then != then_dest {
+                        add_phi_edge_for_bypass(func, then_dest, new_then, BlockId(bidx as u32));
+                    }
+                    if new_else != else_dest {
+                        add_phi_edge_for_bypass(func, else_dest, new_else, BlockId(bidx as u32));
+                    }
                     func.instr_mut(tid).kind = InstrKind::CondBr {
                         cond,
                         then_dest: new_then,
@@ -174,6 +188,53 @@ impl FunctionPass for JumpThreading {
 
     fn name(&self) -> &'static str {
         "jump-threading"
+    }
+}
+
+/// After bypassing an empty block `empty` (so that predecessor `new_pred` now
+/// branches directly to `succ`), update `succ`'s phi nodes so that every
+/// incoming entry attributed to `empty` is also attributed to `new_pred`.
+///
+/// The `empty` entry itself is left in place: if `empty` remains reachable
+/// from other predecessors the entry is still required, and if it becomes
+/// unreachable a later dead-block prune drops it.  We skip adding a duplicate
+/// when `succ` already lists `new_pred` as an incoming edge (the degenerate
+/// case where `new_pred` reaches `succ` via two edges).
+fn add_phi_edge_for_bypass(
+    func: &mut Function,
+    empty: BlockId,
+    succ: BlockId,
+    new_pred: BlockId,
+) {
+    // `empty` must itself be a pure pass-through (no body) for this to be a
+    // value-preserving bypass; `bypass_if_empty` already guaranteed that.
+    let body = func.blocks[succ.0 as usize].body.clone();
+    for iid in body {
+        let (ty, incoming) = match &func.instr(iid).kind {
+            InstrKind::Phi { ty, incoming } => (*ty, incoming.clone()),
+            _ => continue,
+        };
+        // Value flowing through `empty`, and whether `new_pred` is already listed.
+        let mut via_empty: Option<ValueRef> = None;
+        let mut has_new_pred = false;
+        for (v, b) in &incoming {
+            if *b == empty {
+                via_empty = Some(*v);
+            }
+            if *b == new_pred {
+                has_new_pred = true;
+            }
+        }
+        if let Some(v) = via_empty {
+            if !has_new_pred {
+                let mut new_incoming = incoming;
+                new_incoming.push((v, new_pred));
+                func.instr_mut(iid).kind = InstrKind::Phi {
+                    ty,
+                    incoming: new_incoming,
+                };
+            }
+        }
     }
 }
 
@@ -521,5 +582,83 @@ mod tests {
         let mut pass = JumpThreading;
         // The pass should not change anything — phi values are not constants.
         assert!(!pass.run_on_function(&mut ctx, func));
+    }
+
+    /// Regression for the `jit_fibonacci` miscompile (roadmap Milestone V /
+    /// issue #381): when the empty preheader block (`loop_init`, just
+    /// `br %loop_body`) is bypassed, the loop-header phis must keep their
+    /// preheader incoming value — re-attributed to the bypassing predecessor
+    /// (`entry`) — not silently lose it.
+    ///
+    /// Before the fix, JumpThreading redirected `entry → loop_body` without
+    /// updating `loop_body`'s phis, leaving stale `[v, %loop_init]` entries
+    /// that a later dead-block prune dropped, collapsing each 2-input loop phi
+    /// to its back-edge value alone.
+    #[test]
+    fn empty_block_bypass_preserves_loop_header_phi_incoming() {
+        use llvm_ir::InstrKind;
+        use llvm_ir_parser::parser::parse;
+
+        let src = r#"
+define i32 @fib(i32 %n) {
+entry:
+  %cmp = icmp sle i32 %n, 1
+  br i1 %cmp, label %base_case, label %loop_init
+base_case:
+  ret i32 %n
+loop_init:
+  br label %loop_body
+loop_body:
+  %a = phi i32 [ 0, %loop_init ], [ %b, %loop_body ]
+  %b = phi i32 [ 1, %loop_init ], [ %next, %loop_body ]
+  %next = add i32 %a, %b
+  %cond = icmp slt i32 %next, %n
+  br i1 %cond, label %loop_body, label %loop_exit
+loop_exit:
+  ret i32 %next
+}
+"#;
+        let (mut ctx, mut module) = parse(src).expect("parse");
+        let entry_idx = module.functions[0]
+            .blocks
+            .iter()
+            .position(|b| b.name == "entry")
+            .unwrap() as u32;
+        let loop_init_idx = module.functions[0]
+            .blocks
+            .iter()
+            .position(|b| b.name == "loop_init")
+            .unwrap() as u32;
+
+        let func = &mut module.functions[0];
+        let mut pass = JumpThreading;
+        pass.run_on_function(&mut ctx, func);
+
+        // After bypass, every loop_body phi must still carry two incoming
+        // values: the back-edge value, and the preheader value now attributed
+        // either to `entry` (re-pointed) or still to `loop_init` (kept until a
+        // later prune) — but never fewer than two distinct sources.
+        let lb = func.blocks.iter().find(|b| b.name == "loop_body").unwrap();
+        let mut checked = 0;
+        for &iid in &lb.body {
+            if let InstrKind::Phi { incoming, .. } = &func.instr(iid).kind {
+                assert!(
+                    incoming.len() >= 2,
+                    "loop phi lost an incoming entry: {incoming:?}"
+                );
+                // The preheader value must be reachable from `entry` now that
+                // `loop_init` is bypassed: either re-pointed to entry, or the
+                // stale loop_init entry is still present (pruned later).
+                let has_preheader_edge = incoming
+                    .iter()
+                    .any(|(_, b)| b.0 == entry_idx || b.0 == loop_init_idx);
+                assert!(
+                    has_preheader_edge,
+                    "loop phi has no preheader edge: {incoming:?}"
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 2, "expected two loop-header phis");
     }
 }
