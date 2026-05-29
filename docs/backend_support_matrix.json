@@ -1,0 +1,391 @@
+{
+  "schema_version": 1,
+  "policy": "docs/backend_support_matrix.md",
+  "issue": 384,
+  "axes": [
+    "abi",
+    "calls",
+    "varargs",
+    "structs_by_value_aggregates",
+    "atomics",
+    "fp_simd",
+    "eh_unwind",
+    "debug_info",
+    "object_format",
+    "relocations",
+    "linker_execution"
+  ],
+  "targets": {
+    "x86_64": {
+      "display": "x86-64 native backend",
+      "cells": {
+        "abi": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-target-x86/src/abi.rs", "command": "cargo +stable test -p llvm-in-rust-target-x86 abi -- --nocapture"}
+          ],
+          "notes": "SysV AMD64 and Windows x64 ABI helpers are covered by backend ABI tests."
+        },
+        "calls": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-target-x86/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-x86 --lib -- --nocapture"},
+            {"path": "src/llvm-codegen/tests/linker_compat.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test linker_compat -- --nocapture"}
+          ],
+          "notes": "Direct calls, external call relocations, and linked execution are represented in lowering/linker tests."
+        },
+        "varargs": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-ir-parser/tests/parse_basic.rs", "command": "cargo +stable test -p llvm-in-rust-ir-parser --test parse_basic parse_declaration_variadic -- --nocapture"}
+          ],
+          "limitations": "Variadic declarations and calls parse, but full va_start/va_arg lowering is not production-supported."
+        },
+        "structs_by_value_aggregates": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-x86/src/abi.rs", "command": "cargo +stable test -p llvm-in-rust-target-x86 abi -- --nocapture"},
+            {"path": "src/llvm-codegen/tests/global_emit.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test global_emit -- --nocapture"}
+          ],
+          "limitations": "Aggregate layout and ABI classification have targeted coverage; exhaustive by-value aggregate interop remains scoped by the matrix."
+        },
+        "atomics": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-target-x86/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-x86 atomic -- --nocapture"},
+            {"path": "src/llvm-jit/tests/atomic_threads.rs", "command": "cargo +stable test -p llvm-in-rust-jit --test atomic_threads -- --nocapture"}
+          ],
+          "notes": "LOCK cmpxchg/xadd/xchg paths and a JIT spinlock smoke test cover the supported atomic subset."
+        },
+        "fp_simd": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-target-x86/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-x86 --lib -- --nocapture"},
+            {"path": "src/llvm-target-x86/src/encode.rs", "command": "cargo +stable test -p llvm-in-rust-target-x86 --lib -- --nocapture"}
+          ],
+          "notes": "Scalar FP and feature-gated SIMD lowering are covered by target tests."
+        },
+        "eh_unwind": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-codegen/tests/lsda.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test lsda -- --nocapture"},
+            {"path": "src/llvm-codegen/tests/unwind_verify.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test unwind_verify -- --nocapture"}
+          ],
+          "limitations": "Object metadata and LSDA paths are tested; cross-language runtime throw/catch interop is still experimental."
+        },
+        "debug_info": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-codegen/tests/dwarf_line.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test dwarf_line -- --nocapture"},
+            {"path": "src/llvm-codegen/tests/codeview_coff.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test codeview_coff -- --nocapture"}
+          ],
+          "notes": "DWARF and CodeView/COFF debug section tests cover the documented metadata paths."
+        },
+        "object_format": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-codegen/tests/linker_compat.rs", "command": "scripts/interoperability_conformance.sh link"},
+            {"path": "src/llvm-codegen/tests/thinlto.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test thinlto -- --nocapture"}
+          ],
+          "notes": "ELF, Mach-O, and COFF object paths are exercised by object/link and ThinLTO tests."
+        },
+        "relocations": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-codegen/tests/global_emit.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test global_emit -- --nocapture"},
+            {"path": "src/llvm-codegen/tests/golden_codegen.rs", "command": "LLVM_IN_RUST_DETERMINISTIC=1 cargo +stable test -p llvm-in-rust-codegen golden -- --nocapture"}
+          ],
+          "limitations": "Global and external-call relocations are tested; exotic relocation/linker combinations require explicit known-issue entries before release."
+        },
+        "linker_execution": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-codegen/tests/linker_compat.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test linker_compat -- --nocapture"},
+            {"path": ".github/workflows/windows-e2e.yml", "command": "scripts/windows_e2e.sh"}
+          ],
+          "notes": "Linux/macOS/Windows linker execution is covered by conformance and Windows E2E workflows where tools are available."
+        }
+      }
+    },
+    "aarch64": {
+      "display": "AArch64 backend",
+      "cells": {
+        "abi": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-arm/src/abi.rs", "command": "cargo +stable test -p llvm-in-rust-target-arm abi -- --nocapture"}
+          ],
+          "limitations": "AAPCS64 and HFA helpers have tests; full cross-platform runtime ABI interop is still scoped by Milestone Y."
+        },
+        "calls": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-target-arm/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-arm --lib -- --nocapture"}
+          ],
+          "notes": "Direct calls lower through BLR and are covered in target lowering tests."
+        },
+        "varargs": {
+          "status": "unsupported",
+          "marker": "not_supported:aarch64-varargs",
+          "limitations": "AArch64 va_start/va_arg lowering is not part of the current production contract."
+        },
+        "structs_by_value_aggregates": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-arm/src/abi.rs", "command": "cargo +stable test -p llvm-in-rust-target-arm abi -- --nocapture"},
+            {"path": "src/llvm-codegen/tests/global_emit.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test global_emit -- --nocapture"}
+          ],
+          "limitations": "Aggregate layout and HFA classification are covered; exhaustive by-value interop remains scoped."
+        },
+        "atomics": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-target-arm/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-arm atomic -- --nocapture"},
+            {"path": "src/llvm-target-arm/src/encode.rs", "command": "cargo +stable test -p llvm-in-rust-target-arm atomic -- --nocapture"}
+          ],
+          "notes": "LSE and LL/SC atomic paths are represented in lowering/encoding tests."
+        },
+        "fp_simd": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-arm/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-arm --lib -- --nocapture"},
+            {"path": "src/llvm-target-arm/src/encode.rs", "command": "cargo +stable test -p llvm-in-rust-target-arm --lib -- --nocapture"}
+          ],
+          "limitations": "Scalar FP and selected NEON paths are covered; full SIMD/vector throughput coverage remains iterative."
+        },
+        "eh_unwind": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-codegen/tests/lsda.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test lsda -- --nocapture"},
+            {"path": "docs/unwind_compatibility_matrix.md", "command": "scripts/interoperability_conformance.sh debug"}
+          ],
+          "limitations": "IR edge preservation and LSDA metadata are represented; runtime language EH interop is experimental."
+        },
+        "debug_info": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-codegen/tests/dwarf_line.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test dwarf_line -- --nocapture"}
+          ],
+          "notes": "DWARF section emission has target-aware tests."
+        },
+        "object_format": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-arm/src/encode.rs", "command": "cargo +stable test -p llvm-in-rust-target-arm encode -- --nocapture"},
+            {"path": "scripts/platform_matrix.sh", "command": "scripts/platform_matrix.sh target-aarch64"}
+          ],
+          "limitations": "Artifact generation is gated; linked execution coverage is narrower than x86-64."
+        },
+        "relocations": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-codegen/tests/global_emit.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test global_emit -- --nocapture"}
+          ],
+          "limitations": "Shared global relocation tests cover object-model behavior; target-specific relocation/linker gaps require known-issue entries."
+        },
+        "linker_execution": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-codegen/tests/linker_compat.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test linker_compat -- --nocapture"}
+          ],
+          "limitations": "Host/tool availability determines whether AArch64 linked execution runs; cross-host execution is not required for every PR."
+        }
+      }
+    },
+    "riscv64": {
+      "display": "RISC-V RV64GC backend",
+      "cells": {
+        "abi": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-riscv/src/abi.rs", "command": "cargo +stable test -p llvm-in-rust-target-riscv abi -- --nocapture"}
+          ],
+          "limitations": "Integer and hardware-FP ABI subsets have tests; full psABI aggregate/varargs coverage is not complete."
+        },
+        "calls": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-riscv/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-riscv --lib -- --nocapture"}
+          ],
+          "limitations": "Direct calls are lowered; dynamic/runtime link execution is not a Tier-1 release requirement yet."
+        },
+        "varargs": {
+          "status": "unsupported",
+          "marker": "not_supported:riscv64-varargs",
+          "limitations": "RV64 va_start/va_arg lowering is not part of the current production contract."
+        },
+        "structs_by_value_aggregates": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-riscv/src/abi.rs", "command": "cargo +stable test -p llvm-in-rust-target-riscv abi -- --nocapture"},
+            {"path": "src/llvm-codegen/tests/global_emit.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test global_emit -- --nocapture"}
+          ],
+          "limitations": "Basic layout helpers are covered; exhaustive by-value aggregate interop remains scoped."
+        },
+        "atomics": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-target-riscv/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-riscv atomic -- --nocapture"}
+          ],
+          "notes": "RISC-V A-extension lowering tests cover lr/sc and amo* paths."
+        },
+        "fp_simd": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-riscv/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-riscv --lib -- --nocapture"}
+          ],
+          "limitations": "F/D scalar FP paths are covered; vector extension support is outside the current production contract."
+        },
+        "eh_unwind": {
+          "status": "experimental",
+          "marker": "experimental:riscv64-eh-unwind",
+          "evidence": [
+            {"path": "src/llvm-target-riscv/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-riscv --lib -- --nocapture"}
+          ],
+          "limitations": "IR edge propagation exists, but object/runtime unwind interop is not production-supported."
+        },
+        "debug_info": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-riscv/src/lower.rs", "command": "scripts/platform_matrix.sh target-rv64gc"}
+          ],
+          "limitations": "Debug-location propagation exists; tool-backed debugger verification is not yet equivalent to x86-64."
+        },
+        "object_format": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-target-riscv/src/encode.rs", "command": "scripts/platform_matrix.sh target-rv64gc"},
+            {"path": "src/llvm-target-riscv/tests/e2e_objdump.rs", "command": "cargo +stable test -p llvm-in-rust-target-riscv --test e2e_objdump -- --nocapture"}
+          ],
+          "notes": "RV64GC ELF artifact generation is gated by the platform matrix."
+        },
+        "relocations": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-riscv/src/encode.rs", "command": "cargo +stable test -p llvm-in-rust-target-riscv --lib -- --nocapture"}
+          ],
+          "limitations": "Supported relocation forms are target-test scoped; unsupported linker combinations need explicit known issues."
+        },
+        "linker_execution": {
+          "status": "experimental",
+          "marker": "experimental:riscv64-linker-execution",
+          "evidence": [
+            {"path": "src/llvm-target-riscv/tests/e2e_objdump.rs", "command": "cargo +stable test -p llvm-in-rust-target-riscv --test e2e_objdump -- --nocapture"}
+          ],
+          "limitations": "Object inspection is tested; runtime execution is not required on every Tier-1 host."
+        }
+      }
+    },
+    "wasm32": {
+      "display": "WebAssembly backend",
+      "cells": {
+        "abi": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-wasm/src/types.rs", "command": "cargo +stable test -p llvm-in-rust-target-wasm --lib -- --nocapture"}
+          ],
+          "limitations": "Simple wasm32 value types and function locals are supported; host ABI/import contracts are not."
+        },
+        "calls": {
+          "status": "partial",
+          "evidence": [
+            {"path": "src/llvm-target-wasm/src/lower.rs", "command": "cargo +stable test -p llvm-in-rust-target-wasm --lib -- --nocapture"}
+          ],
+          "limitations": "Direct internal calls are supported; indirect calls and external imports are explicit TODOs."
+        },
+        "varargs": {
+          "status": "unsupported",
+          "marker": "not_supported:wasm32-varargs",
+          "limitations": "Variadic lowering is not part of the wasm32 production contract."
+        },
+        "structs_by_value_aggregates": {
+          "status": "unsupported",
+          "marker": "not_supported:wasm32-aggregates",
+          "limitations": "Aggregate ABI and by-value struct passing are not production-supported."
+        },
+        "atomics": {
+          "status": "unsupported",
+          "marker": "not_supported:wasm32-atomics",
+          "limitations": "Wasm atomics are not implemented in the backend contract."
+        },
+        "fp_simd": {
+          "status": "unsupported",
+          "marker": "not_supported:wasm32-fp-simd",
+          "limitations": "The wasm backend currently scopes out FP, vector, and SIMD lowering."
+        },
+        "eh_unwind": {
+          "status": "unsupported",
+          "marker": "not_supported:wasm32-eh-unwind",
+          "limitations": "WebAssembly EH/unwind metadata and runtime interop are not implemented."
+        },
+        "debug_info": {
+          "status": "unsupported",
+          "marker": "not_supported:wasm32-debug-info",
+          "limitations": "DWARF/source-map style debug emission is outside the current wasm support contract."
+        },
+        "object_format": {
+          "status": "supported",
+          "evidence": [
+            {"path": "src/llvm-target-wasm/src/encode.rs", "command": "cargo +stable test -p llvm-in-rust-target-wasm --lib -- --nocapture"}
+          ],
+          "notes": "The backend emits a wasm module binary, not a native object container."
+        },
+        "relocations": {
+          "status": "unsupported",
+          "marker": "not_supported:wasm32-relocations",
+          "limitations": "External imports and relocation linking are not production-supported."
+        },
+        "linker_execution": {
+          "status": "experimental",
+          "marker": "experimental:wasm32-linker-execution",
+          "evidence": [
+            {"path": "src/llvm-target-wasm/src/lib.rs", "command": "cargo +stable test -p llvm-in-rust-target-wasm --lib -- --nocapture"}
+          ],
+          "limitations": "Module encoding smoke tests exist; a wasm runtime execution lane is not release-blocking yet."
+        }
+      }
+    }
+  },
+  "release_blocking_e2e": {
+    "c_frontend": {
+      "workflow": ".github/workflows/c-frontend-integration.yml",
+      "evidence": [
+        {"path": "src/llvm/tests/compile_pipeline.rs", "command": "cargo +stable test -p llvm-in-rust --test compile_pipeline"},
+        {"path": "scripts/frontend_integration.sh", "command": "bash scripts/frontend_integration.sh"}
+      ],
+      "scope": "Representative clang -> LLVM IR -> LLVM-in-Rust codegen -> execute path."
+    },
+    "rustc_backend_smoke": {
+      "workflow": ".github/workflows/backend-support-contract.yml",
+      "evidence": [
+        {"path": "src/llvm-rustc-backend/tests/driver.rs", "command": "cargo +stable test -p llvm-in-rust-rustc-backend"},
+        {"path": "bench/rustc-backend-validation/Cargo.toml", "command": "cargo +stable test -p llvm-in-rust-rustc-backend"}
+      ],
+      "scope": "Stable shim smoke is release-blocking; nightly rustc_private wiring remains experimental."
+    },
+    "lto": {
+      "workflow": ".github/workflows/backend-support-contract.yml",
+      "evidence": [
+        {"path": "src/llvm/tests/lto_multi_tu.rs", "command": "cargo +stable test -p llvm-in-rust --test lto_multi_tu"},
+        {"path": "src/llvm-codegen/tests/thinlto.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test thinlto"}
+      ],
+      "scope": "LRIR payload embedding/recovery and top-level LTO facade smoke."
+    },
+    "debug_unwind": {
+      "workflow": ".github/workflows/interoperability-conformance.yml",
+      "evidence": [
+        {"path": "src/llvm-codegen/tests/dwarf_line.rs", "command": "scripts/interoperability_conformance.sh debug"},
+        {"path": "src/llvm-codegen/tests/unwind_verify.rs", "command": "cargo +stable test -p llvm-in-rust-codegen --test unwind_verify"}
+      ],
+      "scope": "DWARF/CodeView and unwind-object metadata checks."
+    },
+    "sanitizer_instrumented": {
+      "workflow": ".github/workflows/sanitizers.yml",
+      "evidence": [
+        {"path": "scripts/sanitizer_matrix.sh", "command": "scripts/sanitizer_matrix.sh asan-core"},
+        {"path": "scripts/sanitizer_matrix.sh", "command": "scripts/sanitizer_matrix.sh miri-core"}
+      ],
+      "scope": "PR-blocking ASan/Miri lanes plus scheduled/manual TSan lane."
+    }
+  }
+}

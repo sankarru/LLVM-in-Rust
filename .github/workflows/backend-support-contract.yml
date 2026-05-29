@@ -1,0 +1,35 @@
+name: Backend Support Contract
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend_contract:
+    name: Backend support matrix + release smoke
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Rust stable toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable
+          rustup default stable
+
+      - name: Validate backend support matrix
+        run: scripts/backend_support_contract.sh validate
+
+      - name: Run rustc backend stable smoke
+        run: scripts/backend_support_contract.sh rustc-smoke
+
+      - name: Run LTO release smoke
+        run: scripts/backend_support_contract.sh lto-smoke
