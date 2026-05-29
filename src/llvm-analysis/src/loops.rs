@@ -76,7 +76,7 @@ impl LoopInfo {
             .collect();
 
         // Sort largest-body first so parent search is straightforward.
-        loops.sort_by(|a, b| b.body.len().cmp(&a.body.len()));
+        loops.sort_by_key(|loop_info| std::cmp::Reverse(loop_info.body.len()));
 
         // Assign parent: the innermost (smallest body) loop that contains
         // this loop's header, excluding itself.
