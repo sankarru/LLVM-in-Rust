@@ -9,8 +9,9 @@ classification of the production sites.
 Usage:
     python3 scripts/audit_error_handling.py [path] [--json]
 
-Default `path` is `src/`.  With `--json`, dumps the full production-site
-list to `/tmp/audit_prod_sites.json`.
+Default `path` is `src/`.  The stdout table includes the per-crate
+production and in-test counts used by `docs/error_handling_audit.md`.  With
+`--json`, dumps the full production-site list to `/tmp/audit_prod_sites.json`.
 
 The script intentionally distinguishes std panicking forms from method names
 that happen to be called `expect` (e.g. the lexer's
@@ -74,39 +75,47 @@ def main() -> None:
     emit_json = "--json" in sys.argv
 
     prod_sites: list[dict] = []
-    by_crate: dict[str, list] = {}
-    test_count = 0
+    by_crate: dict[str, dict[str, list[dict]]] = {}
 
     for dirpath, _, files in os.walk(root):
         for fn in files:
             if not fn.endswith(".rs"):
                 continue
-            rel = os.path.relpath(os.path.join(dirpath, fn))
+            path = os.path.join(dirpath, fn)
+            rel = os.path.relpath(path)
+            root_rel = os.path.relpath(path, root)
             parts = rel.split(os.sep)
             if any(p in ("tests", "examples", "benches") for p in parts):
                 continue
-            crate = "/".join(parts[:2]) if len(parts) >= 2 else parts[0]
+            root_parts = root_rel.split(os.sep)
+            crate = root_parts[0] if root_parts and root_parts[0] != "." else parts[0]
+            bucket = by_crate.setdefault(crate, {"prod": [], "test": []})
             for line_no, kind, in_test, snippet in scan(rel):
+                record = {
+                    "crate": crate,
+                    "file": rel,
+                    "line": line_no,
+                    "kind": kind,
+                    "text": snippet,
+                }
                 if in_test:
-                    test_count += 1
+                    bucket["test"].append(record)
                 else:
-                    record = {
-                        "crate": crate,
-                        "file": rel,
-                        "line": line_no,
-                        "kind": kind,
-                        "text": snippet,
-                    }
                     prod_sites.append(record)
-                    by_crate.setdefault(crate, []).append(record)
+                    bucket["prod"].append(record)
 
-    print(f"{'crate':<40} {'prod':>6}")
-    print("-" * 50)
-    for crate in sorted(by_crate):
-        print(f"{crate:<40} {len(by_crate[crate]):>6}")
-    print("-" * 50)
+    print(f"{'crate':<40} {'prod':>6} {'tests':>6}")
+    print("-" * 57)
+    rows = sorted(
+        by_crate.items(),
+        key=lambda item: (-len(item[1]["prod"]), item[0]),
+    )
+    for crate, counts in rows:
+        print(f"{crate:<40} {len(counts['prod']):>6} {len(counts['test']):>6}")
+    print("-" * 57)
+    test_count = sum(len(counts["test"]) for counts in by_crate.values())
     print(f"{'TOTAL production sites':<40} {len(prod_sites):>6}")
-    print(f"(test sites excluded: {test_count})")
+    print(f"{'TOTAL test sites excluded':<40} {test_count:>6}")
 
     if emit_json:
         out_path = "/tmp/audit_prod_sites.json"

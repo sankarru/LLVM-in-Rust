@@ -33,11 +33,11 @@ the three real panicking forms:
 | `llvm-ir-parser` | 2 | 15 |
 | `llvm-bitcode` | 1 | 37 |
 | `llvm-target-riscv` | 1 | 17 |
-| `llvm-target-x86` | 0 | 7 |
-| `llvm-target-arm` | 0 | 0 |
-| `llvm-jit` | 0 | 11 |
 | `llvm-analysis` | 0 | 4 |
 | `llvm-bench` | 0 | 1 |
+| `llvm-jit` | 0 | 11 |
+| `llvm-target-arm` | 0 | 0 |
+| `llvm-target-x86` | 0 | 7 |
 | **Total** | **113** | **233** |
 
 ## Classification of the 113 production sites
