@@ -10,7 +10,7 @@ and from unsupported deployment modes.
 |---|---|---|
 | Constrained internal or pilot workload | Supported with controls | Trusted LLVM 15+ opaque-pointer IR; pinned LLVM-in-Rust commit or release; target/backend selected from the matrix below; release-blocking CI green on that commit; fallback to upstream LLVM documented by the embedding project. |
 | General drop-in replacement for LLVM | Not supported | LLVM IR, backend, runtime, and platform coverage are broad but not complete. Milestones V-Z in #93 must complete before a general production-ready declaration. |
-| Untrusted or adversarial IR/object input | Not supported without sandboxing | Run parser, optimizer, codegen, and JIT paths in a separate process/container with CPU, memory, file-system, and wall-clock limits. Disable JIT for hostile input unless the host already has a hardened executable-memory policy. |
+| Untrusted or adversarial IR/object input | Not supported without sandboxing | Run parser, optimizer, codegen, and JIT paths in a separate process/container with CPU, memory, file-system, and wall-clock limits. Disable JIT for hostile input unless the host already has a hardened executable-memory policy. See `docs/sandbox_deployment.md`. |
 | Research, benchmarking, and compiler experiments | Supported | APIs and behavior may change across `0.x` minor releases; pin revisions and record validation commands when publishing results. |
 
 ## Pre-1.0 API Stability Matrix
@@ -41,6 +41,14 @@ and from unsupported deployment modes.
 | Mach-O | Pilot-supported for object emission and selected debug/LTO paths. | Unwind parity is narrower than ELF/COFF, and platform execution coverage must be explicitly checked for each pilot. |
 | COFF | Pilot-supported for x86-64/Windows object emission, Win64 ABI hardening, CodeView/PDB milestones, `.pdata`/`.xdata`, and Windows CI paths. | Full SEH funclet runtime parity and non-x86 Windows targets remain outside the current production contract. |
 | Known unsupported cases | Unsupported unless a linked issue or known-issue entry says otherwise | LLVM <=14 typed-pointer IR, arbitrary unsupported intrinsics, unrestricted inline asm, hostile inputs without sandboxing, unsupported relocation/linker combinations, and production use of any matrix cell marked experimental. |
+
+## Untrusted Input Deployment
+
+The detailed sandboxing runbook is
+[`docs/sandbox_deployment.md`](sandbox_deployment.md). It covers process and
+container isolation, Linux seccomp/cgroups, macOS `sandbox-exec`, Windows job
+objects, resource limits, temporary-directory hygiene, and JIT disablement for
+hostile inputs.
 
 ## Documentation Truth Policy
 

@@ -68,7 +68,9 @@ source of truth for release-blocking quality status.
 
 See [`docs/production_support_boundaries.md`](docs/production_support_boundaries.md)
 for the public support contract, API stability matrix, and backend/platform
-boundaries.
+boundaries. See [`docs/sandbox_deployment.md`](docs/sandbox_deployment.md)
+before routing untrusted or tenant-controlled input through parser,
+optimization, codegen, object emission, or JIT paths.
 
 ---
 
