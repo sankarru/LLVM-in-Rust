@@ -10,6 +10,9 @@ Issue #186 tracks the operator and contributor playbooks for running LLVM-in-Rus
 
 Before using this guide for a production pilot, review the scoped support
 contract in [`docs/production_support_boundaries.md`](production_support_boundaries.md).
+If the integration may receive untrusted or tenant-controlled input, also
+apply [`docs/sandbox_deployment.md`](sandbox_deployment.md) before exposing any
+parser, optimizer, codegen, object emission, or JIT path.
 
 ## Build and validation quick start
 
@@ -120,6 +123,7 @@ Minimize with `scripts/reduce_ci_failure.sh`, attach the evidence package, and s
 ## Runbook index
 
 - Production support boundaries: `docs/production_support_boundaries.md`
+- Sandbox deployment for untrusted inputs: `docs/sandbox_deployment.md`
 - Release artifacts: `docs/release_artifact_pipeline.md`
 - RC and rollback: `docs/release_candidate_protocol.md`
 - Crash and miscompilation triage: `docs/crash_triage_runbook.md`
