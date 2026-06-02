@@ -41,9 +41,9 @@ untrusted.
 
 ## Resource Limits
 
-Apply host-level limits even after parser or optimizer limit knobs are wired
-into the API. In-process limits protect algorithmic code paths; OS/container
-limits protect the embedding application.
+Apply host-level limits even when using parser or optimizer limit knobs.
+In-process limits protect algorithmic code paths; OS/container limits protect
+the embedding application.
 
 | Resource | Guidance |
 |---|---|
@@ -53,7 +53,31 @@ limits protect the embedding application.
 | Output size | Cap object, assembly, log, reducer, and benchmark artifact sizes. Refuse to archive unbounded stdout/stderr. |
 | File descriptors and processes | Apply `RLIMIT_NOFILE` and `RLIMIT_NPROC`/container process limits. |
 | Temporary storage | Use a request-scoped temp directory with a quota. Never reuse temp paths across tenants. |
-| Recursion and nesting | Use the parser/resource-limit API when available; until then, rely on worker timeouts and memory caps. |
+| Recursion and nesting | Use `parse_with_limits` / `ParseLimits` or the `llvm-compile` parse-limit flags for source size, function count, block/instruction count, and type/constant nesting. Keep worker timeouts and memory caps as the outer guard. |
+
+Parser limits are opt-in so trusted existing callers keep historical behavior.
+For untrusted LLVM text IR, use the library API:
+
+```rust
+use llvm_ir_parser::parser::{parse_with_limits, ParseLimits};
+
+let limits = ParseLimits::production_defaults();
+let (_ctx, _module) = parse_with_limits(input, limits)?;
+```
+
+For the `llvm-compile` CLI, use the production preset or override individual
+limits:
+
+```bash
+llvm-compile input.ll -o output.o \
+  --production-parse-limits \
+  --max-input-bytes 16777216 \
+  --max-functions 10000 \
+  --max-blocks-per-function 100000 \
+  --max-instructions-per-function 1000000 \
+  --max-type-depth 128 \
+  --max-constant-depth 128
+```
 
 ## Platform Patterns
 

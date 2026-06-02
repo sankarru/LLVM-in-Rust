@@ -86,6 +86,8 @@ require_in_file "$SANDBOX_DOC" "## Pilot Sign-Off Checklist"
 require_in_file "$SANDBOX_DOC" "seccomp"
 require_in_file "$SANDBOX_DOC" "sandbox-exec"
 require_in_file "$SANDBOX_DOC" "JIT is disabled"
+require_in_file "$SANDBOX_DOC" "parse_with_limits"
+require_in_file "$SANDBOX_DOC" "--production-parse-limits"
 
 reject_in_file "$README" "523 tests"
 reject_in_file "$README" "1,076 tests"

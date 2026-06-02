@@ -59,6 +59,53 @@ impl From<&LexError> for ParseError {
     }
 }
 
+/// Optional parser resource limits for untrusted LLVM IR input.
+///
+/// `None` means unlimited. The existing [`parse`] entry point uses
+/// [`ParseLimits::unlimited`] for compatibility; production callers should use
+/// [`parse_with_limits`] with limits appropriate for their sandbox budget.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ParseLimits {
+    /// Maximum source text size in bytes.
+    pub max_source_bytes: Option<usize>,
+    /// Maximum number of functions/declarations in one module.
+    pub max_functions: Option<usize>,
+    /// Maximum number of basic blocks in one function.
+    pub max_blocks_per_function: Option<usize>,
+    /// Maximum number of instructions, including terminators, in one function.
+    pub max_instructions_per_function: Option<usize>,
+    /// Maximum recursive nesting while parsing types.
+    pub max_type_depth: Option<usize>,
+    /// Maximum recursive nesting while parsing constant/value expressions.
+    pub max_constant_depth: Option<usize>,
+}
+
+impl ParseLimits {
+    /// No parser limits. This preserves the historical parser behavior.
+    pub const fn unlimited() -> Self {
+        Self {
+            max_source_bytes: None,
+            max_functions: None,
+            max_blocks_per_function: None,
+            max_instructions_per_function: None,
+            max_type_depth: None,
+            max_constant_depth: None,
+        }
+    }
+
+    /// Conservative defaults for process-isolated production pilots.
+    pub const fn production_defaults() -> Self {
+        Self {
+            max_source_bytes: Some(16 * 1024 * 1024),
+            max_functions: Some(10_000),
+            max_blocks_per_function: Some(100_000),
+            max_instructions_per_function: Some(1_000_000),
+            max_type_depth: Some(128),
+            max_constant_depth: Some(128),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Parser state
 // ---------------------------------------------------------------------------
@@ -67,6 +114,9 @@ struct Parser<'src> {
     lex: Lexer<'src>,
     ctx: Context,
     module: Module,
+    limits: ParseLimits,
+    type_depth: usize,
+    constant_depth: usize,
     /// Named block forward references: name → BlockId already allocated.
     pending_blocks: HashMap<String, BlockId>,
     /// Current function being parsed (None at module level).
@@ -89,11 +139,14 @@ struct Parser<'src> {
 }
 
 impl<'src> Parser<'src> {
-    fn new(src: &'src str) -> Self {
+    fn new_with_limits(src: &'src str, limits: ParseLimits) -> Self {
         Parser {
             lex: Lexer::new(src),
             ctx: Context::new(),
             module: Module::new(""),
+            limits,
+            type_depth: 0,
+            constant_depth: 0,
             pending_blocks: HashMap::new(),
             current_func: None,
             current_block: None,
@@ -102,6 +155,61 @@ impl<'src> Parser<'src> {
             pending_phi_patches: Vec::new(),
             staged_phi_patches: Vec::new(),
         }
+    }
+
+    fn limit_err(&self, what: &str, actual: usize, max: usize) -> ParseError {
+        self.err(format!(
+            "parse limit exceeded: {what} {actual} exceeds maximum {max}"
+        ))
+    }
+
+    fn check_limit(
+        &self,
+        limit: Option<usize>,
+        actual: usize,
+        what: &str,
+    ) -> Result<(), ParseError> {
+        if let Some(max) = limit {
+            if actual > max {
+                return Err(self.limit_err(what, actual, max));
+            }
+        }
+        Ok(())
+    }
+
+    fn check_next_function(&self) -> Result<(), ParseError> {
+        self.check_limit(
+            self.limits.max_functions,
+            self.module.functions.len() + 1,
+            "function count",
+        )
+    }
+
+    fn check_next_block(&self, fid: usize) -> Result<(), ParseError> {
+        self.check_limit(
+            self.limits.max_blocks_per_function,
+            self.module.functions[fid].blocks.len() + 1,
+            "basic blocks per function",
+        )
+    }
+
+    fn alloc_block_limited(&mut self, fid: usize, name: &str) -> Result<BlockId, ParseError> {
+        self.check_next_block(fid)?;
+        let bb = BasicBlock::new(name);
+        Ok(self.module.functions[fid].add_block(bb))
+    }
+
+    fn alloc_instr_limited(
+        &mut self,
+        fid: usize,
+        instr: Instruction,
+    ) -> Result<InstrId, ParseError> {
+        self.check_limit(
+            self.limits.max_instructions_per_function,
+            self.module.functions[fid].instructions.len() + 1,
+            "instructions per function",
+        )?;
+        Ok(self.module.functions[fid].alloc_instr(instr))
     }
 
     fn err(&self, msg: impl Into<String>) -> ParseError {
@@ -389,6 +497,21 @@ impl<'src> Parser<'src> {
     // -----------------------------------------------------------------------
 
     fn parse_type(&mut self) -> Result<TypeId, ParseError> {
+        self.type_depth += 1;
+        let result = if let Some(max) = self.limits.max_type_depth {
+            if self.type_depth > max {
+                Err(self.limit_err("type nesting depth", self.type_depth, max))
+            } else {
+                self.parse_type_inner()
+            }
+        } else {
+            self.parse_type_inner()
+        };
+        self.type_depth -= 1;
+        result
+    }
+
+    fn parse_type_inner(&mut self) -> Result<TypeId, ParseError> {
         let base = match self.lex.peek()? {
             Token::Kw(Keyword::Void) => {
                 self.lex.next()?;
@@ -594,6 +717,7 @@ impl<'src> Parser<'src> {
         }
 
         if is_declaration {
+            self.check_next_function()?;
             let mut func = Function::new_declaration(&name, fn_ty, args, linkage);
             func.strictfp = has_strictfp;
             let idx = self.module.add_function(func);
@@ -602,6 +726,7 @@ impl<'src> Parser<'src> {
         }
 
         // Parse body.
+        self.check_next_function()?;
         let mut func = Function::new(&name, fn_ty, args, linkage);
         func.strictfp = has_strictfp;
         let idx = self.module.add_function(func);
@@ -686,14 +811,12 @@ impl<'src> Parser<'src> {
         let fid = self
             .current_func
             .ok_or_else(|| self.err("block outside function"))?;
-        let func = &mut self.module.functions[fid];
 
         // Reuse pre-allocated BlockId if this block was forward-referenced.
         let bid = if let Some(&existing) = self.pending_blocks.get(&bb_name) {
             existing
         } else {
-            let bb = BasicBlock::new(&bb_name);
-            let bid = func.add_block(bb);
+            let bid = self.alloc_block_limited(fid, &bb_name)?;
             self.pending_blocks.insert(bb_name.clone(), bid);
             bid
         };
@@ -778,7 +901,7 @@ impl<'src> Parser<'src> {
 
         let instr_name = result_name.clone();
         let instr = Instruction::new(instr_name, ty, kind);
-        let iid = self.module.functions[fid].alloc_instr(instr);
+        let iid = self.alloc_instr_limited(fid, instr)?;
 
         // If parse_instr_kind staged any phi forward-ref patches, bind them to iid now.
         if !self.staged_phi_patches.is_empty() {
@@ -1921,6 +2044,21 @@ impl<'src> Parser<'src> {
     }
 
     fn parse_value(&mut self, ty: TypeId) -> Result<ValueRef, ParseError> {
+        self.constant_depth += 1;
+        let result = if let Some(max) = self.limits.max_constant_depth {
+            if self.constant_depth > max {
+                Err(self.limit_err("constant nesting depth", self.constant_depth, max))
+            } else {
+                self.parse_value_inner(ty)
+            }
+        } else {
+            self.parse_value_inner(ty)
+        };
+        self.constant_depth -= 1;
+        result
+    }
+
+    fn parse_value_inner(&mut self, ty: TypeId) -> Result<ValueRef, ParseError> {
         match self.lex.peek()? {
             Token::LocalIdent(_) => {
                 let name = self.lex.expect_local_ident()?;
@@ -2143,8 +2281,7 @@ impl<'src> Parser<'src> {
                 ptr,
                 indices,
             };
-            let iid =
-                self.module.functions[fid].alloc_instr(Instruction::new(None, result_ty, kind));
+            let iid = self.alloc_instr_limited(fid, Instruction::new(None, result_ty, kind))?;
             self.module.functions[fid].block_mut(bid).append_instr(iid);
             Ok(ValueRef::Instruction(iid))
         } else {
@@ -2184,7 +2321,7 @@ impl<'src> Parser<'src> {
 
         if let (Some(fid), Some(bid)) = (self.current_func, self.current_block) {
             let kind = make_kind(val, dst_ty);
-            let iid = self.module.functions[fid].alloc_instr(Instruction::new(None, dst_ty, kind));
+            let iid = self.alloc_instr_limited(fid, Instruction::new(None, dst_ty, kind))?;
             self.module.functions[fid].block_mut(bid).append_instr(iid);
             Ok(ValueRef::Instruction(iid))
         } else {
@@ -2293,8 +2430,7 @@ impl<'src> Parser<'src> {
         if let Some(&bid) = self.pending_blocks.get(name) {
             return Ok(bid);
         }
-        let bb = BasicBlock::new(name);
-        let bid = self.module.functions[fid].add_block(bb);
+        let bid = self.alloc_block_limited(fid, name)?;
         self.pending_blocks.insert(name.to_string(), bid);
         Ok(bid)
     }
@@ -3201,7 +3337,25 @@ impl<'src> Parser<'src> {
 
 /// Public API for `parse`.
 pub fn parse(src: &str) -> Result<(Context, Module), ParseError> {
-    let mut parser = Parser::new(src);
+    parse_with_limits(src, ParseLimits::unlimited())
+}
+
+/// Parse LLVM IR with explicit resource limits.
+pub fn parse_with_limits(src: &str, limits: ParseLimits) -> Result<(Context, Module), ParseError> {
+    if let Some(max) = limits.max_source_bytes {
+        if src.len() > max {
+            return Err(ParseError {
+                line: 1,
+                col: 1,
+                message: format!(
+                    "parse limit exceeded: source bytes {} exceeds maximum {}",
+                    src.len(),
+                    max
+                ),
+            });
+        }
+    }
+    let mut parser = Parser::new_with_limits(src, limits);
     parser.parse_module()?;
     Ok((parser.ctx, parser.module))
 }
@@ -3270,6 +3424,91 @@ define void %3, i64@au";
             Err(err) => err,
         };
         assert!(err.message.contains("expected RParen"));
+    }
+
+    fn expect_limited(src: &str, limits: ParseLimits, needle: &str) {
+        let err = match parse_with_limits(src, limits) {
+            Ok(_) => panic!("input should hit parse limit"),
+            Err(err) => err,
+        };
+        assert!(
+            err.message.contains(needle),
+            "expected limit message containing {needle:?}, got {:?}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn parse_limits_reject_source_bytes() {
+        let src = "define void @f() { entry: ret void }";
+        let mut limits = ParseLimits::unlimited();
+        limits.max_source_bytes = Some(src.len() - 1);
+        expect_limited(src, limits, "source bytes");
+    }
+
+    #[test]
+    fn parse_limits_reject_function_count() {
+        let src = "\
+declare void @a()
+declare void @b()
+";
+        let mut limits = ParseLimits::unlimited();
+        limits.max_functions = Some(1);
+        expect_limited(src, limits, "function count");
+    }
+
+    #[test]
+    fn parse_limits_reject_blocks_per_function() {
+        let src = r#"
+define void @f(i1 %c) {
+entry:
+  br i1 %c, label %a, label %b
+a:
+  ret void
+b:
+  ret void
+}
+"#;
+        let mut limits = ParseLimits::unlimited();
+        limits.max_blocks_per_function = Some(2);
+        expect_limited(src, limits, "basic blocks per function");
+    }
+
+    #[test]
+    fn parse_limits_reject_instructions_per_function() {
+        let src = r#"
+define i32 @f(i32 %x) {
+entry:
+  %a = add i32 %x, 1
+  ret i32 %a
+}
+"#;
+        let mut limits = ParseLimits::unlimited();
+        limits.max_instructions_per_function = Some(1);
+        expect_limited(src, limits, "instructions per function");
+    }
+
+    #[test]
+    fn parse_limits_reject_type_depth() {
+        let src = "@g = global [1 x [1 x i32]] zeroinitializer";
+        let mut limits = ParseLimits::unlimited();
+        limits.max_type_depth = Some(2);
+        expect_limited(src, limits, "type nesting depth");
+    }
+
+    #[test]
+    fn parse_limits_reject_constant_depth() {
+        let src = "@g = constant [1 x i32] [i32 1]";
+        let mut limits = ParseLimits::unlimited();
+        limits.max_constant_depth = Some(1);
+        expect_limited(src, limits, "constant nesting depth");
+    }
+
+    #[test]
+    fn production_parse_limits_allow_small_module() {
+        let src = "define void @f() { entry: ret void }";
+        parse_with_limits(src, ParseLimits::production_defaults())
+            .expect("small module should fit production parser limits");
     }
 
     #[test]

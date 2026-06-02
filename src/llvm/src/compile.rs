@@ -15,7 +15,7 @@ use llvm_codegen::{
     },
     ObjectFile, ObjectFormat, Reloc, Section, Symbol,
 };
-use llvm_ir_parser::parser::parse;
+use llvm_ir_parser::parser::{parse_with_limits, ParseLimits};
 use llvm_target_x86::{
     instructions::{MOVSD_LOAD_MR, MOVSD_STORE_RM, MOV_LOAD_MR, MOV_STORE_RM},
     X86Backend, X86Emitter,
@@ -36,7 +36,23 @@ pub fn compile_ir_to_object(
     opt_level: OptLevel,
     fmt: ObjectFormat,
 ) -> Result<Vec<u8>, String> {
-    let (mut ctx, mut module) = parse(src).map_err(|e| format!("parse error: {e}"))?;
+    compile_ir_to_object_with_limits(src, opt_level, fmt, ParseLimits::unlimited())
+}
+
+/// Compile LLVM IR text into a native object file with explicit parser limits.
+///
+/// This is the production-facing entry point for callers that accept untrusted
+/// or size-unknown IR. Optimizer execution is still bounded by the pipeline's
+/// fixed-point iteration cap; process-level CPU/memory isolation should wrap
+/// this call for adversarial inputs.
+pub fn compile_ir_to_object_with_limits(
+    src: &str,
+    opt_level: OptLevel,
+    fmt: ObjectFormat,
+    limits: ParseLimits,
+) -> Result<Vec<u8>, String> {
+    let (mut ctx, mut module) =
+        parse_with_limits(src, limits).map_err(|e| format!("parse error: {e}"))?;
 
     let mut pm = build_pipeline(opt_level);
     pm.run_until_fixed_point(&mut ctx, &mut module, 8);
