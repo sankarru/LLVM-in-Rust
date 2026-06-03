@@ -245,10 +245,7 @@ lpad:
   ret i32 -1
 }
 "#;
-    // A clauseless landingpad with no `cleanup` is malformed.  Either the
-    // parser rejects it directly or a follow-up validator does — in both
-    // cases the round-trip must not panic.
-    let _ = parse(src);
+    assert_parse_err_contains(src, "landingpad requires cleanup or at least one clause");
 }
 
 /// `resume` outside a function (top-level) is structurally invalid.  Confirm
@@ -276,10 +273,10 @@ handler:
   ret void
 }
 "#;
-    // `catchswitch [label …]` must be followed by `unwind …`.  Whether the
-    // parser today recognises catchswitch fully or punts, the contract is:
-    // never panic on this input.
-    let _ = parse(src);
+    assert!(
+        parse(src).is_err(),
+        "catchswitch without unwind destination must be rejected"
+    );
 }
 
 // ───────── 5. Unsupported intrinsics ───────────────────────────────────────

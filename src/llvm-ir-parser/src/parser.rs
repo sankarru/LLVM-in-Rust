@@ -1627,6 +1627,9 @@ impl<'src> Parser<'src> {
                         LandingPadClause::Filter { ty, value }
                     });
                 }
+                if !cleanup && clauses.is_empty() {
+                    return Err(self.err("landingpad requires cleanup or at least one clause"));
+                }
                 Ok((
                     InstrKind::LandingPad {
                         result_ty,
