@@ -22,3 +22,10 @@ path = "fuzz_targets/parser.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "parser_with_limits"
+path = "fuzz_targets/parser_with_limits.rs"
+test = false
+doc = false
+bench = false

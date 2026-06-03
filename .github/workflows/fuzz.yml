@@ -45,6 +45,13 @@ jobs:
         continue-on-error: ${{ github.event_name == 'schedule' }}
         run: ./scripts/llvm_stress_fuzz.sh --iterations 10000 --max-total-time 300
 
+      - name: Fuzz parser_with_limits (resource-limit path, 2m)
+        id: parser_with_limits_fuzz
+        # Issue #383 / Milestone X: exercise the production-limit parse path so
+        # an overflow always produces a structured ParseError, never a panic.
+        continue-on-error: ${{ github.event_name == 'schedule' }}
+        run: cargo +nightly fuzz run parser_with_limits -- -max_total_time=120 -max_len=131072
+
       - name: Package reducible fuzz crash evidence
         if: ${{ failure() || steps.llvm_stress_fuzz.outcome == 'failure' }}
         continue-on-error: true
