@@ -52,21 +52,40 @@ jobs:
         continue-on-error: ${{ github.event_name == 'schedule' }}
         run: cargo +nightly fuzz run parser_with_limits -- -max_total_time=120 -max_len=131072
 
+      - name: Upload raw fuzz artifacts before reduction
+        if: ${{ failure() || steps.llvm_stress_fuzz.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-stress-raw-fuzz-artifacts-${{ github.run_id }}
+          path: |
+            fuzz/artifacts/**
+            fuzz/corpus/**
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Package reducible fuzz crash evidence
         if: ${{ failure() || steps.llvm_stress_fuzz.outcome == 'failure' }}
         continue-on-error: true
         run: |
           mkdir -p ci-failures/llvm-stress
           shopt -s nullglob
+          reduce_timeout="${LLVM_STRESS_REDUCE_TIMEOUT:-10m}"
           for artifact in fuzz/artifacts/parser/crash-* fuzz/artifacts/parser/timeout-*; do
             if grep -q '^define ' "$artifact"; then
               name=$(basename "$artifact")
-              scripts/reduce_ci_failure.sh \
+              set +e
+              timeout "$reduce_timeout" scripts/reduce_ci_failure.sh \
                 --input "$artifact" \
                 --predicate 'cargo +nightly fuzz run parser {{input}} -- -runs=1' \
                 --evidence-dir "ci-failures/llvm-stress/$name" \
                 --component llvm-ir-parser \
                 --failure-kind fuzz
+              reduce_status=$?
+              set -e
+              if [[ "$reduce_status" -ne 0 ]]; then
+                echo "::warning title=Fuzz reduction incomplete::reducer exited $reduce_status for $artifact; raw artifact was uploaded before reduction"
+              fi
             fi
           done
 
