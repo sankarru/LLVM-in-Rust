@@ -318,6 +318,43 @@ entry:
     assert_parse_err_contains(src, "expected ");
 }
 
+// ───────── 6. Parser termination (no-progress loops) ──────────────────────
+
+/// Regression for a fuzz-found infinite loop (Milestone Z burn-in, llvm-stress
+/// timeout bucket `567c0234…`). After an implicit `entry` block is terminated,
+/// a stray instruction-shaped token that is *not* a `label:` used to make
+/// `parse_block` re-select the already-complete `entry` block, break without
+/// consuming the token, and return — so `parse_function` called it forever
+/// (libFuzzer killed it on a 60s timeout). The parser must now reject such
+/// stray content with a structured error instead of looping.
+#[test]
+fn stray_token_after_terminated_implicit_entry_is_rejected() {
+    // `unreachable` terminates the implicit entry block; the bare `%x` that
+    // follows has no `=` and no `:`, so it is neither an instruction result nor
+    // a block label. This is the distilled minimum of the fuzz timeout input.
+    let src = "define void @f() {\nunreachable\n%x\n}\n";
+    assert_parse_err_contains(src, "expected block label after terminated block");
+}
+
+/// The same shape with a numeric stray token (`5` is not `5:` and has no `=`)
+/// after a terminated implicit entry must also terminate with an error rather
+/// than spin — the integer-literal label path has the identical hazard.
+#[test]
+fn stray_int_token_after_terminated_implicit_entry_is_rejected() {
+    let src = "define void @f() {\nret void\n5\n}\n";
+    assert_parse_err_contains(src, "expected block label after terminated block");
+}
+
+/// Guardrail: the fix must not reject the legitimate case it sits next to — a
+/// single-block function whose entry block is implicit (no `entry:` label) and
+/// is the only block must still parse cleanly.
+#[test]
+fn implicit_entry_single_block_still_parses() {
+    let src = "define i32 @g() {\n  ret i32 0\n}\n";
+    let (_ctx, module) = parse(src).expect("implicit single-block entry must parse");
+    assert_eq!(module.functions.len(), 1);
+}
+
 // ───────── Smoke: depth-checked round-trip ─────────────────────────────────
 
 /// Negative tests above all assert *rejection*; this one pins the positive

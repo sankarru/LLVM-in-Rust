@@ -776,7 +776,10 @@ impl<'src> Parser<'src> {
         // Strategy: consume the ident/intlit, then consume the next token.
         // If the next token is `:`, we have a label. Otherwise push both tokens
         // back via unget (the second first, then the first).
-        let bb_name = match self.lex.peek()? {
+        // `explicit_label` records whether we consumed a real `name:` label.
+        // When it is false we fell back to the implicit `entry` block, which is
+        // only legitimate for the very first block of a function.
+        let (bb_name, explicit_label) = match self.lex.peek()? {
             Token::LocalIdent(_) => {
                 // Consume the ident.
                 let n = self.lex.expect_local_ident()?;
@@ -784,12 +787,12 @@ impl<'src> Parser<'src> {
                 let next = self.lex.next()?;
                 if matches!(next, Token::Colon) {
                     // Confirmed label.
-                    n
+                    (n, true)
                 } else {
                     // Not a label — push both tokens back (second first, then first).
                     self.lex.unget(next);
                     self.lex.unget(Token::LocalIdent(n));
-                    "entry".to_string()
+                    ("entry".to_string(), false)
                 }
             }
             Token::IntLit(n) => {
@@ -798,19 +801,35 @@ impl<'src> Parser<'src> {
                 self.lex.next()?;
                 let next = self.lex.next()?;
                 if matches!(next, Token::Colon) {
-                    s
+                    (s, true)
                 } else {
                     self.lex.unget(next);
                     self.lex.unget(Token::IntLit(n));
-                    "entry".to_string()
+                    ("entry".to_string(), false)
                 }
             }
-            _ => "entry".to_string(),
+            _ => ("entry".to_string(), false),
         };
 
         let fid = self
             .current_func
             .ok_or_else(|| self.err("block outside function"))?;
+
+        // Guard against a no-progress loop. parse_block only returns (other than
+        // at `}`) once the block it parsed is terminated, so on re-entry an
+        // implicitly-selected block that already exists and is complete means the
+        // lookahead is stray content after a terminated block (e.g. a bare `%x`
+        // or a malformed token that is not a `label:`). Without this guard we
+        // would unget the token, re-select the complete `entry` block, break
+        // immediately, and return having consumed nothing — and parse_function
+        // would call parse_block forever. Reject with a structured error instead.
+        if !explicit_label {
+            if let Some(&existing) = self.pending_blocks.get(&bb_name) {
+                if self.block_is_complete(existing) {
+                    return Err(self.err("expected block label after terminated block"));
+                }
+            }
+        }
 
         // Reuse pre-allocated BlockId if this block was forward-referenced.
         let bid = if let Some(&existing) = self.pending_blocks.get(&bb_name) {
