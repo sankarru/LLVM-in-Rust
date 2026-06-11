@@ -593,6 +593,18 @@ impl<'src> Lexer<'src> {
         }
     }
 
+    /// Public API for unsigned grammar positions that do not accept a leading '-'.
+    pub fn expect_nonnegative_uint_lit(&mut self) -> Result<u64, LexError> {
+        match self.next()? {
+            Token::IntLit(n) if n >= 0 => Ok(n as u64),
+            Token::IntLit(n) => {
+                Err(self.make_err(format!("expected unsigned integer literal, got {}", n)))
+            }
+            Token::UIntLit(n) => Ok(n),
+            t => Err(self.make_err(format!("expected integer literal, got {:?}", t))),
+        }
+    }
+
     /// Public API for `expect_string_lit`.
     pub fn expect_string_lit(&mut self) -> Result<String, LexError> {
         match self.next()? {

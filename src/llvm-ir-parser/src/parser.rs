@@ -581,7 +581,7 @@ impl<'src> Parser<'src> {
 
     fn parse_array_type(&mut self) -> Result<TypeId, ParseError> {
         self.lex.expect(&Token::LBracket)?;
-        let len = self.lex.expect_uint_lit()?;
+        let len = self.lex.expect_nonnegative_uint_lit()?;
         self.lex.expect_kw(&Keyword::X)?;
         let elem = self.parse_type()?;
         self.lex.expect(&Token::RBracket)?;
@@ -595,7 +595,8 @@ impl<'src> Parser<'src> {
         if scalable {
             self.lex.expect_kw(&Keyword::X)?;
         }
-        let len = self.lex.expect_uint_lit()? as u32;
+        let raw_len = self.lex.expect_nonnegative_uint_lit()?;
+        let len = u32::try_from(raw_len).map_err(|_| self.err("vector length too large"))?;
         self.lex.expect_kw(&Keyword::X)?;
         let elem = self.parse_type()?;
         self.lex.expect(&Token::RAngle)?;
