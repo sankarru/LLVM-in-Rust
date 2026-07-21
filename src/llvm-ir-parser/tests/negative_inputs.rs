@@ -355,6 +355,39 @@ fn implicit_entry_single_block_still_parses() {
     assert_eq!(module.functions.len(), 1);
 }
 
+// ───────── 7. Unsigned size literals ────────────────────────────────────────
+
+/// Regression for a Milestone Z fuzz crash after the parser-timeout fix. A
+/// malformed vector length such as `<-4 x i16>` used to be accepted by
+/// `expect_uint_lit` via `as u64`, producing a huge vector type and later
+/// overflowing codegen frame-size arithmetic. The parser must reject it at the
+/// source boundary instead.
+#[test]
+fn negative_vector_length_is_rejected() {
+    let src = r#"
+define void @f() {
+entry:
+  %a = alloca <-4 x i16>, align 8
+  ret void
+}
+"#;
+    assert_parse_err_contains(src, "expected unsigned integer literal");
+}
+
+/// Array lengths use the same unsigned literal helper and must reject negative
+/// syntax for the same reason.
+#[test]
+fn negative_array_length_is_rejected() {
+    let src = r#"
+define void @f() {
+entry:
+  %a = alloca [-1 x i8], align 1
+  ret void
+}
+"#;
+    assert_parse_err_contains(src, "expected unsigned integer literal");
+}
+
 // ───────── Smoke: depth-checked round-trip ─────────────────────────────────
 
 /// Negative tests above all assert *rejection*; this one pins the positive
