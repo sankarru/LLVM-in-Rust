@@ -57,11 +57,11 @@ user prompts at each step:
 Plan → Implement → PR Review → Test → Issue+Fix Loop → Merge
 ```
 
-| Stage | Slash skill | Description |
-|-------|-------------|-------------|
-| Implement a phase | `/implement-phase` | Branch → code → targeted tests → commit → PR |
-| Review implementation PR | `/review-and-fix` | Review diff/tests → run full tests → post PR feedback |
-| Fix one issue | `/fix-issue <N>` | Read issue → fix in same PR branch → test → update PR |
+| Stage | Reusable workflow | Description |
+|-------|-------------------|-------------|
+| Implement a phase | issue-specific skill or this guide | Branch → code → targeted tests → commit → PR |
+| Review implementation PR | Mandatory PR Review/Test/Issue Loop below | Review diff/tests → run full tests → post PR feedback |
+| Fix one issue | issue-specific skill or this guide | Read issue → fix in same PR branch → test → update PR |
 
 ### Mandatory PR Review/Test/Issue Loop (for implementation PRs)
 
@@ -99,6 +99,24 @@ These rules prevent common mistakes in the multi-worktree setup:
 ---
 
 ## Agent Usage Guide
+
+### milestone-z-rc-burnin agent
+Use for the current open Milestone Z release-candidate burn-in/sign-off work.
+
+```
+Invoke: $milestone-z-rc-burnin
+When:   Clearing Z blockers, triaging fuzz/evidence reruns, collecting
+        exact-commit RC evidence, updating #385/#93, and coordinating the
+        final go/no-go bundle.
+Skill:  skills/milestone-z-rc-burnin/SKILL.md
+```
+
+### Completed-milestone skills
+
+The skills below are retained as implementation references for their original
+issues and for regressions in the same subsystem.  They are not the default
+entry point for current roadmap work unless their issue reopens or a new issue
+explicitly targets that subsystem.
 
 ### rust-stable-compat agent
 Use for issue #90 and any nightly-to-stable migration work.
@@ -265,9 +283,10 @@ at each step:
    e. Update #93 roadmap and report progress to the user.
 3. After all milestones are done, update `MEMORY.md` and post a final summary.
 
-**Auto-resume after interruption**: Use the `/loop` skill with a self-paced
-interval.  At each wakeup, check GitHub for open milestone sub-issues, pick
-the next one, and resume work.  Never wait for the user to restart.
+**Auto-resume after interruption**: Use agent memory plus Slock reminders or an
+agent-native self-paced loop.  At each wakeup, check GitHub for open milestone
+sub-issues, pick the next one, and resume work.  Never wait for the user to
+restart.
 
 **Progress reporting**: Post one short message per completed milestone:
 which PRs merged, issue numbers closed, and the updated roadmap link.
