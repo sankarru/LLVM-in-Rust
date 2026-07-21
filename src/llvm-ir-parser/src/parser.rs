@@ -1160,7 +1160,7 @@ impl<'src> Parser<'src> {
                 let align = if comma_before_align_consumed {
                     // Comma was already consumed; parse `align N` directly.
                     if self.lex.eat_kw(Keyword::Align) {
-                        let a = self.lex.expect_uint_lit()? as u32;
+                        let a = self.lex.expect_nonnegative_uint_lit()? as u32;
                         Some(a)
                     } else {
                         None
@@ -1403,7 +1403,7 @@ impl<'src> Parser<'src> {
                 let (aggregate, agg_ty) = self.parse_typed_value()?;
                 let mut indices = Vec::new();
                 while self.lex.eat(&Token::Comma) {
-                    let idx = self.lex.expect_uint_lit()? as u32;
+                    let idx = self.lex.expect_nonnegative_uint_lit()? as u32;
                     indices.push(idx);
                 }
                 // Walk the index chain to find the actual element type.
@@ -1427,7 +1427,7 @@ impl<'src> Parser<'src> {
                 let (val, _val_ty) = self.parse_typed_value()?;
                 let mut indices = Vec::new();
                 while self.lex.eat(&Token::Comma) {
-                    let idx = self.lex.expect_uint_lit()? as u32;
+                    let idx = self.lex.expect_nonnegative_uint_lit()? as u32;
                     indices.push(idx);
                 }
                 Ok((
@@ -2566,7 +2566,7 @@ impl<'src> Parser<'src> {
     fn parse_optional_align(&mut self) -> Result<Option<u32>, ParseError> {
         if self.lex.eat(&Token::Comma) {
             self.lex.expect_kw(&Keyword::Align)?;
-            let a = self.lex.expect_uint_lit()? as u32;
+            let a = self.lex.expect_nonnegative_uint_lit()? as u32;
             Ok(Some(a))
         } else {
             Ok(None)
