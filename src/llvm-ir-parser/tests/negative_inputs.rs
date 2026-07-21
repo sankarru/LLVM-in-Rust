@@ -388,6 +388,70 @@ entry:
     assert_parse_err_contains(src, "expected unsigned integer literal");
 }
 
+// ───────── 8. Unsigned align / aggregate-index literals ────────────────────
+
+// Follow-up to #404 (issue #409): alignment and aggregate-index operands used
+// the same `expect_uint_lit` + `as` cast that silently wrapped a negative
+// literal to a huge unsigned value. They now route through the nonnegative
+// helper and must reject negative syntax at the source boundary.
+
+/// `align` operands (here on a `load`, via `parse_optional_align`).
+#[test]
+fn negative_load_alignment_is_rejected() {
+    let src = r#"
+define i32 @f(ptr %p) {
+entry:
+  %v = load i32, ptr %p, align -8
+  ret i32 %v
+}
+"#;
+    assert_parse_err_contains(src, "expected unsigned integer literal");
+}
+
+/// `extractvalue` aggregate indices.
+#[test]
+fn negative_extractvalue_index_is_rejected() {
+    let src = r#"
+define i32 @f() {
+entry:
+  %v = extractvalue {i32, i32} undef, -1
+  ret i32 %v
+}
+"#;
+    assert_parse_err_contains(src, "expected unsigned integer literal");
+}
+
+/// `insertvalue` aggregate indices.
+#[test]
+fn negative_insertvalue_index_is_rejected() {
+    let src = r#"
+define void @f() {
+entry:
+  %v = insertvalue {i32, i32} undef, i32 5, -1
+  ret void
+}
+"#;
+    assert_parse_err_contains(src, "expected unsigned integer literal");
+}
+
+/// Guardrail: valid non-negative align/index operands must still parse, so the
+/// hardening above does not over-reject well-formed input.
+#[test]
+fn nonnegative_align_and_indices_still_parse() {
+    let src = r#"
+define i32 @f(ptr %p) {
+entry:
+  %v = load i32, ptr %p, align 8
+  %e = extractvalue {i32, i32} undef, 1
+  %w = insertvalue {i32, i32} undef, i32 5, 0
+  ret i32 %v
+}
+"#;
+    parse(src)
+        .map_err(|e| format!("valid align/index program rejected: {}", e.message))
+        .unwrap();
+}
+
 // ───────── Smoke: depth-checked round-trip ─────────────────────────────────
 
 /// Negative tests above all assert *rejection*; this one pins the positive
