@@ -8,7 +8,7 @@ head -40 /proc/cpuinfo | grep -E 'model name|CPU implementer|CPU architecture|CP
 ARCH=$(uname -m)
 [[ "$ARCH" == "aarch64" ]] || { echo "ERROR: not running on aarch64 (got $ARCH)"; exit 1; }
 
-FEATS=$(awk -F: '/^Features/{gsub(/ /,",$2); print $2}' /proc/cpuinfo)
+FEATS=$(grep '^Features' /proc/cpuinfo | head -1 | awk '{print $2}')
 echo "CPU features: $FEATS"
 
 if echo "$FEATS" | grep -qw lse; then

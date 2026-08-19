@@ -57,7 +57,7 @@ jobs:
           echo "Host arch: $ARCH"
           [[ "$ARCH" == "aarch64" ]] || { echo "::error::Not running on aarch64"; exit 1; }
 
-          FEATS=$(awk -F: '/^Features/{gsub(/ /,",$2); print $2}' /proc/cpuinfo)
+          FEATS=$(grep '^Features' /proc/cpuinfo | head -1 | awk '{print $2}')
           echo "CPU features: $FEATS"
 
           # Detect LSE atomics — if present, we can use target-cpu=native.
@@ -65,7 +65,7 @@ jobs:
             echo "LSE atomics: supported"
             LSE=true
           else
-            echo "LSE atomics: NOT supported — using armv8-a baseline, disabling +lse"
+            echo "LSE atomics: NOT supported - using armv8-a baseline, disabling +lse"
             LSE=false
           fi
 
@@ -98,7 +98,7 @@ jobs:
       - name: Build workspace (release, safe aarch64 flags)
         run: |
           # Detect LSE support; if absent, use armv8-a baseline without LSE.
-          FEATS=$(awk -F: '/^Features/{gsub(/ /,",$2); print $2}' /proc/cpuinfo)
+          FEATS=$(grep '^Features' /proc/cpuinfo | head -1 | awk '{print $2}')
           if echo "$FEATS" | grep -qw lse; then
             export RUSTFLAGS="-C target-cpu=native -C target-feature=+lse -C codegen-units=1"
           else
