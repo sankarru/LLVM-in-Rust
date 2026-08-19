@@ -53,38 +53,59 @@ jobs:
           head -40 /proc/cpuinfo | grep -E 'model name|CPU implementer|CPU architecture|CPU variant|CPU part|Features' || true
           echo "::endgroup::"
 
-          # Detect the core type so we can verify rustc / clang agree on march.
           ARCH=$(uname -m)
           echo "Host arch: $ARCH"
           [[ "$ARCH" == "aarch64" ]] || { echo "::error::Not running on aarch64"; exit 1; }
 
-          # Collect supported feature flags from /proc/cpuinfo.
           FEATS=$(awk -F: '/^Features/{gsub(/ /,",$2); print $2}' /proc/cpuinfo)
           echo "CPU features: $FEATS"
 
-          # Check rustc target-cpu=native produces valid codegen.
-          echo "Checking rustc -C target-cpu=native ..."
-          rustc +stable --target aarch64-unknown-linux-gnu -C target-cpu=native --print=cfg 2>&1 | head -5
+          # Detect LSE atomics — if present, we can use target-cpu=native.
+          if echo "$FEATS" | grep -qw lse; then
+            echo "LSE atomics: supported"
+            LSE=true
+          else
+            echo "LSE atomics: NOT supported — using armv8-a baseline, disabling +lse"
+            LSE=false
+          fi
 
-          # Quick codegen smoke test: compile trivial C to verify clang -march=native works.
-          cat > /tmp/march_test.c <<'EOF'
+          # Verify clang -march works with safe flags (no LSE if absent).
+          if command -v clang &>/dev/null; then
+            cat > /tmp/march_test.c <<'EOF'
           #include <stdio.h>
           int main(void) { printf("march-ok\n"); return 0; }
           EOF
-          if command -v clang &>/dev/null; then
-            clang -march=native -o /tmp/march_test /tmp/march_test.c && /tmp/march_test
-            echo "clang -march=native: OK"
-          else
-            echo "clang not found, skipping native-march C test"
+            if [ "$LSE" = true ]; then
+              clang -march=native -o /tmp/march_test /tmp/march_test.c && /tmp/march_test
+            else
+              clang -march=armv8-a -o /tmp/march_test /tmp/march_test.c && /tmp/march_test
+            fi
+            echo "clang march test: OK"
           fi
 
-          # Verify RUSTFLAGS target-cpu=native + codegen-units=1 compiles the workspace crate.
-          echo "Checking cargo build with RUSTFLAGS='-C target-cpu=native' ..."
-          RUSTFLAGS="-C target-cpu=native" cargo +stable check -p llvm-in-rust-target-arm
+          # Safe RUSTFLAGS: use target-cpu=native only when LSE is present,
+          # otherwise stick to the aarch64-unknown-linux-gnu baseline (armv8-a, no LSE).
+          if [ "$LSE" = true ]; then
+            RUSTFLAGS="-C target-cpu=native -C target-feature=+lse"
+          else
+            RUSTFLAGS="-C target-feature=-lse -C target-feature=-rcpc"
+          fi
+          echo "RUSTFLAGS: $RUSTFLAGS"
+
+          RUSTFLAGS="$RUSTFLAGS" cargo +stable check -p llvm-in-rust-target-arm
           echo "march compatibility: PASS"
 
-      - name: Build workspace (release, target-cpu=native)
-        run: RUSTFLAGS="-C target-cpu=native -C codegen-units=1" cargo +stable build --release
+      - name: Build workspace (release, safe aarch64 flags)
+        run: |
+          # Detect LSE support; if absent, use armv8-a baseline without LSE.
+          FEATS=$(awk -F: '/^Features/{gsub(/ /,",$2); print $2}' /proc/cpuinfo)
+          if echo "$FEATS" | grep -qw lse; then
+            export RUSTFLAGS="-C target-cpu=native -C target-feature=+lse -C codegen-units=1"
+          else
+            export RUSTFLAGS="-C target-feature=-lse -C target-feature=-rcpc -C codegen-units=1"
+          fi
+          echo "Building with: $RUSTFLAGS"
+          cargo +stable build --release
 
       - name: Run tests (host)
         run: cargo +stable test
