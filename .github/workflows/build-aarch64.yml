@@ -1,0 +1,66 @@
+name: Build aarch64
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-aarch64:
+    name: Build + test aarch64 (arm64)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Rust stable toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable
+          rustup target add --toolchain stable aarch64-unknown-linux-gnu
+          rustup default stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.arch }}-cargo-aarch64-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.arch }}-cargo-aarch64-
+            ${{ runner.arch }}-cargo-
+
+      - name: Check AArch64 artifact-generation crates
+        run: |
+          cargo +stable check -p llvm-in-rust-target-arm --target aarch64-unknown-linux-gnu
+
+      - name: Run AArch64 platform lane
+        run: scripts/platform_matrix.sh target-aarch64
+
+      - name: Build workspace (release)
+        run: cargo +stable build --release
+
+      - name: Run tests (host)
+        run: cargo +stable test
+
+      - name: Clippy + fmt
+        run: |
+          cargo +stable clippy --all-targets
+          cargo +stable fmt --check
+
+      - name: Upload aarch64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-in-rust-linux-aarch64-${{ github.sha }}
+          path: |
+            target/release/
+          if-no-files-found: warn
